@@ -1,0 +1,95 @@
+# Topics Debezium writes to. Partitions: 1 per table keeps per-row ordering trivially (one task, low volume).
+# Retention 7d with delete (not compact): the topics carry change history; bronze is the long-term copy.
+# The Iceberg control topic is per CDC epoch, so it is created by the epoch tooling, not here (docs/adr/0406).
+# replicas is omitted: the broker's default.replication.factor (set per overlay) applies.
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: shop-public-customers
+  labels:
+    strimzi.io/cluster: shopflow
+spec:
+  topicName: shop.public.customers
+  partitions: 1
+  config:
+    cleanup.policy: delete
+    retention.ms: 604800000
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: shop-public-products
+  labels:
+    strimzi.io/cluster: shopflow
+spec:
+  topicName: shop.public.products
+  partitions: 1
+  config:
+    cleanup.policy: delete
+    retention.ms: 604800000
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: shop-public-orders
+  labels:
+    strimzi.io/cluster: shopflow
+spec:
+  topicName: shop.public.orders
+  partitions: 1
+  config:
+    cleanup.policy: delete
+    retention.ms: 604800000
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: shop-public-order-items
+  labels:
+    strimzi.io/cluster: shopflow
+spec:
+  topicName: shop.public.order_items
+  partitions: 1
+  config:
+    cleanup.policy: delete
+    retention.ms: 604800000
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: shop-public-payments
+  labels:
+    strimzi.io/cluster: shopflow
+spec:
+  topicName: shop.public.payments
+  partitions: 1
+  config:
+    cleanup.policy: delete
+    retention.ms: 604800000
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: shop-public-heartbeat
+  labels:
+    strimzi.io/cluster: shopflow
+spec:
+  topicName: shop.public.heartbeat
+  partitions: 1
+  config:
+    cleanup.policy: delete
+    retention.ms: 604800000
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: debezium-heartbeat-shop
+  labels:
+    strimzi.io/cluster: shopflow
+spec:
+  topicName: __debezium-heartbeat.shop
+  partitions: 1
+  config:
+    cleanup.policy: delete
+    retention.ms: 604800000

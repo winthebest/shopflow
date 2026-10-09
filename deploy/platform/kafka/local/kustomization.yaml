@@ -1,0 +1,49 @@
+# Local (k3d): one dual-role node, replication factor 1, small heap. The aws overlay sets 3 brokers, RF=3,
+# min.insync.replicas=2.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base
+patches:
+  - target:
+      kind: KafkaNodePool
+      name: dual-role
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+      - op: replace
+        path: /spec/storage/volumes/0/size
+        value: 5Gi
+      - op: add
+        path: /spec/jvmOptions
+        value:
+          "-Xms": 512m
+          "-Xmx": 512m
+      - op: add
+        path: /spec/resources
+        value:
+          requests:
+            cpu: 250m
+            memory: 1Gi
+          limits:
+            memory: 1Gi
+  - target:
+      kind: Kafka
+      name: shopflow
+    patch: |-
+      - op: add
+        path: /spec/kafka/config/default.replication.factor
+        value: 1
+      - op: add
+        path: /spec/kafka/config/min.insync.replicas
+        value: 1
+      - op: add
+        path: /spec/kafka/config/offsets.topic.replication.factor
+        value: 1
+      - op: add
+        path: /spec/kafka/config/transaction.state.log.replication.factor
+        value: 1
+      - op: add
+        path: /spec/kafka/config/transaction.state.log.min.isr
+        value: 1

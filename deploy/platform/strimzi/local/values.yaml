@@ -1,0 +1,7 @@
+# Local (k3d): chart defaults (one replica, 384Mi) fit; only the CPU request is lowered.
+resources:
+  requests:
+    cpu: 100m
+    memory: 384Mi
+  limits:
+    memory: 384Mi
