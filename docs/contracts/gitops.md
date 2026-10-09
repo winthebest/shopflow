@@ -17,6 +17,10 @@ component owner follows these conventions for its own component.
 - Sync policy: automated + selfHeal + prune; `CreateNamespace=true`; `ServerSideApply=true` for charts with
   large CRDs (for example kube-prometheus-stack).
 
+- Experiment branches: `<lane>/exp-<topic>` may change any file (including other lanes' values) to drive an
+  experiment on the lane's own cluster (e.g. `PAYMENT_LATENCY_MS=600`, game days). They are never opened as PRs or
+  merged; findings land through normal PRs by the file owner.
+
 ## 2. Helm-based components: multi-source Application
 
 No `--enable-helm` in Kustomize. Use an Argo CD multi-source Application:

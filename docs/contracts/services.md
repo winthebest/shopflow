@@ -38,7 +38,9 @@ every gateway 5xx as bad).
   `timestamp` (RFC 3339, UTC), `level` (`DEBUG|INFO|WARNING|ERROR`), `message`, `service`, `trace_id`,
   `span_id` (32/16 lowercase hex, empty string when no active span). Extra keys are allowed.
 - **Container**: non-root UID/GID `10001`; works with `readOnlyRootFilesystem: true` (only `/tmp` writable).
-- **Telemetry**: OpenTelemetry SDK. Until Phase 3 lands: `OTEL_SDK_DISABLED=true`. After Phase 3:
+- **Telemetry**: OpenTelemetry SDK. Images default to `OTEL_SDK_DISABLED=true`; the local chart values turn it on
+  from Phase 3 (wave 2) because every validation profile includes `obs` or `obs-lite` (a `core`-only cluster then
+  only logs exporter warnings). When on:
 
   | Variable | Value |
   |---|---|
