@@ -1,7 +1,8 @@
 # Shop database (docs/contracts/services.md): database `shop`, owner `shop_app` (non-superuser). CNPG creates the
 # Secret `shop-db-app` (keys `uri`, `password`, ...) that the orders service and the migration Job read.
-# wal_level=logical from day 1 for Debezium CDC (Phase 4); the CDC login role is declared below
-# (docs/contracts/services.md "CDC source objects"). Each overlay provides Secret `shop-db-debezium`.
+# wal_level=logical from day 1 for Debezium CDC (Phase 4). Login roles for other consumers are declared below
+# (docs/contracts/services.md "CDC source objects"); each overlay provides their password Secrets
+# (`shop-db-debezium`, `shop-db-trino-pg`, `shop-db-polaris`). Grants on shop tables are Alembic's (sf-app).
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -14,6 +15,14 @@ spec:
   postgresql:
     parameters:
       wal_level: logical
+      # A replication slot whose consumer is gone (Kafka Connect down) would retain WAL until the volume is full
+      # and the shop stops. Cap it: past this size the slot is invalidated and CDC re-snapshots into a new
+      # epoch (docs/adr/0203-cnpg-over-rds.md). Sized against the 5Gi volume, leaving room for max_wal_size.
+      max_slot_wal_keep_size: 2GB
+    # polaris may only reach its own database; CNPG keeps its default rules after these.
+    pg_hba:
+      - host catalog polaris all scram-sha-256
+      - host all polaris all reject
   bootstrap:
     initdb:
       database: shop
@@ -32,8 +41,22 @@ spec:
         inherit: false
         passwordSecret:
           name: shop-db-debezium
+      - name: trino_pg
+        ensure: present
+        comment: Trino catalog pg (read-only grants from Alembic)
+        login: true
+        inherit: true
+        passwordSecret:
+          name: shop-db-trino-pg
+      - name: polaris
+        ensure: present
+        comment: Polaris catalog metastore (owns database catalog only)
+        login: true
+        inherit: true
+        passwordSecret:
+          name: shop-db-polaris
   storage:
-    size: 2Gi
+    size: 5Gi
   resources:
     requests: {cpu: 100m, memory: 256Mi}
     limits: {memory: 512Mi}

@@ -1,0 +1,16 @@
+# Database `catalog` for the Polaris (Iceberg REST catalog) metastore, owned by role `polaris`. Polaris creates
+# and owns its schema `polaris_schema`. Kept on deletion of this object: dropping a catalog loses every
+# table's metadata pointer.
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: shop-db-catalog
+  labels:
+    app.kubernetes.io/part-of: shopflow
+spec:
+  cluster:
+    name: shop-db
+  name: catalog
+  owner: polaris
+  ensure: present
+  databaseReclaimPolicy: retain

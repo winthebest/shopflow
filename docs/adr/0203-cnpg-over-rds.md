@@ -18,6 +18,9 @@ control over the database lifecycle.
   (`minimal-trixie` image pinned by digest), `wal_level=logical`, `bootstrap.initdb` database `shop` with owner
   `shop_app` (non-superuser; superuser access disabled). CNPG creates Secret `shop-db-app` (`uri`, `password`, …),
   which the orders service and the migration Job read, so no database password lives in Git.
+- Other consumers get declarative login roles (`managed.roles`): `debezium` (REPLICATION), `trino_pg`, `polaris`
+  (owner of the CNPG `Database` `catalog`; `pg_hba` lets it reach only that database). Their passwords are SOPS
+  Secrets locally and come from SSM via External Secrets on AWS; table grants stay in Alembic.
 - The database is a separate app from the shop chart: the shop's PreSync migration hook runs before any resource
   of its own app, so the Cluster must already exist and be healthy (earlier wave).
 - AWS (Phase 6): same Cluster, with backups to S3 through the barman-cloud plugin and a per-session `serverName`.
@@ -37,7 +40,8 @@ control over the database lifecycle.
   is on from day 1; credentials are generated in-cluster.
 - Negative / risks: the team operates Postgres itself (upgrades, storage, backups). Locally a single instance on
   local-path storage means no HA and data is lost with `make down` (acceptable: `seed` restores demo data).
-  `wal_level=logical` with an abandoned replication slot can fill the disk: Phase 4 must cap it
-  (`max_slot_wal_keep_size`) and alert on slot lag.
+  `wal_level=logical` with an abandoned replication slot would fill the disk, so `max_slot_wal_keep_size` is 2GB
+  (5Gi volume): past it the slot is invalidated and CDC re-snapshots into a new epoch, which is better than a
+  stopped shop. Phase 4 alerts on slot lag well before the cap.
 - When to revisit: the project needs managed HA across AZs for real users, or CNPG stops tracking new Postgres
   major versions.
