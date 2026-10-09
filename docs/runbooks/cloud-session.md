@@ -157,21 +157,30 @@ session tags, so pointing another service account at a role does not work.
 | `flink` | `lakehouse/flink` | `flink-ckpt/*` (+ Glue/`iceberg/*` only with `flink_writes_iceberg`) |
 | `external-secrets` | `external-secrets/external-secrets` | may only assume `shopflow-eso-<namespace>` |
 
-External Secrets (`deploy/platform/external-secrets/aws/secret-stores`): one ClusterSecretStore `ssm-<namespace>`
-per namespace in `eso_namespaces`, usable only from that namespace (`conditions`), assuming
-`shopflow-eso-<namespace>`, which reads only `/shopflow/aws/<namespace>/*`. Its `secrets` list maps each SSM
-parameter to a Kubernetes Secret with the same name and keys as the local KSOPS Secret, so workloads do not change:
+External Secrets: the external-secrets app (sf-cloud) holds the controller and one ClusterSecretStore `ssm-<namespace>`
+per namespace in `eso_namespaces` (`deploy/platform/external-secrets/aws/secret-stores`). A store is usable only
+from its namespace (`conditions`) and assumes `shopflow-eso-<namespace>`, which reads only `/shopflow/aws/<namespace>/*`.
+Each `ExternalSecret` lives in its component's aws overlay and belongs to the component owner (gitops.md §1b). It
+keeps the name and keys of the local SOPS Secret, so workloads do not change. There is one writer per Secret: a
+Secret written by a Job, an operator or cert-manager never gets an ExternalSecret.
 
-| Secret | SSM parameter (SecureString unless noted) | Seed value |
-|---|---|---|
-| `observability/grafana-admin` | `/shopflow/aws/observability/grafana-admin` | `{"admin-user": "...", "admin-password": "..."}` |
-| `observability/alertmanager-webhook` | `/shopflow/aws/observability/alertmanager-webhook` | `{"url": "..."}` |
-| `shop/shop-db-debezium`, `shop/shop-db-trino-pg`, `shop/shop-db-polaris` | `/shopflow/aws/shop/<name>` | `{"username": "...", "password": "..."}` |
-| `lakehouse/trino-exporter` | `/shopflow/aws/lakehouse/trino-exporter` | `{"password": "..."}` |
-| `kafka/cdc-epoch` (key `epoch`) | `/shopflow/aws/kafka/cdc-epoch` (String, written by cloud-up) | — |
+| Secret | SSM parameter | Owner (aws overlay) | Notes |
+|---|---|---|---|
+| `observability/grafana-admin` (`admin-user`, `admin-password`) | `/shopflow/aws/observability/grafana-admin` | sf-sre, kube-prometheus-stack | |
+| `observability/alertmanager-webhook` (`url`) | `/shopflow/aws/observability/alertmanager-webhook` | sf-sre, kube-prometheus-stack | seeded with `--prompt` |
+| `shop/shop-db-debezium`, `shop/shop-db-trino-pg` (basic-auth) | `/shopflow/aws/shop/<name>` | sf-platform, shop-db | role passwords must keep their first values (restored databases) |
+| `shop/shop-db-polaris` (basic-auth) | `/shopflow/aws/shop/shop-db-polaris` | sf-platform, shop-db | only while the aws overlay keeps the `polaris` role (no Polaris on AWS) |
+| `lakehouse/trino-internal` (`shared-secret`) | `/shopflow/aws/lakehouse/trino-internal` | sf-data, trino | |
+| `lakehouse/trino-dbt`, `lakehouse/trino-exporter` (`username`, `password`), `lakehouse/trino-password-db` (`password.db`) | `/shopflow/aws/lakehouse/<name>` | sf-data, trino | one seed group: the bcrypt file must match both passwords |
 
-The shop-db role passwords must keep their first values: the roles come back with every restored database.
-`scripts/cloud-manifests-check.sh` (`make cloud-manifests`) fails if this chart drifts from the contract.
+Not ExternalSecrets, because another writer owns them: `kafka/cdc-epoch` (`scripts/cdc-epoch.sh`; cloud-up keeps
+the last epoch in SSM `/shopflow/aws/kafka/cdc-epoch`), KafkaUser Secrets (Strimzi), `lakehouse/trino-tls`
+(cert-manager), `lakehouse/trino-pg` (copy Job). `polaris-*`, `lake-s3-*` and `seaweedfs-*` do not exist on AWS
+(Glue and Pod Identity instead).
+
+`scripts/cloud-manifests-check.sh` (`make cloud-manifests`) checks every ExternalSecret in `deploy/`: it must use
+the store of its namespace, read only `/shopflow/aws/<namespace>/*`, carry `SkipDryRunOnMissingResource=true` and
+match the CRD of the pinned chart. One in a namespace without a store fails.
 
 ## Backup chain
 
