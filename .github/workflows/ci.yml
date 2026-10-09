@@ -8,6 +8,7 @@
 # - no `pull_request_target` (zizmor `dangerous-triggers`)
 # - third-party images pinned by digest; Trivy pinned by action SHA + `version` (GHSA-69fq-xp46-6x23: tags were
 #   force-pushed in 2026-03, so never reference Trivy by tag)
+# - no GitHub Actions cache anywhere (setup-uv, trivy-action): a poisoned cache could reach the publish path
 name: ci
 
 on:
@@ -17,8 +18,10 @@ on:
 
 permissions: {}
 
+# PRs: one run per branch, a new push cancels the old run. main: one group per commit, so a queued commit is never
+# replaced by a newer one and every merge gets its own `sha-<short>` images.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -134,6 +137,7 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
           format: table
+          cache: false # no Actions cache in a workflow that publishes images; the DB download takes ~10s
 
   publish:
     name: publish ${{ matrix.service }} (GHCR, multi-arch)
