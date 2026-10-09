@@ -1,6 +1,6 @@
 # Session parameters of a root app (docs/adr/0206-root-apps-overlays-and-params.md). scripts/platform-root-apps.sh
 # sets `data` from its --param key=value flags; an aws profile copies a key into a Helm value with a top-level
-# replacement (source fieldPath `data.[<key>]`). Every key must be declared here: unknown keys are refused.
+# replacement (source fieldPath `data.[<key>]` for keys with dots, `data.<key>` otherwise). Every key must be declared here: unknown keys are refused.
 # `shopflow.io/required-aws` lists the keys that must be non-empty on --overlay aws (fail-closed: a missing value
 # would otherwise deploy a chart default such as an empty VPC ID or a placeholder account).
 # local-config: used during the Kustomize build only, never applied to the cluster.

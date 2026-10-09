@@ -65,7 +65,7 @@ replacements:
   - source:
       kind: ConfigMap
       name: platform-params
-      fieldPath: data.[operatorCidr]
+      fieldPath: data.operatorCidr
     targets:
       - select: {kind: Application, name: envoy-gateway}
         fieldPaths:
