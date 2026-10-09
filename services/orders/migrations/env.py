@@ -12,6 +12,8 @@ from orders.settings import Settings
 
 config = context.config
 target_metadata = Base.metadata
+# Schemas Alembic owns; anything else in the database (e.g. CNPG or extension schemas) is ignored by autogenerate.
+OWNED_SCHEMAS = {None, "public", "meta"}
 
 if not logging.getLogger().handlers:  # plain `alembic` CLI; the `migrate` entrypoint already set up JSON logs
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
@@ -28,9 +30,18 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def include_name(name: str | None, type_: str, parent_names: dict) -> bool:
+    return name in OWNED_SCHEMAS if type_ == "schema" else True
+
+
 def do_run_migrations(connection: Connection) -> None:
     context.configure(
-        connection=connection, target_metadata=target_metadata, compare_type=True, compare_server_default=True
+        connection=connection,
+        target_metadata=target_metadata,
+        compare_type=True,
+        compare_server_default=True,
+        include_schemas=True,
+        include_name=include_name,
     )
     with context.begin_transaction():
         # Serialize concurrent `migrate` runs (Job retries, two compose runs): the second waits, then finds head.
