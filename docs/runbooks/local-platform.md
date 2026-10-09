@@ -88,3 +88,5 @@ without seeing it: generate it in a pipe and encrypt from stdin with
 | App `ComparisonError ... ksops` | `sops-age` Secret missing or wrong key: rerun `make up`; check `age-keygen -y <key>` matches the recipient in `.sops.yaml`. |
 | App stuck `OutOfSync` on a CR | CRD from an earlier wave not ready: check that wave's app; CRs carry `SkipDryRunOnMissingResource=true`. |
 | Pods `ContainerCreating` for minutes | Image pulls are slow on a cold cache; `kubectl describe pod` shows `Pulling`. |
+| Fix pushed but the app keeps failing on the old commit (`operationState` still `Running`, retries counting up) | Retries are pinned to the commit that failed. Terminate the operation (UI: *Sync status → Terminate*, or API `DELETE /api/v1/applications/<app>/operation` through `make platform-argocd-ui`); the next auto-sync takes the new commit. |
+| PreSync hook Job `FailedCreate ... serviceaccount not found` | A PreSync hook runs before every resource of its own app; hook pods must only use objects that already exist (the chart's Jobs use the `default` ServiceAccount). |
