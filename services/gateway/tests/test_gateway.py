@@ -104,13 +104,13 @@ async def test_orders_dependency_errors_keep_status_and_body(status):
     assert response.json() == body
 
 
-async def test_readyz_follows_orders_health():
-    async with gateway_with(lambda request: httpx.Response(200, json={"status": "ok"})) as client:
-        assert (await client.get("/readyz")).status_code == 200
+async def test_stays_ready_when_orders_is_down():
+    """Readiness has no dependencies, so the gateway keeps answering 502 itself while orders is unreachable."""
 
     def down(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused", request=request)
 
     async with gateway_with(down) as client:
-        assert (await client.get("/readyz")).status_code == 503
+        assert (await client.get("/readyz")).status_code == 200
         assert (await client.get("/healthz")).status_code == 200
+        assert (await client.get("/products")).status_code == 502
