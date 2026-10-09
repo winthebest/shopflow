@@ -77,13 +77,16 @@ def test_migration_fails_clearly_when_debezium_role_is_missing(app_database, sup
     url = app_database("no_cdc_role")
     superuser_sql("ALTER ROLE debezium RENAME TO debezium_away")
     try:
-        with pytest.raises(DBAPIError, match='role "debezium" does not exist'):
+        with pytest.raises(DBAPIError, match='CDC role "debezium" is missing: create it before migrating'):
             upgrade(url)
     finally:
         superuser_sql("ALTER ROLE debezium_away RENAME TO debezium")
     # One transaction for the whole upgrade: nothing from 0001 or 0002 is left half-applied.
-    untouched = "SELECT to_regclass('public.alembic_version') IS NULL, to_regclass('public.orders') IS NULL"
-    assert asyncio.run(query(url, untouched)) == [(True, True)]
+    untouched = (
+        "SELECT to_regclass('public.alembic_version') IS NULL, to_regclass('public.orders') IS NULL,"
+        " to_regclass('public.heartbeat') IS NULL"
+    )
+    assert asyncio.run(query(url, untouched)) == [(True, True, True)]
 
 
 def test_downgrade_removes_cdc_objects_and_grants(app_database):

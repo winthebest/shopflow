@@ -73,11 +73,12 @@ jobs:
         run: uv sync --all-packages --locked
       - name: Postgres from docker-compose.yml (same image, init roles shop_app + debezium)
         run: docker compose up --detach --wait postgres
+      # Baseline HEAD^1: on a PR, the first parent of the merge commit = the exact base it was built from;
+      # on main (squash merges only), the previous commit.
       - name: Contracts vs migrated schema, publication shop_cdc and the base commit
         env:
           DATABASE_URL: postgresql://shop_app:shop_app@localhost:25432/shop
-          BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
-        run: uv run scripts/check_contracts.py --base-ref "$BASE_REF"
+        run: uv run scripts/check_contracts.py --base-ref HEAD^1
 
   gitleaks:
     name: secret scan (gitleaks)

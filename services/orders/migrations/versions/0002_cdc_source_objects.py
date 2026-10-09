@@ -30,9 +30,8 @@ def upgrade() -> None:
         DO $$
         BEGIN
             IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'debezium') THEN
-                RAISE EXCEPTION 'role "debezium" does not exist'
-                    USING HINT = 'Create it first: CNPG managed.roles on shop-db, or the compose init SQL '
-                                 '(existing compose volume: make dev-reset).';
+                RAISE EXCEPTION 'CDC role "debezium" is missing: create it before migrating (CNPG managed.roles '
+                                'on shop-db; compose init SQL, for an existing volume run make dev-reset)';
             END IF;
         END
         $$

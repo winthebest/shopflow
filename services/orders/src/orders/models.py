@@ -1,9 +1,10 @@
 """ORM models for the shop schema.
 
 Alembic (services/orders/migrations) is the only owner of the schema: these models must match the migrations, which
-the integration tests enforce with `alembic check`. Every table has a bigint identity primary key and `created_at` /
-`updated_at`; `updated_at` is maintained by a database trigger so any writer keeps it correct (CDC and the
-reconciliation cutoff in later phases rely on it).
+the integration tests enforce with `alembic check`. The five shop tables have a bigint identity primary key and
+`created_at` / `updated_at`; `updated_at` is maintained by a database trigger so any writer keeps it correct (CDC and
+the reconciliation cutoff in later phases rely on it). `heartbeat` and `meta.cdc_epochs` follow the CDC spec in
+docs/contracts/services.md instead.
 """
 
 from datetime import datetime

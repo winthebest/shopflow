@@ -18,9 +18,11 @@ One YAML contract per published table in `data/contracts/<table>.yaml` (version,
 nullability, primary key). `scripts/check_contracts.py`, run by the `contracts` job in `ci.yml`, migrates a real
 Postgres with Alembic, introspects it, and fails when:
 
-1. the tables in publication `shop_cdc` differ from the contract files;
-2. the migrated schema differs from a contract (the contract must describe the schema exactly);
-3. compared with the contracts on the PR base (or the previous `main` commit), a breaking change (column dropped
+1. publication `shop_cdc` is not a plain explicit list (insert, update and delete published; no row filter or
+   column list; only `public` tables), or its tables differ from the contract files;
+2. a published table cannot be captured (no `SELECT` for `debezium`, or `REPLICA IDENTITY NOTHING`);
+3. the migrated schema differs from a contract (the contract must describe the schema exactly);
+4. compared with the contracts on the PR base (or the previous `main` commit), a breaking change (column dropped
    or renamed, type not widened, nullable → NOT NULL, primary key changed, contract removed) arrives without a
    `version` bump.
 
@@ -40,8 +42,10 @@ Non-breaking changes (new column, widened type, NOT NULL → nullable) only need
 - Positive: a breaking schema change is visible in the producer's PR, names the table and column, and forces an
   explicit version bump that consumers can react to; adding a source table requires a contract (publication and
   contract files must match).
-- Negative / risks: the type lattice is deliberately small (integer family, numeric precision/scale, varchar
-  length, varchar → text); any other type change counts as breaking, which can be a false positive. Removing a
+- Negative / risks: the type lattice is deliberately small (integer family, numeric precision at the same scale,
+  varchar length, varchar → text); any other type change counts as breaking, which can be a false positive. A
+  decimal scale change or `numeric(p,s)` → `numeric` is breaking on purpose: Iceberg cannot change a decimal's
+  scale and Debezium encodes unconstrained `numeric` differently. Removing a
   source table always fails and needs a coordinated, manually reviewed change.
 - When to revisit: if consumers need semantic rules (allowed enum values, value ranges), or if a schema registry
   is introduced for the Kafka topics; then generate contracts from one source instead of keeping two.

@@ -52,3 +52,33 @@ def test_publication_and_contract_files_must_match(app_database, tmp_path, capsy
 
     assert main(["--database-url", app_database("contracts_pub"), "--contracts-dir", str(contracts)]) == 1
     assert "heartbeat: published in shop_cdc but has no contract" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("sabotage", "expected"),
+    [
+        (
+            "ALTER PUBLICATION shop_cdc SET TABLE customers, products, orders WHERE (status = 'paid'), order_items,"
+            " payments, heartbeat",
+            "orders: published with a row filter",
+        ),
+        (
+            "ALTER PUBLICATION shop_cdc SET TABLE customers, products, orders (id, status), order_items, payments,"
+            " heartbeat",
+            "orders: published with a column list",
+        ),
+        ("ALTER PUBLICATION shop_cdc SET (publish = 'insert')", "missing: update, delete"),
+        ("ALTER TABLE orders REPLICA IDENTITY NOTHING", "orders: REPLICA IDENTITY NOTHING"),
+        ("REVOKE SELECT ON payments FROM debezium", "payments: role debezium cannot SELECT it"),
+    ],
+    ids=["row-filter", "column-list", "insert-only", "replica-identity-nothing", "no-select-grant"],
+)
+def test_publication_and_capture_problems_fail(app_database, capsys, request, sabotage, expected):
+    """Each of these keeps the column contracts intact but silently loses CDC data (or breaks the snapshot)."""
+    url = app_database("contracts_" + request.node.callspec.id.replace("-", "_"))
+    assert main(["--database-url", url]) == 0
+    execute(url, sabotage)  # all doable by the table owner, i.e. by a migration
+    capsys.readouterr()
+
+    assert main(["--database-url", url]) == 1
+    assert expected in capsys.readouterr().out
