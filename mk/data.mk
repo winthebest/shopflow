@@ -2,9 +2,10 @@
 
 CONNECT_IMAGE ?= shopflow-kafka-connect:dev
 AIRFLOW_IMAGE ?= shopflow-airflow:dev
+FLINK_IMAGE ?= shopflow-flink:dev
 
 .PHONY: data-connect-image data-connect-smoke data-validate data-exporter-test data-dbt-check data-airflow-image \
-	data-airflow-check
+	data-airflow-check data-flink-image data-flink-check
 
 data-connect-image: ## Build the Kafka Connect image for this machine's architecture (CONNECT_IMAGE)
 	docker buildx build --load -t $(CONNECT_IMAGE) images/kafka-connect
@@ -30,3 +31,12 @@ data-airflow-image: ## Build the Airflow image (DAGs + dbt) for this machine's a
 data-airflow-check: ## Import every DAG inside AIRFLOW_IMAGE and check DAG ids, schedules and tasks (no database)
 	docker run --rm --network none -e AIRFLOW__CORE__LOAD_EXAMPLES=False $(AIRFLOW_IMAGE) \
 		python /opt/shopflow/airflow-tests/check_dags.py
+
+data-flink-image: ## Build the Flink KPI job image for this machine's architecture (FLINK_IMAGE)
+	docker buildx build --load -t $(FLINK_IMAGE) data/flink
+
+data-flink-check: ## Plan the KPI job inside FLINK_IMAGE: connectors load, SQL valid (no Kafka or Postgres needed)
+	docker run --rm --network none -e CDC_EPOCH=0 -e KAFKA_USER=flink -e KAFKA_PASSWORD=plan-only \
+		-e SERVING_USER=flink_serving -e SERVING_PASSWORD=plan-only $(FLINK_IMAGE) \
+		java -cp '/opt/flink/lib/*:/opt/flink/usrlib/sql-runner.jar' io.shopflow.flink.SqlRunner \
+		/opt/flink/sql/kpi_minute.sql --explain

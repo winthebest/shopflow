@@ -1,7 +1,7 @@
 # sf-data checks that need no cluster: GitOps components (render + kubeconform), freshness-exporter tests, dbt (parse
 # + sqlfluff), and the image builds (each only when its sources change: Kafka Connect cached, freshness-exporter +
-# Trivy, Airflow + DAG import check + Trivy). Nothing here publishes, so builds may use the Actions cache; publishing
-# is data-images.yml.
+# Trivy, Airflow + DAG import check + Trivy, Flink + SQL plan check + Trivy). Nothing here publishes, so builds may use
+# the Actions cache; publishing is data-images.yml.
 # Actions are pinned by commit SHA (tag in the comment). Read-only token, no id-token.
 name: data-ci
 
@@ -17,11 +17,11 @@ on:
       - deploy/platform/freshness-exporter/**
       - deploy/argocd/apps/**
       - deploy/argocd/profiles/data/**
-      - deploy/argocd/profiles/batch/**
       - data/contracts/**  # the CDC table list and bronze columns are checked against them
       - data/dbt/**
       - data/airflow/**
       - data/.dockerignore
+      - data/flink/**
       - images/kafka-connect/**
       - services/freshness-exporter/**
       - scripts/data-*.sh
@@ -116,6 +116,7 @@ jobs:
       connect-image: ${{ steps.diff.outputs.connect_image }}
       exporter-image: ${{ steps.diff.outputs.exporter_image }}
       airflow-image: ${{ steps.diff.outputs.airflow_image }}
+      flink-image: ${{ steps.diff.outputs.flink_image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -138,6 +139,7 @@ jobs:
             echo "connect_image=$(changed 'images/kafka-connect/')"
             echo "exporter_image=$(changed 'services/freshness-exporter/')"
             echo "airflow_image=$(changed 'data/airflow/|data/dbt/|data/\.dockerignore')"
+            echo "flink_image=$(changed 'data/flink/')"
           } >> "$GITHUB_OUTPUT"
 
   connect-image:
@@ -244,6 +246,45 @@ jobs:
         with:
           version: v0.75.0
           image-ref: shopflow-airflow:ci
+          scanners: vuln
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+          cache: false
+
+  flink-image:
+    needs: changes
+    if: needs.changes.outputs.flink-image == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build Flink (linux/amd64, loaded for the plan check and scanning)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: data/flink
+          platforms: linux/amd64
+          load: true
+          tags: shopflow-flink:ci
+          cache-from: type=gha,scope=flink
+          cache-to: type=gha,scope=flink,mode=max
+
+      - name: Plan the KPI job (connectors load, SQL valid)
+        run: make data-flink-check FLINK_IMAGE=shopflow-flink:ci
+
+      - name: Trivy (fail on CRITICAL with a fix available)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.75.0
+          image-ref: shopflow-flink:ci
           scanners: vuln
           severity: CRITICAL
           ignore-unfixed: true
