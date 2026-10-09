@@ -1,0 +1,117 @@
+# One-shot Jobs around the Polaris chart (rendered by Argo CD in wave 0 of this app):
+#   wave 1  polaris-bootstrap  create the realm and its root principal in the metastore (idempotent)
+#   wave 2  polaris-setup      catalog `lake`, namespace `bronze`, principals + grants, credential Secrets
+# Sync hooks with BeforeHookCreation re-run on every sync; both steps are safe to repeat.
+#
+# Inputs (SOPS-managed): Secret polaris-db (username, password, jdbcUrl), Secret polaris-root (client-id,
+# client-secret). Outputs: Secrets kafka/polaris-iceberg-sink, lakehouse/polaris-trino-lake{,-ro}.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: polaris-bootstrap
+  namespace: lakehouse
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: polaris-bootstrap
+        app.kubernetes.io/part-of: shopflow
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10000  # the image's user is named, so give the uid the chart's server also uses
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bootstrap
+          image: apache/polaris-admin-tool:1.8.0@sha256:34dde19bb321aef5925a14ba90b69e26e982a5dcbda76a9d0cfc1aac1534ba4e
+          args:
+            - bootstrap
+            - --realm=POLARIS
+            - --credential=POLARIS,$(POLARIS_ROOT_CLIENT_ID),$(POLARIS_ROOT_CLIENT_SECRET)
+          env:
+            # Same persistence settings as the server: reuse the chart's application.properties.
+            - name: QUARKUS_CONFIG_LOCATIONS
+              value: /deployments/config/application.properties
+            - name: quarkus.datasource.username
+              valueFrom: {secretKeyRef: {name: polaris-db, key: username}}
+            - name: quarkus.datasource.password
+              valueFrom: {secretKeyRef: {name: polaris-db, key: password}}
+            - name: quarkus.datasource.jdbc.url
+              valueFrom: {secretKeyRef: {name: polaris-db, key: jdbcUrl}}
+            - name: POLARIS_ROOT_CLIENT_ID
+              valueFrom: {secretKeyRef: {name: polaris-root, key: client-id}}
+            - name: POLARIS_ROOT_CLIENT_SECRET
+              valueFrom: {secretKeyRef: {name: polaris-root, key: client-secret}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: config
+              mountPath: /deployments/config
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: polaris
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: polaris-setup
+  namespace: lakehouse
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: polaris-setup
+        app.kubernetes.io/part-of: shopflow
+    spec:
+      restartPolicy: Never
+      serviceAccountName: polaris-setup
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: setup
+          image: python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4
+          command: ["python", "-I", "/scripts/polaris-setup.py"]
+          env:
+            - name: POLARIS_URL
+              value: http://polaris:8181
+            - name: CATALOG_BASE_LOCATION
+              value: s3://lake/warehouse
+            - name: S3_ENDPOINT
+              value: http://seaweedfs.lakehouse.svc:8333
+            - name: POLARIS_ROOT_CLIENT_ID
+              valueFrom: {secretKeyRef: {name: polaris-root, key: client-id}}
+            - name: POLARIS_ROOT_CLIENT_SECRET
+              valueFrom: {secretKeyRef: {name: polaris-root, key: client-secret}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: scripts
+          configMap:
+            name: polaris-setup-script

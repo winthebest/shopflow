@@ -1,0 +1,36 @@
+# Apache Polaris (Iceberg REST catalog), chart polaris 1.8.0. docs/adr/0408.
+# Metadata in Postgres (CNPG); table data and metadata files in object storage; one catalog `lake`.
+# Catalog, namespaces, principals and grants are created by the setup Job in this component (polaris-setup.py).
+
+image:
+  repository: apache/polaris
+  tag: "1.8.0@sha256:347615e736cab2c9be0d8c464552ac930be4755302bb0aeb745216bbae99ba5b"
+
+realmContext:
+  realms:
+    - POLARIS
+
+features:
+  SUPPORTED_CATALOG_STORAGE_TYPES:
+    - S3
+
+persistence:
+  type: relational-jdbc
+  relationalJdbc:
+    # Keys username, password, jdbcUrl (jdbc:postgresql://<host>:5432/catalog). SOPS-managed.
+    secret:
+      name: polaris-db
+
+# Keys the Polaris server uses to write table metadata. The catalog sets stsUnavailable (SeaweedFS has no STS), so
+# nothing is vended to clients and the server reads the AWS SDK default chain (AWS_ACCESS_KEY_ID/...), not the
+# chart's storage.secret (verified in images/kafka-connect/smoke).
+extraEnv:
+  - name: AWS_REGION
+    value: us-east-1
+  - name: AWS_ACCESS_KEY_ID
+    valueFrom: {secretKeyRef: {name: polaris-storage, key: access-key-id}}
+  - name: AWS_SECRET_ACCESS_KEY
+    valueFrom: {secretKeyRef: {name: polaris-storage, key: secret-access-key}}
+
+advancedConfig:
+  quarkus.http.access-log.enabled: true

@@ -1,0 +1,10 @@
+# Local (k3d): one replica. Token signing keys are generated per pod; after a restart clients simply request a
+# new token with their client credentials. Running more replicas needs a shared key secret (authentication.tokenBroker).
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    memory: 768Mi
