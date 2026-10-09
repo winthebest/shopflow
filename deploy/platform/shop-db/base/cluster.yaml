@@ -1,6 +1,7 @@
 # Shop database (docs/contracts/services.md): database `shop`, owner `shop_app` (non-superuser). CNPG creates the
 # Secret `shop-db-app` (keys `uri`, `password`, ...) that the orders service and the migration Job read.
-# wal_level=logical from day 1 for Debezium CDC (Phase 4).
+# wal_level=logical from day 1 for Debezium CDC (Phase 4); the CDC login role is declared below
+# (docs/contracts/services.md "CDC source objects"). Each overlay provides Secret `shop-db-debezium`.
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -18,6 +19,19 @@ spec:
       database: shop
       owner: shop_app
   enableSuperuserAccess: false
+  managed:
+    roles:
+      - name: debezium
+        ensure: present
+        comment: Debezium CDC (LOGIN REPLICATION, owns nothing)
+        login: true
+        replication: true
+        superuser: false
+        createdb: false
+        createrole: false
+        inherit: false
+        passwordSecret:
+          name: shop-db-debezium
   storage:
     size: 2Gi
   resources:
