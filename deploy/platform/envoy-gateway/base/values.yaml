@@ -1,5 +1,9 @@
 # Envoy Gateway controller (chart gateway-helm 1.9.1). Images pinned by digest.
 # The Envoy proxy image is not rendered by the chart; it is pinned in the EnvoyProxy resource (gateway.yaml).
+# CRDs and the Gateway API safe-upgrade admission policy belong to the gateway-api-crds app (wave -2); rendering
+# them here too would make two apps own the same objects.
+crds:
+  enabled: false
 global:
   images:
     envoyGateway:
