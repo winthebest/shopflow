@@ -146,6 +146,10 @@ grafana:
       allow_sign_up: false
     auth.anonymous:
       enabled: false
+    # No background download of "preinstalled" plugins (pyroscope, influxdb, zipkin…): this stack does not use
+    # them, and on the lab cluster the download pushed Grafana past its memory limit (OOMKilled at start).
+    plugins:
+      preinstall_disabled: true
   sidecar:
     image:
       tag: 2.14.1
