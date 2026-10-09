@@ -24,6 +24,7 @@ orchestrator adds rows when merging a PR that contains ADRs.
 | [0200](0200-k3d-over-kind.md) | Local Kubernetes on k3d (not kind or minikube) | Accepted |
 | [0201](0201-argocd-over-flux.md) | GitOps with Argo CD app-of-apps (not Flux) | Accepted |
 | [0202](0202-gateway-api-envoy-gateway.md) | Edge: Gateway API with Envoy Gateway, TLS from cert-manager | Accepted |
+| [0203](0203-cnpg-over-rds.md) | Postgres with CloudNativePG on both k3d and EKS (not RDS) | Accepted |
 | [0204](0204-sops-ksops-local-secrets.md) | Local secrets with SOPS + age, decrypted by KSOPS in Argo CD | Accepted |
 | [0205](0205-admin-ui-port-forward-only.md) | Admin UIs only through `kubectl port-forward` | Accepted |
 | [0300](0300-slo-tooling-sloth.md) | Generate SLO rules with Sloth (Pyrra as fallback) | Accepted |
