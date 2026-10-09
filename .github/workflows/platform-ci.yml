@@ -7,7 +7,7 @@ on:
     paths:
       - "deploy/**"
       - "scripts/k3d-*.sh"
-      - "scripts/platform-validate.sh"
+      - "scripts/platform-*.sh"
       - ".sops.yaml"
       - "mk/platform.mk"
       - ".github/workflows/platform-ci.yml"
@@ -16,7 +16,7 @@ on:
     paths:
       - "deploy/**"
       - "scripts/k3d-*.sh"
-      - "scripts/platform-validate.sh"
+      - "scripts/platform-*.sh"
       - ".sops.yaml"
       - "mk/platform.mk"
       - ".github/workflows/platform-ci.yml"
@@ -59,7 +59,7 @@ jobs:
           sudo tar -xzf /tmp/kubeconform.tar.gz -C /usr/local/bin kubeconform
 
       - name: Shellcheck platform scripts
-        run: shellcheck -x scripts/k3d-*.sh scripts/platform-validate.sh
+        run: shellcheck -x scripts/k3d-*.sh scripts/platform-*.sh
 
       - name: Render and validate deploy/
         run: scripts/platform-validate.sh
