@@ -9,6 +9,7 @@ resources:
   - ../../apps/iceberg-catalog
   - ../../apps/trino
   - ../../apps/freshness-exporter
+  - ../../apps/airflow
 components:
   - ../_common
 replacements:
