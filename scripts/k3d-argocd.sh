@@ -12,7 +12,7 @@ case "${1:-}" in
   ui)
     require kubectl
     log "Argo CD UI on https://localhost:$ARGOCD_UI_PORT (self-signed certificate; user admin)"
-    exec kubectl --context "$KUBE_CONTEXT" -n argocd port-forward svc/argocd-server "127.0.0.1:$ARGOCD_UI_PORT:443"
+    exec kubectl --context "$KUBE_CONTEXT" -n argocd port-forward --address 127.0.0.1 svc/argocd-server "$ARGOCD_UI_PORT:443"
     ;;
   password)
     require sops pbcopy

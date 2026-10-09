@@ -80,6 +80,7 @@ create_cluster() {
 # substitution, so neither the password nor its hash touches the disk or the process list.
 admin_password_values() {
   local hash
+  # shellcheck disable=SC2016 # $2y$ and $2a$ are literal bcrypt prefixes
   hash="$(sops -d --extract '["stringData"]["password"]' "$ARGOCD_ADMIN_SECRET" \
     | htpasswd -niBC 10 admin | cut -d: -f2- | tr -d '\n' | sed 's/^\$2y\$/$2a$/')"
   printf 'configs:\n  secret:\n    argocdServerAdminPassword: "%s"\n    argocdServerAdminPasswordMtime: "%s"\n' \
@@ -94,6 +95,7 @@ install_argocd() {
     --dry-run=client -o yaml | kc apply -f - >/dev/null
   local password_values
   password_values="$(admin_password_values)"
+  # shellcheck disable=SC2016 # literal bcrypt prefix
   [[ "$password_values" == *'"$2a$'* ]] || die "could not derive the Argo CD admin password hash"
   helm upgrade --install argocd "$(yq '.chart' "$ARGOCD_CHART_FILE")" \
     --repo "$(yq '.repo' "$ARGOCD_CHART_FILE")" \

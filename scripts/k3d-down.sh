@@ -15,7 +15,7 @@ else
 fi
 
 # A registry made with --registry-create goes away with its cluster; clean up one left by an interrupted run.
-if docker container inspect "$REGISTRY_CONTAINER" >/dev/null 2>&1; then
-  log "deleting leftover registry $REGISTRY_CONTAINER"
-  k3d registry delete "$REGISTRY_CONTAINER"
+if docker container inspect "$REGISTRY_NAME" >/dev/null 2>&1; then
+  log "deleting leftover registry $REGISTRY_NAME"
+  k3d registry delete "$REGISTRY_NAME"
 fi

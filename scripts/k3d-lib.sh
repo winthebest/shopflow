@@ -2,6 +2,7 @@
 # Cluster names and ports are a contract: docs/contracts/environment.md.
 
 # shellcheck shell=bash
+# shellcheck disable=SC2034 # variables are read by the scripts that source this file
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLUSTER="${CLUSTER:-sf-main}"
 KUBE_CONTEXT="k3d-${CLUSTER}"
@@ -36,8 +37,8 @@ HTTPS_PORT="${HTTPS_PORT:-$_https_port}"
 [[ -n "$API_PORT" && -n "$HTTPS_PORT" ]] || die "cluster '$CLUSTER' is not in docs/contracts/environment.md; set API_PORT and HTTPS_PORT"
 # Local registry port follows the API port (6550 -> 5050, 6551 -> 5051, ...).
 REGISTRY_PORT="${REGISTRY_PORT:-$((API_PORT - 1500))}"
-# k3d prefixes the container name with "k3d-".
+# Registry container (no "k3d-" prefix for --registry-create). Push to localhost:REGISTRY_PORT/<image>,
+# reference it in the cluster as <CLUSTER>-registry:5000/<image>.
 REGISTRY_NAME="${CLUSTER}-registry"
-REGISTRY_CONTAINER="k3d-${REGISTRY_NAME}"
 # Argo CD UI port-forward follows the API port too (6550 -> 18080, 6551 -> 18081, ...).
 ARGOCD_UI_PORT="${ARGOCD_UI_PORT:-$((API_PORT + 11530))}"
