@@ -68,6 +68,23 @@ every gateway 5xx as bad).
 - Migration runs as a Kubernetes Job before the services roll out: image = orders image, command `["migrate"]` (wraps `alembic upgrade head`).
 - `wal_level=logical` from day 1 (CDC in Phase 4).
 
+### CDC source objects (Phase 4; consumers: sf-data)
+
+| Object | Created by | Definition |
+|---|---|---|
+| Role `debezium` | CNPG `managed.roles` on `shop-db` (sf-platform; password in Secret `shop-db-debezium`, keys `username`, `password`); compose init SQL (sf-app, dev password) | `LOGIN REPLICATION`, not superuser, not owner of anything |
+| Table `heartbeat` | Alembic (sf-app) | `id smallint PRIMARY KEY CHECK (id = 1)`, `beat_at timestamptz NOT NULL DEFAULT now()`; one row (`id = 1`) inserted by the migration |
+| Schema `meta`, table `meta.cdc_epochs` | Alembic (sf-app) | `epoch integer PRIMARY KEY`, `started_at timestamptz NOT NULL DEFAULT now()`, `snapshot_completed_at timestamptz NULL`; written by `scripts/cdc-epoch.sh` (sf-data) as `shop_app` |
+| Publication `shop_cdc` | Alembic (sf-app) | `FOR TABLE` the 5 shop tables + `heartbeat` (explicit list, never `FOR ALL TABLES`; `meta` is never published) |
+| Grants to `debezium` | Alembic (sf-app) | `USAGE` on schema `public`; `SELECT` on every published table; `UPDATE` on `heartbeat` |
+
+- Debezium (sf-data): `publication.name=shop_cdc`, `publication.autocreate.mode=disabled`, slot `debezium_shop`,
+  `heartbeat.action.query=UPDATE heartbeat SET beat_at = now() WHERE id = 1`.
+- The migration fails if role `debezium` does not exist; the migration Job's retries cover the short window
+  before CNPG reconciles managed roles.
+- Adding a source table = one migration that creates it, adds it to `shop_cdc`, grants `SELECT` to `debezium`,
+  plus a file in `data/contracts/`. The contract check fails if published tables and contract files differ.
+
 ## Images
 
 - `ghcr.io/winthebest/shopflow-<service>` for `gateway`, `orders`, `payments`.
