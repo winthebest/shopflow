@@ -1,0 +1,198 @@
+# Namespace shop: default-deny, then exactly the flows of docs/contracts/environment.md "Network flows".
+# Pods: gateway/orders/payments/shop-migrate/shop-seed (app.kubernetes.io/name), Postgres (cnpg.io/cluster=shop-db).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: shop
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: shop
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+# Every shop service exports OTLP to the collector (otel-gateway in observability).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-otlp-egress
+  namespace: shop
+spec:
+  podSelector:
+    matchExpressions:
+      - {key: app.kubernetes.io/name, operator: In, values: [gateway, orders, payments]}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/instance: otel-gateway}
+      ports:
+        - {protocol: TCP, port: 4317}
+        - {protocol: TCP, port: 4318}
+---
+# gateway: the only target of the public edge; calls orders.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway
+  namespace: shop
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: gateway}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: envoy-gateway-system}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: envoy}
+      ports:
+        - {protocol: TCP, port: 8000}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: orders}
+      ports:
+        - {protocol: TCP, port: 8001}
+---
+# orders: called by gateway; calls payments and Postgres.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: orders
+  namespace: shop
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: orders}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: gateway}
+      ports:
+        - {protocol: TCP, port: 8001}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: payments}
+      ports:
+        - {protocol: TCP, port: 8002}
+    - to:
+        - podSelector:
+            matchLabels: {cnpg.io/cluster: shop-db}
+      ports:
+        - {protocol: TCP, port: 5432}
+---
+# payments: called by orders only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: payments
+  namespace: shop
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: payments}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: orders}
+      ports:
+        - {protocol: TCP, port: 8002}
+---
+# Migration and seed Jobs (orders image): Postgres only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: db-jobs
+  namespace: shop
+spec:
+  podSelector:
+    matchExpressions:
+      - {key: app.kubernetes.io/name, operator: In, values: [shop-migrate, shop-seed]}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {cnpg.io/cluster: shop-db}
+      ports:
+        - {protocol: TCP, port: 5432}
+---
+# Postgres: the shop and the consumers listed in the flows table; metrics for Prometheus; the CNPG operator talks to
+# the instance manager. Instances reach the API server (instance manager), each other (replication), and on AWS S3.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: shop-db
+  namespace: shop
+spec:
+  podSelector:
+    matchLabels: {cnpg.io/cluster: shop-db}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - {key: app.kubernetes.io/name, operator: In, values: [orders, shop-migrate, shop-seed]}
+        - podSelector:
+            matchLabels: {cnpg.io/cluster: shop-db}
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kafka}
+          podSelector:
+            matchLabels: {strimzi.io/kind: KafkaConnect}
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: lakehouse}
+          podSelector:
+            matchExpressions:
+              - {key: app.kubernetes.io/name, operator: In, values: [trino, polaris]}
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: airflow}
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: flink}
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: grafana}
+      ports:
+        - {protocol: TCP, port: 5432}
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: prometheus}
+      ports:
+        - {protocol: TCP, port: 9187}
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: cnpg-system}
+      ports:
+        - {protocol: TCP, port: 8000}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {cnpg.io/cluster: shop-db}
+      ports:
+        - {protocol: TCP, port: 5432}
+        - {protocol: TCP, port: 8000}
+    # API server (k3s: node IP:6443; EKS: endpoint ENIs on 443) and, on AWS, S3 for the barman-cloud plugin.
+    - ports:
+        - {protocol: TCP, port: 6443}
+        - {protocol: TCP, port: 443}

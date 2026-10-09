@@ -1,0 +1,32 @@
+# Security baseline of the core profile (docs/adr/0208-psa-and-network-policies.md): namespaces with their Pod
+# Security level, and default-deny NetworkPolicies with the allow-list of docs/contracts/environment.md.
+# Wave -2: namespaces and policies exist before any pod of the platform or the shop.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: network-policies
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: shopflow
+    shopflow.io/profile: core
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  project: default
+  sources:
+    - repoURL: https://github.com/winthebest/shopflow.git
+      targetRevision: main
+      path: deploy/platform/network-policies/local
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: shop
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
