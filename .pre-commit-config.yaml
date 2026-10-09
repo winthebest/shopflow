@@ -1,0 +1,12 @@
+# Install once per clone: `make app-hooks` (= `pre-commit install`). CI runs the same gitleaks scan as a gate.
+# Local hook on the gitleaks binary from PATH (brew install gitleaks, >= 8.30). Upstream's `gitleaks` hook builds
+# gitleaks from source with Go on first use (minutes, needs the Go module proxy), and its `gitleaks-system` hook
+# (v8.30.1) passes filenames, which `gitleaks git` rejects.
+repos:
+  - repo: local
+    hooks:
+      - id: gitleaks
+        name: gitleaks (staged changes)
+        entry: gitleaks git --pre-commit --staged --redact --verbose
+        language: system
+        pass_filenames: false
