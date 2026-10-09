@@ -53,7 +53,7 @@ Third-party images are pinned by digest (Helm values or Kustomize `images:`).
 
 ## 4. Profiles
 
-- Profile = a directory `deploy/argocd/profiles/<profile>/kustomization.yaml`:
+- Profile = a directory `deploy/argocd/profiles/<profile>/kustomization.yaml` with this exact shape:
 
   ```yaml
   apiVersion: kustomize.config.k8s.io/v1beta1
@@ -61,13 +61,24 @@ Third-party images are pinned by digest (Helm values or Kustomize `images:`).
   resources:
     - ../../apps/<component>      # app directories
   components:
-    - ../_common                  # git-revision ConfigMap + replacement into every shopflow source
+    - ../_common                  # only the git-revision ConfigMap
+  replacements:                   # MUST stay at the profile top level (not inside the Component)
+    - source: {kind: ConfigMap, name: git-revision, fieldPath: data.revision}
+      targets:
+        - select: {kind: Application}
+          fieldPaths:
+            - spec.sources.[repoURL=https://github.com/winthebest/shopflow.git].targetRevision
   ```
 
-  `deploy/argocd/profiles/_common/` (sf-platform) is a Kustomize `Component` holding the `git-revision`
-  ConfigMap and the replacement into `spec.sources.[repoURL=https://github.com/winthebest/shopflow.git].targetRevision`.
-  `make up PROFILES=core,obs` creates one root Application per profile and patches the ConfigMap with the
+  Why top level: Kustomize applies a Component before the profile's top-level `patches`. The root app sets the
+  revision with a top-level patch (`spec.source.kustomize.patches`), so a replacement inside the Component would
+  copy the unpatched value (`main`). Verified with `kubectl kustomize` (2026-10-09): replacement in the Component →
+  child stays on `main`; replacement at top level → child follows the patched revision.
+- `deploy/argocd/profiles/_common/` (sf-platform) is a Kustomize `Component` with `resources: [git-revision.yaml]`
+  only. `make up PROFILES=core,obs` creates one root Application per profile and patches the ConfigMap with the
   revision (`main` on `sf-main`, the lane branch on a lane cluster). Labels are metadata only.
+- Fail-closed check: `scripts/platform-validate.sh` (sf-platform, run in platform-ci) builds every profile with a
+  test revision patched the same way as the root app and fails if any shopflow source is not on that revision.
 - `obs` and `obs-lite` are mutually exclusive (both own the `otel-gateway` release in `observability`);
   `make up` rejects `PROFILES` containing both.
 - Profile files and their owners:
