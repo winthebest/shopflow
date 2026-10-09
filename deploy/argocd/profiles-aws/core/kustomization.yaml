@@ -1,0 +1,110 @@
+# Profile `core` on AWS (owner: sf-platform; docs/contracts/gitops.md §1b, ADR 0206). Same platform as local core,
+# with the aws variants (apps-aws/), plus External Secrets and the AWS LB Controller (sf-cloud) at wave -1 and the
+# barman-cloud plugin. No cluster-secrets: there is no SOPS/age on AWS.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../apps/gateway-api-crds
+  - ../../apps/external-secrets
+  - ../../apps/aws-lb-controller
+  - ../../apps-aws/envoy-gateway
+  - ../../apps-aws/cert-manager
+  - ../../apps-aws/cnpg
+  - ../../apps/cnpg-barman-plugin
+  - ../../apps-aws/shop-db
+  - ../../apps-aws/shop
+components:
+  - ../../profiles/_common
+# Must stay inline (see ../../profiles/_common/kustomization.yaml): the revision, then every session param this
+# profile consumes, each copied into a Helm value. Kustomize fails the build if a target source is missing.
+replacements:
+  - source: {kind: ConfigMap, name: git-revision, fieldPath: data.revision}
+    targets:
+      - select: {kind: Application}
+        fieldPaths:
+          - spec.sources.[repoURL=https://github.com/winthebest/shopflow.git].targetRevision
+  # External Secrets: role ARNs arn:aws:iam::<account>:role/shopflow-eso-<namespace>.
+  - source:
+      kind: ConfigMap
+      name: platform-params
+      fieldPath: data.[aws.accountId]
+    targets:
+      - select: {kind: Application, name: external-secrets}
+        fieldPaths:
+          - spec.sources.[path=deploy/platform/external-secrets/aws/secret-stores].helm.valuesObject.accountId
+        options: {create: true}
+  # AWS LB Controller: pods cannot read IMDS (hop limit 1), so region and VPC are explicit.
+  - source:
+      kind: ConfigMap
+      name: platform-params
+      fieldPath: data.[aws.region]
+    targets:
+      - select: {kind: Application, name: aws-lb-controller}
+        fieldPaths:
+          - spec.sources.[chart=aws-load-balancer-controller].helm.valuesObject.region
+        options: {create: true}
+  - source:
+      kind: ConfigMap
+      name: platform-params
+      fieldPath: data.[aws.vpcId]
+    targets:
+      - select: {kind: Application, name: aws-lb-controller}
+        fieldPaths:
+          - spec.sources.[chart=aws-load-balancer-controller].helm.valuesObject.vpcId
+        options: {create: true}
+  - source:
+      kind: ConfigMap
+      name: platform-params
+      fieldPath: data.[aws.clusterName]
+    targets:
+      - select: {kind: Application, name: aws-lb-controller}
+        fieldPaths:
+          - spec.sources.[chart=aws-load-balancer-controller].helm.valuesObject.clusterName
+        options: {create: true}
+  # Edge: the NLB accepts only the operator's IP.
+  - source:
+      kind: ConfigMap
+      name: platform-params
+      fieldPath: data.operatorCidr
+    targets:
+      - select: {kind: Application, name: envoy-gateway}
+        fieldPaths:
+          - spec.sources.[path=deploy/charts/edge].helm.valuesObject.operatorCidr
+        options: {create: true}
+  # shop-db: this session's backup chain, and where to restore from.
+  - source:
+      kind: ConfigMap
+      name: platform-params
+      fieldPath: data.[aws.dataBucket]
+    targets:
+      - select: {kind: Application, name: shop-db}
+        fieldPaths:
+          - spec.sources.[path=deploy/charts/shop-db].helm.valuesObject.backup.bucket
+        options: {create: true}
+  - source:
+      kind: ConfigMap
+      name: platform-params
+      fieldPath: data.[pg.serverName]
+    targets:
+      - select: {kind: Application, name: shop-db}
+        fieldPaths:
+          - spec.sources.[path=deploy/charts/shop-db].helm.valuesObject.backup.serverName
+        options: {create: true}
+  - source:
+      kind: ConfigMap
+      name: platform-params
+      fieldPath: data.[pg.recoveryFrom]
+    targets:
+      - select: {kind: Application, name: shop-db}
+        fieldPaths:
+          - spec.sources.[path=deploy/charts/shop-db].helm.valuesObject.recovery.fromServerName
+        options: {create: true}
+  - source:
+      kind: ConfigMap
+      name: platform-params
+      fieldPath: data.[pg.recoveryTargetTime]
+    targets:
+      - select: {kind: Application, name: shop-db}
+        fieldPaths:
+          - spec.sources.[path=deploy/charts/shop-db].helm.valuesObject.recovery.targetTime
+        options: {create: true}

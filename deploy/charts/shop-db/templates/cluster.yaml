@@ -70,5 +70,8 @@ spec:
   {{- end }}
   storage:
     size: {{ .Values.storage.size }}
+    {{- with .Values.storage.storageClass }}
+    storageClass: {{ . }}
+    {{- end }}
   resources:
     {{- toYaml .Values.resources | nindent 4 }}

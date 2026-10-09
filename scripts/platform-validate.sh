@@ -69,7 +69,7 @@ for profile_dir in "$WORK"/deploy/argocd/profiles/*/ "$WORK"/deploy/argocd/profi
   fi
   # Every param a profile reads must be declared (a typo would otherwise copy nothing and keep a chart default).
   for key in $(yq '.replacements[]? | select(.source.name == "platform-params") | .source.fieldPath' "$profile_dir/kustomization.yaml" \
-    | sed -n 's/^data\.\[\(.*\)\]$/\1/p'); do
+    | sed -n -e 's/^data\.\[\(.*\)\]$/\1/p' -e 's/^data\.\([^.[]*\)$/\1/p'); do
     KEY="$key" yq -e '.data | has(strenv(KEY))' "$PARAMS_FILE" >/dev/null 2>&1 \
       || fail "profile $overlay/$profile reads undeclared param $key"
   done
@@ -115,6 +115,11 @@ render_path() { # app_file index name namespace
       [[ -z "$vf" ]] && continue
       if [[ "$vf" == \$values/* ]]; then args+=(--values "${vf/\$values/$WORK}"); else args+=(--values "$dir/$vf"); fi
     done < <(yq "$s.helm.valueFiles[]?" "$app")
+    # valuesObject (session params on aws, ADR 0206) wins over the value files, as in Argo CD.
+    if [[ "$(yq "$s.helm.valuesObject // \"\"" "$app")" != "" ]]; then
+      yq "$s.helm.valuesObject" "$app" > "$WORK/values-$name-$2.yaml"
+      args+=(--values "$WORK/values-$name-$2.yaml")
+    fi
     helm "${args[@]}"
   else
     find "$dir" -maxdepth 1 -name '*.yaml' -exec sh -c 'cat "$1"; echo "---"' _ {} \;

@@ -6,6 +6,7 @@ image: ghcr.io/cloudnative-pg/postgresql:17.11-minimal-trixie@sha256:ca2c3bb893d
 instances: 1
 storage:
   size: 5Gi
+  storageClass: ""   # empty = the cluster default (local-path on k3d)
 resources:
   requests: {cpu: 100m, memory: 256Mi}
   limits: {memory: 512Mi}

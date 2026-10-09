@@ -1,6 +1,6 @@
 # Session parameters of a root app (docs/adr/0206-root-apps-overlays-and-params.md). scripts/platform-root-apps.sh
 # sets `data` from its --param key=value flags; an aws profile copies a key into a Helm value with a top-level
-# replacement (source fieldPath `data.[<key>]`). Every key must be declared here: unknown keys are refused.
+# replacement (source fieldPath `data.[<key>]` for keys with dots, `data.<key>` otherwise). Every key must be declared here: unknown keys are refused.
 # `shopflow.io/required-aws` lists the keys that must be non-empty on --overlay aws (fail-closed: a missing value
 # would otherwise deploy a chart default such as an empty VPC ID or a placeholder account).
 # local-config: used during the Kustomize build only, never applied to the cluster.
@@ -16,7 +16,7 @@ data:
   pg.recoveryFrom: ""        # serverName of the backup chain to restore from; empty = initdb (first session)
   pg.serverName: ""          # this session's backup chain (shop-db-<session>)
   pg.recoveryTargetTime: ""  # PITR target, empty = latest
-  cdcEpoch: ""               # this session's CDC epoch (cloud-up also writes it to SSM for ESO)
+  cdcEpoch: ""               # this session's CDC epoch (scripts/cdc-epoch.sh writes the Secret; SSM keeps the last one)
   aws.region: ""
   aws.accountId: ""
   aws.vpcId: ""

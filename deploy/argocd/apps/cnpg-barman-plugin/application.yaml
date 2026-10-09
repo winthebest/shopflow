@@ -1,0 +1,42 @@
+# CNPG-I barman-cloud plugin (AWS only, listed in profiles-aws/core): WAL archiving, base backups and recovery for
+# shop-db to S3 (ADR 0203, contract with sf-cloud's cloud-up/cloud-down). Wave 0: it needs cert-manager (TLS between
+# operator and plugin) and the CNPG operator from wave -1.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cnpg-barman-plugin
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: shopflow
+    shopflow.io/profile: core
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  sources:
+    - repoURL: https://cloudnative-pg.github.io/charts
+      chart: plugin-barman-cloud
+      targetRevision: 0.8.0
+      helm:
+        releaseName: barman-cloud
+        valueFiles:
+          - $values/deploy/platform/cnpg/aws/barman-plugin-values.yaml
+    - repoURL: https://github.com/winthebest/shopflow.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cnpg-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

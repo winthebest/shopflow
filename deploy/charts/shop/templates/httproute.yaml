@@ -1,5 +1,6 @@
 {{- if .Values.route.enabled }}
-# The only public route: shop host -> gateway Service. The Gateway admits routes from namespace `shop` only.
+# The only public route: shop host (any host when route.hostname is empty) -> gateway Service. The Gateway
+# admits routes from namespace `shop` only.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -11,8 +12,10 @@ spec:
     - name: {{ .Values.route.parentRef.name }}
       namespace: {{ .Values.route.parentRef.namespace }}
       sectionName: {{ .Values.route.parentRef.sectionName }}
+  {{- with .Values.route.hostname }}
   hostnames:
-    - {{ required "route.hostname is required" .Values.route.hostname | quote }}
+    - {{ . | quote }}
+  {{- end }}
   rules:
     - matches:
         - path:

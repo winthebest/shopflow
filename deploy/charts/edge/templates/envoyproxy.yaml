@@ -24,7 +24,11 @@ spec:
         annotations:
           {{- toYaml . | nindent 10 }}
         {{- end }}
-        {{- with .Values.operatorCidr }}
+        {{- if .Values.service.loadBalancerClass }}
+        # A cloud load balancer must never be open to the internet: operatorCidr is required with a class.
         loadBalancerSourceRanges:
-          - {{ . | quote }}
+          - {{ required "operatorCidr is required when service.loadBalancerClass is set (session param operatorCidr)" .Values.operatorCidr | quote }}
+        {{- else if .Values.operatorCidr }}
+        loadBalancerSourceRanges:
+          - {{ .Values.operatorCidr | quote }}
         {{- end }}

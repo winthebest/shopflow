@@ -1,0 +1,9 @@
+# EKS overlay: two replicas per service (chart default), telemetry on, demo data seeded on a fresh database
+# (idempotent after a restore), and a route for any host: clients call the NLB's DNS name, unknown before the session.
+environment: aws
+otel:
+  enabled: true
+seed:
+  enabled: true
+route:
+  hostname: ""

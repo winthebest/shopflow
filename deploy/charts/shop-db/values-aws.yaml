@@ -1,0 +1,14 @@
+# EKS: backups and recovery through the barman-cloud plugin, role passwords from SSM through External Secrets.
+# Session params from profiles-aws/core (ADR 0206): aws.dataBucket -> backup.bucket, pg.serverName ->
+# backup.serverName, pg.recoveryFrom -> recovery.fromServerName, pg.recoveryTargetTime -> recovery.targetTime.
+backup:
+  enabled: true
+externalSecrets:
+  enabled: true
+# The Iceberg catalog on AWS is Glue (ADR 0506): no Polaris metastore.
+roles:
+  polaris:
+    enabled: false
+databases:
+  catalog:
+    enabled: false

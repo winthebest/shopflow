@@ -68,7 +68,8 @@ seed:
   command: ["seed"]
   activeDeadlineSeconds: 300
 
-# The only public route (docs/adr/0205-admin-ui-port-forward-only.md). Hostname is set per environment.
+# The only public route (docs/adr/0205-admin-ui-port-forward-only.md). Hostname is set per environment; empty
+# matches any host (AWS).
 route:
   enabled: true
   service: gateway
