@@ -90,6 +90,12 @@ every gateway 5xx as bad).
   |---|---|---|---|
   | `trino_pg` | `shop-db-trino-pg` | Alembic (sf-app): `USAGE` on `public`, `meta`; `SELECT` on the 5 shop tables, `heartbeat`, `meta.cdc_epochs`; nothing else | Trino catalog `pg` (sf-data) |
   | `polaris` | `shop-db-polaris` | owns Database `catalog` (CNPG `Database`, sf-platform) and its schema `polaris_schema`; no access to `shop` | Polaris (sf-data) |
+  | `airflow` | `shop-db-airflow` | owns Database `airflow` (metadata); no access to other databases | Airflow (sf-data) |
+  | `flink_serving` | `shop-db-flink-serving` | owns Database `serving`; creates and upserts `kpi_minute` (DDL by sf-data's init Job) | Flink (sf-data) |
+  | `grafana_serving` | `shop-db-grafana-serving` | `CONNECT` on `serving` + `SELECT` on its tables (granted by `flink_serving`); read-only | Grafana KPI datasource (sf-data) |
+- `pg_hba` confines each role above to its own database (as for `debezium`/`trino_pg`/`polaris`). Consumers in other
+  namespaces get their copies through copy Jobs (gitops.md §5). The serving datasource and KPI dashboard are
+  sf-data objects in `observability` (sf-sre reviews).
 - `debezium` has `REPLICATION`: it could open its own logical slot with another output plugin and read changes of
   every table, whatever the publication and grants say. Treat Secret `shop-db-debezium` (and any copy for Kafka
   Connect) as a database-wide read credential: limit who can read it.
