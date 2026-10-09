@@ -97,18 +97,23 @@ tofu -chdir=infra/tofu/network init -backend-config="bucket=shopflow-tfstate-<AC
 tofu -chdir=infra/tofu/network apply
 ```
 
-Secrets for External Secrets (SecureString, never on a command line):
+Secrets for External Secrets (SecureString). Values go from their producer to SSM through a pipe or a silent
+prompt: never a command line, and never a file (backups and sync tools such as Time Machine or iCloud may copy it
+before it is deleted).
 
 ```sh
-make cloud-seed-params < secrets.json                  # {"<namespace>": {"<name>": "<value>" or {"<key>": "<value>"}}}
-make cloud-seed-params CLOUD_ARGS=--rotate < new.json  # overwrite the ones given
-scripts/data-secrets.sh --aws-json | scripts/aws-seed-params.sh   # sf-data's secrets, with their groups
+# Generated values, with their groups (sf-data); the producer refuses to write to a terminal.
+scripts/data-secrets.sh --aws-json | make cloud-seed-params
+# A value only you know (e.g. the Discord webhook): asked without echo, one prompt per key.
+make cloud-seed-params CLOUD_ARGS="--prompt observability/alertmanager-webhook --keys url"
+# Replace existing values (and whole groups): add --rotate.
+scripts/data-secrets.sh --aws-json | make cloud-seed-params CLOUD_ARGS=--rotate
 ```
 
-Values that must match each other (a password and the bcrypt hash of it in another Secret) are declared by the
-producer as a group, `"_groups": [["lakehouse/trino-dbt", "lakehouse/trino-password-db"]]`. A group is written
-whole or not at all: if SSM holds only part of it and `--rotate` is not given, the script stops before writing any
-parameter.
+Values that must match each other (passwords and the bcrypt hashes of them in another Secret) are declared by the
+producer as a group, e.g. `"_groups": [["lakehouse/trino-dbt", "lakehouse/trino-exporter",
+"lakehouse/trino-password-db"]]`. A group is written whole or not at all: if SSM holds only part of it and
+`--rotate` is not given, the script stops before writing any parameter.
 
 ## Session lifecycle
 
