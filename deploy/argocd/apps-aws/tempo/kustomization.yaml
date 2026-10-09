@@ -1,0 +1,21 @@
+# AWS variant of Tempo: aws values and overlay.
+# Each `test` op fails the build if the local app's source layout changes, instead of patching the wrong entry.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../apps/tempo
+patches:
+  - target: {kind: Application, name: tempo}
+    patch: |-
+      - op: test
+        path: /spec/sources/0/helm/valueFiles/1
+        value: $values/deploy/platform/tempo/local/values.yaml
+      - op: replace
+        path: /spec/sources/0/helm/valueFiles/1
+        value: $values/deploy/platform/tempo/aws/values.yaml
+      - op: test
+        path: /spec/sources/2/path
+        value: deploy/platform/tempo/local
+      - op: replace
+        path: /spec/sources/2/path
+        value: deploy/platform/tempo/aws

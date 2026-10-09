@@ -1,49 +1,5 @@
-# Local (k3d) overlay: short retention, small PVCs, laptop-sized requests (profile budget in plan.md).
-prometheus:
-  prometheusSpec:
-    retention: 3d
-    retentionSize: 4GB
-    resources:
-      requests: {cpu: 200m, memory: 512Mi}
-      limits: {memory: 1Gi}
-    storageSpec:
-      volumeClaimTemplate:
-        spec:
-          accessModes: [ReadWriteOnce]
-          resources:
-            requests:
-              storage: 5Gi
-
-alertmanager:
-  alertmanagerSpec:
-    resources:
-      requests: {cpu: 10m, memory: 32Mi}
-      limits: {memory: 64Mi}
-
-prometheusOperator:
-  resources:
-    requests: {cpu: 20m, memory: 64Mi}
-    limits: {memory: 128Mi}
-
-grafana:
-  # Measured on the sf-sre lane cluster: Grafana 13 sits at ~250Mi after start (256Mi limit → OOMKilled 3×).
-  resources:
-    requests: {cpu: 50m, memory: 256Mi}
-    limits: {memory: 512Mi}
-  sidecar:
-    resources:
-      requests: {cpu: 5m, memory: 64Mi}
-      limits: {memory: 128Mi}
-
-kube-state-metrics:
-  resources:
-    requests: {cpu: 10m, memory: 32Mi}
-    limits: {memory: 96Mi}
-
+# Local (k3d) overlay. Sizing and retention are shared (base/values.yaml).
 prometheus-node-exporter:
   # k3d nodes are containers in the Docker Desktop VM: the host root is not a shared mount.
   hostRootFsMount:
     enabled: false
-  resources:
-    requests: {cpu: 10m, memory: 24Mi}
-    limits: {memory: 64Mi}

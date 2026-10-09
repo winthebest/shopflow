@@ -1,0 +1,16 @@
+# Discord webhook for Alertmanager on AWS (mounted as a file, never in values). The owner seeds it without echo:
+#   make cloud-seed-params CLOUD_ARGS="--prompt observability/alertmanager-webhook --keys url"
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: alertmanager-webhook
+  namespace: observability
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: ssm-observability}
+  target: {name: alertmanager-webhook, creationPolicy: Owner}
+  data:
+    - {secretKey: url, remoteRef: {key: /shopflow/aws/observability/alertmanager-webhook, property: url}}

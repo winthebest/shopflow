@@ -1,0 +1,20 @@
+# Profile `obs-lite` on AWS (owner: sf-sre; docs/contracts/gitops.md §1b): metrics, SLOs and the gateway collector
+# (aws variants), plus OpenCost (sf-cloud, AWS-only; needs Prometheus). slo and grafana-dashboards are identical
+# to local. Mutually exclusive with `obs` (same otel-gateway release).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../apps-aws/kube-prometheus-stack
+  - ../../apps/slo
+  - ../../apps/grafana-dashboards
+  - ../../apps-aws/otel-collector-lite
+  - ../../apps/opencost
+components:
+  - ../../profiles/_common
+# Must stay inline (see ../../profiles/_common/kustomization.yaml). No session parameters are consumed.
+replacements:
+  - source: {kind: ConfigMap, name: git-revision, fieldPath: data.revision}
+    targets:
+      - select: {kind: Application}
+        fieldPaths:
+          - spec.sources.[repoURL=https://github.com/winthebest/shopflow.git].targetRevision

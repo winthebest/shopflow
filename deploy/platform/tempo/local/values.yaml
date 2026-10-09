@@ -1,9 +1,2 @@
-# Local (k3d) overlay: 2-day retention, small PVC, laptop-sized requests.
-tempo:
-  retention: 48h
-  resources:
-    requests: {cpu: 50m, memory: 192Mi}
-    limits: {memory: 512Mi}
-persistence:
-  enabled: true
-  size: 5Gi
+# Local (k3d) overlay: nothing differs from base/values.yaml today.
+{}

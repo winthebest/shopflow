@@ -1,0 +1,7 @@
+# AWS overlay: shared manifests + Secrets from SSM through External Secrets (no SOPS/age on AWS).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base
+  - external-secrets/grafana-admin.yaml
+  - external-secrets/alertmanager-webhook.yaml

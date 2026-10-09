@@ -25,6 +25,7 @@ loki:
   limits_config:
     allow_structured_metadata: true
     volume_enabled: true
+    retention_period: 48h   # lab sessions; local and aws alike
   compactor:
     retention_enabled: true
     delete_request_store: filesystem
@@ -33,6 +34,11 @@ loki:
 
 singleBinary:
   replicas: 1
+  persistence:
+    size: 5Gi
+  resources:
+    requests: {cpu: 50m, memory: 192Mi}
+    limits: {memory: 512Mi}
 write: {replicas: 0}
 read: {replicas: 0}
 backend: {replicas: 0}

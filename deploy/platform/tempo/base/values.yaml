@@ -7,6 +7,10 @@ tempo:
   # The chart has no digest field; the tag is used verbatim after "repo:", so tag@digest pins the image.
   tag: "3.1.0@sha256:3076b8dcdfb32fd6bc5ccef85e7b7313e6199b9cb84366257fc17ecb696db5fd"
   reportingEnabled: false
+  retention: 48h   # lab sessions; local and aws alike
+  resources:
+    requests: {cpu: 50m, memory: 192Mi}
+    limits: {memory: 512Mi}
   metricsGenerator:
     enabled: false
   receivers:
@@ -20,3 +24,7 @@ tempo:
     allowPrivilegeEscalation: false
     capabilities: {drop: [ALL]}
     seccompProfile: {type: RuntimeDefault}
+
+persistence:
+  enabled: true
+  size: 5Gi
