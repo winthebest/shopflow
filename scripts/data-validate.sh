@@ -193,9 +193,36 @@ SH
   echo "cdc-epoch.sh new: Secret + KafkaTopic valid (fake kubectl)"
 }
 
+# `data-secrets.sh --aws-json` (input of scripts/aws-seed-params.sh): the Trino Secrets with the names and keys of the
+# local SOPS files, the Trino user group complete, and password.db holding bcrypt hashes of exactly those passwords.
+# Values stay in this process: never printed, never on a command line.
+check_aws_json() {
+  local json dir name
+  json="$(scripts/data-secrets.sh --aws-json)"
+  jq -e '(keys == ["_groups", "lakehouse"])
+    and (._groups == [["lakehouse/trino-dbt", "lakehouse/trino-exporter", "lakehouse/trino-password-db"]])
+    and ([.lakehouse[][] | select(type != "string" or length == 0)] == [])' <<< "$json" > /dev/null \
+    || { echo "FAIL data-secrets.sh --aws-json: unexpected shape, group or empty value" >&2; return 1; }
+  for name in $(jq -r '.lakehouse | keys[]' <<< "$json"); do
+    [[ "$(jq -c --arg n "$name" '.lakehouse[$n] | keys' <<< "$json")" \
+      == "$(yq -o=json -I=0 '.stringData | keys | sort' "deploy/platform/trino/local/secrets/$name.enc.yaml")" ]] \
+      || { echo "FAIL --aws-json $name: keys differ from deploy/platform/trino/local/secrets/$name.enc.yaml" >&2; return 1; }
+  done
+  dir="$(mktemp -d)"
+  jq -r '.lakehouse["trino-password-db"]["password.db"]' <<< "$json" > "$dir/password.db"
+  for name in dbt exporter; do
+    jq -r --arg n "trino-$name" '.lakehouse[$n].password' <<< "$json" \
+      | htpasswd -vi "$dir/password.db" "$name" 2> /dev/null \
+      || { rm -rf "$dir"; echo "FAIL --aws-json: password.db does not match trino-$name" >&2; return 1; }
+  done
+  rm -rf "$dir"
+  echo "data-secrets.sh --aws-json: Trino group complete, keys match the SOPS files, bcrypt matches"
+}
+
 generate_schemas
 check_secrets
 check_cdc_epoch_new
+check_aws_json
 RENDER_DIR="$(mktemp -d)"
 trap 'rm -rf "$RENDER_DIR"' EXIT
 validated=0
