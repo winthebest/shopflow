@@ -1,0 +1,74 @@
+{{- $roles := include "shop-db.enabled" .Values.roles | fromJsonArray -}}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: shop-db
+  labels:
+    app.kubernetes.io/part-of: shopflow
+spec:
+  instances: {{ .Values.instances }}
+  imageName: {{ required "image is required" .Values.image }}
+  enableSuperuserAccess: false
+  postgresql:
+    parameters:
+      {{- toYaml .Values.postgresql.parameters | nindent 6 }}
+    # Each consumer role may only reach its own database; CNPG keeps its default rules after these. debezium's
+    # logical replication connections name their database, so they match its first rule; `all` never matches
+    # physical replication, which only streaming_replica may use.
+    pg_hba:
+      {{- range $name := $roles }}
+      {{- $role := index $.Values.roles $name }}
+      - host {{ $role.database }} {{ $name }} all scram-sha-256
+      - host all {{ $name }} all reject
+      {{- end }}
+  bootstrap:
+    {{- if .Values.recovery.fromServerName }}
+    # Restore along the backup chain; database shop and its owner come with the backup.
+    recovery:
+      source: origin
+      {{- with .Values.recovery.targetTime }}
+      recoveryTarget:
+        targetTime: {{ . | quote }}
+      {{- end }}
+    {{- else }}
+    initdb:
+      database: shop
+      owner: shop_app
+    {{- end }}
+  managed:
+    roles:
+      {{- range $name := $roles }}
+      {{- $role := index $.Values.roles $name }}
+      - name: {{ $name }}
+        ensure: present
+        comment: {{ $role.comment | quote }}
+        login: true
+        replication: {{ $role.replication | default false }}
+        superuser: false
+        createdb: false
+        createrole: false
+        inherit: {{ not ($role.replication | default false) }}
+        passwordSecret:
+          name: {{ $role.secret }}
+      {{- end }}
+  {{- if .Values.backup.enabled }}
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: {{ include "shop-db.barmanObject" . }}
+        serverName: {{ required "backup.serverName (session param pg.serverName) is required" .Values.backup.serverName }}
+  {{- end }}
+  {{- if .Values.recovery.fromServerName }}
+  externalClusters:
+    - name: origin
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: {{ include "shop-db.barmanObject" . }}
+          serverName: {{ .Values.recovery.fromServerName }}
+  {{- end }}
+  storage:
+    size: {{ .Values.storage.size }}
+  resources:
+    {{- toYaml .Values.resources | nindent 4 }}

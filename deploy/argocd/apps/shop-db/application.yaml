@@ -13,6 +13,16 @@ metadata:
 spec:
   project: default
   sources:
+    # Cluster, roles, databases (in-repo chart; session params reach it as Helm values on AWS, ADR 0206).
+    - repoURL: https://github.com/winthebest/shopflow.git
+      targetRevision: main
+      path: deploy/charts/shop-db
+      helm:
+        releaseName: shop-db
+        valueFiles:
+          - values.yaml
+          - values-local.yaml
+    # Role passwords from SOPS through KSOPS (the aws variant replaces this with External Secrets in the chart).
     - repoURL: https://github.com/winthebest/shopflow.git
       targetRevision: main
       path: deploy/platform/shop-db/local
