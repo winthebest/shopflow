@@ -6,10 +6,12 @@ import subprocess
 import sys
 import textwrap
 
+import httpx
 import pytest
+from fastapi import FastAPI
 from opentelemetry.sdk.trace import TracerProvider
 
-from shopflow_common.log import configure_logging
+from shopflow_common.log import AccessLogMiddleware, configure_logging
 
 
 @pytest.fixture
@@ -127,3 +129,39 @@ def test_sdk_disabled_installs_nothing():
     assert summary["provider"] is False
     assert access["trace_id"] == ""
     assert access["span_id"] == ""
+
+
+@pytest.mark.usefixtures("restore_root_logger")
+async def test_unhandled_error_is_logged_inside_the_span(capsys):
+    configure_logging("svc", "INFO")
+    app = FastAPI()
+    app.add_middleware(AccessLogMiddleware)
+
+    @app.get("/boom")
+    async def boom():
+        raise RuntimeError("boom")
+
+    tracer = TracerProvider().get_tracer("test")
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    with tracer.start_as_current_span("request") as span:
+        async with httpx.AsyncClient(transport=transport, base_url="http://svc") as client:
+            response = await client.get("/boom")
+
+    lines = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+    error = next(line for line in lines if line["message"] == "unhandled error")
+    access = next(line for line in lines if line["message"] == "request")
+    assert response.status_code == 500
+    assert error["trace_id"] == format(span.get_span_context().trace_id, "032x")
+    assert "RuntimeError: boom" in error["exception"]
+    assert access["level"] == "ERROR"
+    assert access["http_status"] == 500
+
+
+@pytest.mark.usefixtures("restore_root_logger")
+def test_extra_fields_cannot_overwrite_contract_keys(capsys):
+    configure_logging("svc", "INFO")
+    logging.getLogger("x").info("hello", extra={"service": "spoofed", "trace_id": "nope", "color_message": "x"})
+    line = last_json_line(capsys.readouterr().out)
+    assert line["service"] == "svc"
+    assert line["trace_id"] == ""
+    assert "color_message" not in line

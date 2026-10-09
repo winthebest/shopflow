@@ -1,4 +1,4 @@
-"""Call the payments provider with an 800ms total deadline and classify the answer."""
+"""Call the payments provider with an 800ms total deadline and classify the answer. Never raises."""
 
 import asyncio
 from dataclasses import dataclass
@@ -23,11 +23,14 @@ async def charge(client: httpx.AsyncClient, order_id: int, amount: Decimal) -> C
             response = await client.post("/charges", json={"order_id": order_id, "amount": str(amount)})
     except (TimeoutError, httpx.TimeoutException):
         return ChargeOutcome("error", error="timeout")
-    except httpx.TransportError:
+    except httpx.HTTPError:
         return ChargeOutcome("error", error="unavailable")
 
     if response.status_code == 201:
-        return ChargeOutcome("succeeded", charge_id=response.json()["charge_id"])
+        try:
+            return ChargeOutcome("succeeded", charge_id=str(response.json()["charge_id"]))
+        except (ValueError, KeyError, TypeError):  # answered, but not in the agreed shape: treat as no answer
+            return ChargeOutcome("error", error="unavailable")
     if response.status_code == 402:
         return ChargeOutcome("declined")
     return ChargeOutcome("error", error="unavailable")

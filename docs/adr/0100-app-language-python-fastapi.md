@@ -32,7 +32,7 @@ checkout schema); each service still builds its own image from a locked `uv.lock
 
 - Positive: one language across app, data and AI code; FastAPI + OTel auto-instrumentation gives `http.route`
   templates and server spans for the SLIs with little code; `alembic check` in tests keeps models and migrations
-  identical; uv makes locked installs and Docker layer caching simple.
+  in sync (tables, columns, types, keys, indexes, server defaults; not CHECK constraints or triggers); uv makes locked installs and Docker layer caching simple.
 - Negative / risks: Python per-request overhead and memory (~45–70MB per service measured on compose) are higher than Go; the GIL
   limits one process to one core, so scaling is by replicas, not threads. Async SQLAlchemy needs care (no lazy
   loading, explicit transactions).

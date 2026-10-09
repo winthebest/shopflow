@@ -13,10 +13,11 @@ from shopflow_common.schemas import CheckoutRequest
 
 # The demo catalog is small; the cap keeps the endpoint bounded if it grows.
 PRODUCTS_LIMIT = 100
+MAX_TOTAL = Decimal("9999999999.99")  # Numeric(12, 2)
 
 
-class UnknownReferenceError(Exception):
-    """The request names a customer or product that does not exist."""
+class InvalidCheckoutError(Exception):
+    """The request names a customer or product that does not exist, or its total does not fit the schema."""
 
 
 class ProductOut(BaseModel):
@@ -59,16 +60,18 @@ async def create_pending_order(
     """Insert the order (`pending`) and its items in one transaction, priced from the catalog."""
     async with sessionmaker.begin() as session:
         if await session.get(Customer, req.customer_id) is None:
-            raise UnknownReferenceError(f"unknown customer {req.customer_id}")
+            raise InvalidCheckoutError(f"unknown customer {req.customer_id}")
 
         product_ids = [item.product_id for item in req.items]
         rows = await session.execute(select(Product.id, Product.price).where(Product.id.in_(product_ids)))
         prices: dict[int, Decimal] = dict(rows.all())
         missing = sorted(set(product_ids) - prices.keys())
         if missing:
-            raise UnknownReferenceError(f"unknown products {missing}")
+            raise InvalidCheckoutError(f"unknown products {missing}")
 
         total = sum((prices[item.product_id] * item.quantity for item in req.items), Decimal(0))
+        if total > MAX_TOTAL:
+            raise InvalidCheckoutError(f"order total {total} exceeds {MAX_TOTAL}")
         order = Order(customer_id=req.customer_id, status="pending", total=total)
         session.add(order)
         await session.flush()  # assigns order.id

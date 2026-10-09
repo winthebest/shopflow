@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from alembic import context
-from sqlalchemy import pool
+from sqlalchemy import pool, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -29,8 +29,12 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
+    context.configure(
+        connection=connection, target_metadata=target_metadata, compare_type=True, compare_server_default=True
+    )
     with context.begin_transaction():
+        # Serialize concurrent `migrate` runs (Job retries, two compose runs): the second waits, then finds head.
+        connection.execute(text("SELECT pg_advisory_xact_lock(hashtext('shopflow-alembic'))"))
         context.run_migrations()
 
 

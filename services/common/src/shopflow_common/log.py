@@ -15,7 +15,12 @@ from opentelemetry import trace
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 # Attributes every LogRecord has; anything else on the record came from `extra=` and is emitted as a field.
-_STANDARD_ATTRS = set(logging.LogRecord("", 0, "", 0, "", None, None).__dict__) | {"message", "asctime"}
+# `color_message` is uvicorn's ANSI-colored duplicate of the message.
+_STANDARD_ATTRS = set(logging.LogRecord("", 0, "", 0, "", None, None).__dict__) | {
+    "message",
+    "asctime",
+    "color_message",
+}
 
 HEALTH_PATHS = frozenset({"/healthz", "/readyz"})
 
@@ -40,11 +45,9 @@ class JsonFormatter(logging.Formatter):
             "span_id": format(ctx.span_id, "016x") if ctx.is_valid else "",
             "logger": record.name,
         }
-        entry.update(
-            (key, value)
-            for key, value in record.__dict__.items()
-            if key not in _STANDARD_ATTRS and not key.startswith("_")
-        )
+        for key, value in record.__dict__.items():
+            if key not in _STANDARD_ATTRS and not key.startswith("_"):
+                entry.setdefault(key, value)  # an `extra=` field never overwrites a contract key
         if record.exc_info:
             entry["exception"] = self.formatException(record.exc_info)
         return json.dumps(entry, default=str)
@@ -61,13 +64,16 @@ def configure_logging(service: str, level: str = "INFO") -> None:
         uvicorn_logger = logging.getLogger(name)
         uvicorn_logger.handlers.clear()
         uvicorn_logger.propagate = True
+    # httpx logs every outbound request at INFO (including probes); access lines already cover requests.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 class AccessLogMiddleware:
-    """One JSON line per request (health probes skipped).
+    """One JSON line per request (health probes skipped), at ERROR for 5xx.
 
     Pure ASGI rather than BaseHTTPMiddleware: no extra task per request, and it runs inside the OTel middleware
-    so the request span is current when the line is written.
+    so the request span is current when the line is written. Unhandled exceptions are logged here, inside the
+    span, so the traceback line carries `trace_id` (uvicorn's own traceback line is written after the span ends).
     """
 
     def __init__(self, app: ASGIApp) -> None:
@@ -90,8 +96,12 @@ class AccessLogMiddleware:
 
         try:
             await self.app(scope, receive, send_with_status)
+        except Exception:
+            self.log.exception("unhandled error", extra={"http_method": scope["method"], "http_path": scope["path"]})
+            raise
         finally:
-            self.log.info(
+            self.log.log(
+                logging.ERROR if status >= 500 else logging.INFO,
                 "request",
                 extra={
                     "http_method": scope["method"],

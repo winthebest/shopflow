@@ -64,7 +64,11 @@ def create_app(settings: Settings | None = None, orders_transport: httpx.AsyncBa
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         async with httpx.AsyncClient(
-            base_url=settings.orders_url, timeout=ORDERS_TIMEOUT_S, transport=orders_transport
+            base_url=settings.orders_url,
+            timeout=ORDERS_TIMEOUT_S,
+            # Drop idle connections before uvicorn's 5s keep-alive timeout closes them under us.
+            limits=httpx.Limits(keepalive_expiry=2),
+            transport=orders_transport,
         ) as client:
             app.state.orders = client
             yield

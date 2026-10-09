@@ -21,9 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from orders.db import create_engine
 from orders.payments_client import PAYMENTS_TIMEOUT_S, charge
 from orders.repository import (
+    InvalidCheckoutError,
     OrderOut,
     ProductOut,
-    UnknownReferenceError,
     create_pending_order,
     get_order,
     list_products,
@@ -50,7 +50,11 @@ def create_app(settings: Settings | None = None, payments_transport: httpx.Async
         engine = create_engine(settings.database_url.get_secret_value())
         try:
             async with httpx.AsyncClient(
-                base_url=settings.payments_url, timeout=PAYMENTS_TIMEOUT_S, transport=payments_transport
+                base_url=settings.payments_url,
+                timeout=PAYMENTS_TIMEOUT_S,
+                # Drop idle connections before uvicorn's 5s keep-alive timeout closes them under us.
+                limits=httpx.Limits(keepalive_expiry=2),
+                transport=payments_transport,
             ) as payments:
                 app.state.engine = engine
                 app.state.sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
@@ -87,11 +91,19 @@ def create_app(settings: Settings | None = None, payments_transport: httpx.Async
         sessionmaker = request.app.state.sessionmaker
         try:
             order_id, total = await create_pending_order(sessionmaker, body)
-        except UnknownReferenceError as exc:
+        except InvalidCheckoutError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=422)
 
         outcome = await charge(request.app.state.payments, order_id, total)
-        status = await settle_order(sessionmaker, order_id, total, outcome)
+        try:
+            status = await settle_order(sessionmaker, order_id, total, outcome)
+        except Exception:
+            # The order stays `pending` and the provider outcome lives only in this line: reconcile from it.
+            log.exception(
+                "settle failed, order left pending",
+                extra={"order_id": order_id, "payment_status": outcome.status, "charge_id": outcome.charge_id},
+            )
+            raise
         log.info(
             "order settled",
             extra={"order_id": order_id, "order_status": status, "payment_status": outcome.status},

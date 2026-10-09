@@ -15,7 +15,7 @@ x-service: &service
     OTEL_SEMCONV_STABILITY_OPT_IN: http
 
 x-db-env: &db-env
-  # Dev-only credentials for a container bound to localhost; real environments use the CNPG secret.
+  # Dev-only credentials for a container bound to localhost; Kubernetes uses the CNPG secret `shop-db-app`.
   DATABASE_URL: postgresql://shop_app:shop_app@postgres:5432/shop
 
 services:
@@ -23,16 +23,22 @@ services:
     image: postgres:17.11@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
     command: ["postgres", "-c", "wal_level=logical"]
     environment:
-      POSTGRES_USER: shop_app
-      POSTGRES_PASSWORD: shop_app
-      POSTGRES_DB: shop
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    configs:
+      # Like CNPG: the app role owns the `shop` database but is not a superuser, so migrations that need more
+      # privileges fail here too, not first in the cluster.
+      - source: init-shop-db
+        target: /docker-entrypoint-initdb.d/10-shop.sql
     ports: ["127.0.0.1:25432:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U shop_app -d shop"]
-      interval: 2s
+      # TCP, not the socket: the image's init-time server listens on the socket only, before init scripts finish.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "shop_app", "-d", "shop"]
+      interval: 5s
       timeout: 3s
-      retries: 30
+      start_period: 30s
+      start_interval: 1s
 
   migrate:
     build: {context: ., dockerfile: services/orders/Dockerfile}
@@ -64,9 +70,10 @@ services:
       PAYMENT_FAILURE_RATE: ${PAYMENT_FAILURE_RATE:-0.02}
     healthcheck: &healthcheck
       test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen(sys.argv[1], timeout=2)", "http://localhost:8002/readyz"]
-      interval: 2s
+      interval: 10s # each probe starts a Python interpreter: keep it rare once healthy (perf baseline noise)
       timeout: 3s
-      retries: 30
+      start_period: 30s
+      start_interval: 1s
 
   orders:
     <<: *service
@@ -99,3 +106,9 @@ services:
 
 volumes:
   pgdata:
+
+configs:
+  init-shop-db:
+    content: |
+      CREATE ROLE shop_app LOGIN PASSWORD 'shop_app';
+      CREATE DATABASE shop OWNER shop_app;

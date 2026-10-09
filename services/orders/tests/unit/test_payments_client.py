@@ -24,6 +24,20 @@ async def test_402_is_declined():
     assert outcome == ChargeOutcome("declined")
 
 
+async def test_201_without_charge_id_is_error_unavailable():
+    assert await charge_with(lambda r: httpx.Response(201, text="not json")) == ChargeOutcome(
+        "error", error="unavailable"
+    )
+    assert await charge_with(lambda r: httpx.Response(201, json={})) == ChargeOutcome("error", error="unavailable")
+
+
+async def test_protocol_error_is_error_unavailable():
+    def handler(request):
+        raise httpx.RemoteProtocolError("peer closed connection", request=request)
+
+    assert await charge_with(handler) == ChargeOutcome("error", error="unavailable")
+
+
 async def test_5xx_is_error_unavailable():
     assert await charge_with(lambda r: httpx.Response(503)) == ChargeOutcome("error", error="unavailable")
 
@@ -63,6 +77,8 @@ async def test_charge_sends_order_and_amount():
         ("postgresql://u:p@h:5432/shop", "postgresql+asyncpg://u:p@h:5432/shop"),
         ("postgres://u:p@h/shop", "postgresql+asyncpg://u:p@h/shop"),
         ("postgresql+asyncpg://u:p@h/shop", "postgresql+asyncpg://u:p@h/shop"),
+        ("postgresql://u:p@h/shop?sslmode=require", "postgresql+asyncpg://u:p@h/shop?ssl=require"),
+        ("postgresql://u:p%40ss@h/shop", "postgresql+asyncpg://u:p%40ss@h/shop"),
     ],
 )
 def test_async_dsn(url, expected):

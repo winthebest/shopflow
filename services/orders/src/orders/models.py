@@ -55,7 +55,7 @@ class StandardColumns:
 
 class Product(StandardColumns, Base):
     __tablename__ = "products"
-    __table_args__ = (CheckConstraint("price >= 0", name="price_non_negative"),)
+    __table_args__ = (CheckConstraint("price > 0", name="price_positive"),)
 
     sku: Mapped[str] = mapped_column(Text, unique=True)
     name: Mapped[str] = mapped_column(Text)

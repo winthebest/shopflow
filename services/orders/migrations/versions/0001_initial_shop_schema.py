@@ -41,7 +41,7 @@ def upgrade() -> None:
         sa.Column("price", sa.Numeric(precision=12, scale=2), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.CheckConstraint("price >= 0", name=op.f("ck_products_price_non_negative")),
+        sa.CheckConstraint("price > 0", name=op.f("ck_products_price_positive")),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_products")),
         sa.UniqueConstraint("sku", name=op.f("uq_products_sku")),
     )

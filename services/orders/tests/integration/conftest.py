@@ -1,6 +1,9 @@
-"""Real Postgres for integration tests: one container per session, schema built by the Alembic migrations."""
+"""Real Postgres for integration tests: one container per session, schema built by the Alembic migrations.
 
-from collections.abc import AsyncIterator, Iterator
+Set up like CNPG and compose: `wal_level=logical`, and the app role owns its database without being a superuser.
+"""
+
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 
 import httpx
@@ -22,15 +25,40 @@ from payments.main import create_app as create_payments
 POSTGRES_IMAGE = "postgres:17.11@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3"
 
 
+APP_ROLE = "shop_app"
+APP_PASSWORD = "test-only"
+
+
+def psql(pg: PostgresContainer, sql: str) -> None:
+    result = pg.exec(["psql", "-U", "postgres", "-v", "ON_ERROR_STOP=1", "-c", sql])
+    assert result.exit_code == 0, result.output
+
+
 @pytest.fixture(scope="session")
 def postgres() -> Iterator[PostgresContainer]:
-    with PostgresContainer(POSTGRES_IMAGE, username="shop_app", password="test", dbname="shop", driver=None) as pg:
+    container = PostgresContainer(
+        POSTGRES_IMAGE, username="postgres", password="test-only", dbname="postgres", driver=None
+    ).with_command("postgres -c wal_level=logical")
+    with container as pg:
+        psql(pg, f"CREATE ROLE {APP_ROLE} LOGIN PASSWORD '{APP_PASSWORD}'")
         yield pg
 
 
 @pytest.fixture(scope="session")
-def database_url(postgres: PostgresContainer) -> str:
-    url = postgres.get_connection_url()
+def app_database(postgres: PostgresContainer) -> Callable[[str], str]:
+    """`app_database(name)` creates a database owned by the app role and returns its app-role URL."""
+
+    def create(name: str) -> str:
+        psql(postgres, f"CREATE DATABASE {name} OWNER {APP_ROLE}")
+        host, port = postgres.get_container_host_ip(), postgres.get_exposed_port(5432)
+        return f"postgresql://{APP_ROLE}:{APP_PASSWORD}@{host}:{port}/{name}"
+
+    return create
+
+
+@pytest.fixture(scope="session")
+def database_url(app_database: Callable[[str], str]) -> str:
+    url = app_database("shop")
     upgrade(url)
     return url
 
@@ -57,7 +85,9 @@ async def _shop_client(
         payments_transport=payments_transport or httpx.ASGITransport(app=payments_app),
     )
     gateway_app = create_gateway(
-        GatewaySettings(orders_url="http://orders"), orders_transport=httpx.ASGITransport(app=orders_app)
+        GatewaySettings(orders_url="http://orders"),
+        # Unhandled errors in orders become a 500 response, as over a real network.
+        orders_transport=httpx.ASGITransport(app=orders_app, raise_app_exceptions=False),
     )
     async with (
         orders_app.router.lifespan_context(orders_app),

@@ -6,7 +6,6 @@ import httpx
 import pytest
 from alembic import command
 from sqlalchemy import text
-from testcontainers.community.postgres import PostgresContainer
 
 from orders.db import create_engine
 from orders.main import create_app
@@ -25,24 +24,24 @@ def test_upgrade_is_idempotent(database_url):
     command.check(alembic_config(database_url))
 
 
-def test_downgrade_and_upgrade_roundtrip(postgres: PostgresContainer):
-    """On a separate database so the shared one stays at head."""
-    admin_url = postgres.get_connection_url()
-
-    async def create_database() -> None:
-        engine = create_engine(admin_url).execution_options(isolation_level="AUTOCOMMIT")
-        async with engine.connect() as conn:
-            await conn.execute(text("DROP DATABASE IF EXISTS roundtrip"))
-            await conn.execute(text("CREATE DATABASE roundtrip"))
-        await engine.dispose()
-
-    asyncio.run(create_database())
-    url = admin_url.rsplit("/", 1)[0] + "/roundtrip"
-    config = alembic_config(url)
+def test_downgrade_and_upgrade_roundtrip(app_database):
+    """On a separate database so the shared one stays at head; runs as the non-superuser app role."""
+    config = alembic_config(app_database("roundtrip"))
     command.upgrade(config, "head")
     command.downgrade(config, "base")
     command.upgrade(config, "head")
     command.check(config)
+
+
+def test_wal_level_is_logical(database_url):
+    async def wal_level() -> str:
+        engine = create_engine(database_url)
+        async with engine.connect() as conn:
+            value = (await conn.execute(text("SHOW wal_level"))).scalar_one()
+        await engine.dispose()
+        return value
+
+    assert asyncio.run(wal_level()) == "logical"
 
 
 async def test_updated_at_trigger(seeded_db):

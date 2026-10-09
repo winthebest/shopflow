@@ -7,7 +7,9 @@ import asyncio
 import logging
 from decimal import Decimal
 
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncConnection
 
 from orders.db import create_engine
 from orders.models import Customer, Product
@@ -42,26 +44,28 @@ PRODUCTS = [
 log = logging.getLogger("seed")
 
 
+async def _insert_missing(conn: AsyncConnection, model: type[Product | Customer], key: str, rows: list[dict]) -> int:
+    """Insert only rows whose natural key is absent, so re-runs never consume identity values."""
+    column = getattr(model, key)
+    existing = set(await conn.scalars(select(column).where(column.in_([row[key] for row in rows]))))
+    missing = [row for row in rows if row[key] not in existing]
+    if missing:
+        # ON CONFLICT covers a concurrent seed run between the select and the insert.
+        await conn.execute(insert(model).values(missing).on_conflict_do_nothing(index_elements=[key]))
+    return len(missing)
+
+
 async def seed(database_url: str) -> None:
+    products = [{"sku": sku, "name": name, "price": Decimal(price)} for sku, name, price in PRODUCTS]
+    customers = [
+        {"email": f"customer{n:03d}@example.com", "name": f"Customer {n:03d}"} for n in range(1, CUSTOMER_COUNT + 1)
+    ]
     engine = create_engine(database_url)
     try:
         async with engine.begin() as conn:
-            products = await conn.execute(
-                insert(Product)
-                .values([{"sku": sku, "name": name, "price": Decimal(price)} for sku, name, price in PRODUCTS])
-                .on_conflict_do_nothing(index_elements=["sku"])
-            )
-            customers = await conn.execute(
-                insert(Customer)
-                .values(
-                    [
-                        {"email": f"customer{n:03d}@example.com", "name": f"Customer {n:03d}"}
-                        for n in range(1, CUSTOMER_COUNT + 1)
-                    ]
-                )
-                .on_conflict_do_nothing(index_elements=["email"])
-            )
-        log.info("seeded", extra={"products_inserted": products.rowcount, "customers_inserted": customers.rowcount})
+            products_inserted = await _insert_missing(conn, Product, "sku", products)
+            customers_inserted = await _insert_missing(conn, Customer, "email", customers)
+        log.info("seeded", extra={"products_inserted": products_inserted, "customers_inserted": customers_inserted})
     finally:
         await engine.dispose()
 
