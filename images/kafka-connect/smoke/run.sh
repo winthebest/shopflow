@@ -55,7 +55,7 @@ JSON
 chmod 0644 "$SMOKE_DIR/seaweedfs/s3.json"
 
 # Connector configs: cluster CRs + overrides. Fails if a cluster-only provider reference is left behind.
-kubectl kustomize "$REPO/deploy/platform/kafka-connect/local" > "$SMOKE_DIR/kafka-connect.yaml"
+"$REPO/scripts/data-render-overlay.sh" deploy/platform/kafka-connect/local > "$SMOKE_DIR/kafka-connect.yaml"
 for connector in shop-postgres iceberg-sink; do
   yq -o=json "select(.kind == \"KafkaConnector\" and .metadata.name == \"$connector\")
       | .spec.config + {\"connector.class\": .spec.class, \"tasks.max\": .spec.tasksMax}" "$SMOKE_DIR/kafka-connect.yaml" \
@@ -67,7 +67,7 @@ for connector in shop-postgres iceberg-sink; do
   fi
 done
 # Topics as declared by the KafkaTopic CRs, plus this epoch's control topic (created by the epoch tooling).
-kubectl kustomize "$REPO/deploy/platform/kafka/local" | yq -N 'select(.kind == "KafkaTopic") | .spec.topicName' \
+"$REPO/scripts/data-render-overlay.sh" deploy/platform/kafka/local | yq -N 'select(.kind == "KafkaTopic") | .spec.topicName' \
   > "$SMOKE_DIR/topics.txt"
 echo "iceberg-control-$CDC_EPOCH" >> "$SMOKE_DIR/topics.txt"
 

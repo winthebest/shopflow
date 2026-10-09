@@ -1,11 +1,20 @@
 # Extra manifests next to the Trino Helm release (Argo CD multi-source: chart + values + this directory).
+# Namespaces are explicit per resource: secret-copy.yaml also grants a Role in namespace shop.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: lakehouse
 resources:
+  - secret-copy.yaml
   - certificate.yaml
   - bronze-tables-job.yaml
 configMapGenerator:
   - name: trino-bronze-tables
+    namespace: lakehouse
     files:
       - bronze-tables.sql
+  - name: trino-pg-copy-script
+    namespace: lakehouse
+    files:
+      - copy-secret.py
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-2"
