@@ -1,12 +1,15 @@
 {#
   Exact reconciliation of a silver table with its Postgres source (read through Trino catalog `pg`): a two-way
-  anti-join on the key plus the compared columns, one row per mismatch. Rows changed in the last
-  `reconcile_lag_minutes` on either side are skipped (CDC lag); at a quiet point run with reconcile_lag_minutes=0,
-  where silver must equal Postgres exactly. Deletes carry no updated_at, so a row deleted in Postgres inside that
-  window still counts as a mismatch: the shop never deletes, re-snapshot tests run at a quiet point.
+  anti-join on the key plus the compared columns, one row per mismatch. Silver is as of its last data commit (not
+  `replace` snapshots: optimize and manifest rewrites change no rows) and bronze trails Postgres by the CDC lag, so
+  rows changed after (last silver data commit - `reconcile_lag_minutes`) on either side are skipped. At a quiet point (no writes, lag ~ 0) run with reconcile_lag_minutes=0 right after a rebuild: silver
+  must then equal Postgres exactly. Deletes carry no updated_at, so a row deleted in Postgres inside that window still
+  counts as a mismatch: the shop never deletes, and re-snapshot tests run at a quiet point.
 #}
 {% test reconciles_with_postgres(model, source_table, compare, key='id') %}
-{%- set cutoff = "current_timestamp - interval '" ~ (var('reconcile_lag_minutes') | int) ~ "' minute" %}
+{%- set snapshots = model.database ~ '.' ~ model.schema ~ '."' ~ model.identifier ~ '$snapshots"' %}
+{%- set cutoff = "(select max(committed_at) from " ~ snapshots ~ " where operation != 'replace') - interval '"
+    ~ (var('reconcile_lag_minutes') | int) ~ "' minute" %}
 with postgres as (
     select
         {{ key }},

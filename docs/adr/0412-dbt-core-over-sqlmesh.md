@@ -18,7 +18,9 @@ dbt Core 1.12 with dbt-trino 1.10 (pinned in `data/dbt/uv.lock`), project `data/
 - Staging models are ephemeral, silver and gold are Iceberg tables (docs/adr/0413).
 - Schemas are used as named (`silver`, `gold`), not dbt's `<schema>_<custom>`.
 - Tests: unique, not_null, relationships, accepted_values, source freshness on `bronze.heartbeat`, and the generic
-  test `reconciles_with_postgres` (two-way anti-join on the key plus status/money columns; tag `reconciliation`).
+  test `reconciles_with_postgres` (two-way anti-join on the key plus status/money columns; tag `reconciliation`,
+  enabled only with `--vars '{reconcile: true}'`, so the hourly run, whose Airflow tasks are rendered from the default
+  manifest, never contains it).
 - CI (`make data-dbt-check`): `dbt parse` and sqlfluff (Trino dialect, Jinja templater with dbt builtins). Neither
   needs a database.
 - `profiles.yml` takes everything from the environment (Secret `trino-dbt`, CA from `trino-tls`), TLS validation

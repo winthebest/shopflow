@@ -1,6 +1,7 @@
 # Publishes sf-data's images after a merge to main; the only sf-data workflow with `packages: write`:
 #   ghcr.io/<owner>/shopflow-kafka-connect:sha-<short>       images/kafka-connect (amd64 + arm64)
 #   ghcr.io/<owner>/shopflow-freshness-exporter:sha-<short>  services/freshness-exporter (amd64 + arm64, Trivy)
+#   ghcr.io/<owner>/shopflow-airflow:sha-<short>             data/airflow + data/dbt (amd64 + arm64, DAG check, Trivy)
 # Only images whose sources changed are rebuilt. Pull requests are built (and scanned) by data-ci.yml.
 # Publishing jobs restore no Actions cache: a clean build every time (repo rule, see ci.yml).
 # Actions are pinned by commit SHA (tag in the comment). No job requests id-token.
@@ -12,6 +13,9 @@ on:
     paths:
       - images/kafka-connect/**
       - services/freshness-exporter/**
+      - data/airflow/**
+      - data/dbt/**
+      - data/.dockerignore
       - .github/workflows/data-images.yml
   workflow_dispatch:
 
@@ -34,13 +38,14 @@ jobs:
     outputs:
       kafka-connect: ${{ steps.diff.outputs.kafka_connect }}
       freshness-exporter: ${{ steps.diff.outputs.freshness_exporter }}
+      airflow: ${{ steps.diff.outputs.airflow }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
 
-      # A manual run (or a push whose base is unknown) rebuilds both images.
+      # A manual run (or a push whose base is unknown) rebuilds every image.
       - name: Which images changed?
         id: diff
         env:
@@ -56,6 +61,7 @@ jobs:
           {
             echo "kafka_connect=$(changed 'images/kafka-connect/')"
             echo "freshness_exporter=$(changed 'services/freshness-exporter/')"
+            echo "airflow=$(changed 'data/airflow/|data/dbt/|data/\.dockerignore')"
           } >> "$GITHUB_OUTPUT"
 
   kafka-connect:
@@ -198,4 +204,86 @@ jobs:
             echo "\`${TAGS}@${DIGEST}\`"
             echo
             echo "Pin this reference in deploy/platform/freshness-exporter."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  airflow:
+    needs: changes
+    if: needs.changes.outputs.airflow == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write # push ghcr.io/<owner>/shopflow-airflow
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/shopflow-airflow
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The final stage runs RUN steps (apt upgrade, pip), so arm64 is built under emulation.
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          cache-binary: false
+
+      - name: Build amd64 for the DAG check and scanning
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: data
+          file: data/airflow/Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: shopflow-airflow:ci
+
+      - name: Import every DAG and check ids, schedules and tasks
+        run: make data-airflow-check AIRFLOW_IMAGE=shopflow-airflow:ci
+
+      - name: Trivy (fail on CRITICAL with a fix available)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          image-ref: shopflow-airflow:ci
+          scanners: vuln
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+          cache: false # no Actions cache in a workflow that publishes images
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: type=sha,prefix=sha-,format=short
+
+      - id: push
+        name: Build and push both platforms
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: data
+          file: data/airflow/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Summary
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          {
+            echo "### Airflow image"
+            echo
+            echo "\`${TAGS}@${DIGEST}\`"
+            echo
+            echo "Pin this reference in deploy/platform/airflow."
           } >> "$GITHUB_STEP_SUMMARY"

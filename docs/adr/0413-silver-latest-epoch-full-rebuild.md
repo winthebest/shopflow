@@ -18,6 +18,10 @@ Each silver table (`data/dbt/macros/cdc.sql`):
    `snapshot_completed_at` set (written by `scripts/cdc-epoch.sh wait`).
 2. Ranks rows per key by `(_op <> 'r') desc, _lsn desc` (streaming changes beat snapshot reads), keeps rank 1, and
    drops the key if that row is a delete. A key absent from the epoch is deleted.
+   Streaming wins because every epoch starts with a new replication slot (docs/adr/0406): Debezium reads the tables
+   in the snapshot exported when that slot is created and then streams from the slot's consistent point. Every
+   streamed change therefore committed after the state the snapshot read, so for one key a streaming row is always
+   newer than its snapshot row, whatever their `_lsn` values.
 3. Is materialized as a `table`, rebuilt in full on every run, with `on_table_exists: replace`
    (`CREATE OR REPLACE TABLE`). Gold does the same.
 
@@ -26,8 +30,9 @@ passes as green.
 
 Verified offline on 2026-10-09 against the Kafka Connect smoke stack (real Debezium → Iceberg sink → Polaris +
 SeaweedFS) with Trino 483: snapshot rows, updates after the snapshot, a deleted snapshot row and an order deleted
-with its children all came out right. Reconciliation at lag 0 passed for all five tables and failed on a row changed
-in Postgres but not yet in silver. All 10 tables and 37 tests took 9 seconds.
+with its children all came out right. Reconciliation at lag 0 passed for all five tables and failed on a row that
+differed from Postgres. All 10 tables and 37 tests took 9 seconds. (Reconciliation now leaves out rows changed after
+the last silver data commit minus the lag allowance: staleness between hourly runs is not a mismatch.)
 On the Polaris REST catalog, `replace` keeps one table: a second run added a second snapshot to
 `silver."orders$snapshots"`. Each snapshot has no parent, so time travel works by snapshot id or timestamp, but there
 is no incremental lineage. Glue (AWS, docs/adr/0506) remains to be checked in Phase 6.
