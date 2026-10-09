@@ -1,0 +1,9 @@
+# Local-only OpenTofu files (state and tfvars are also ignored at the repo root).
+*_override.tf
+*.auto.tfvars
+*.tfvars
+!*.tfvars.example
+.terraform/
+.package/
+.venv/
+.pytest_cache/

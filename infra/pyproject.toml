@@ -1,0 +1,39 @@
+[project]
+name = "shopflow-infra"
+version = "0.1.0"
+description = "Cloud tooling for shopflow: the reaper (Lambda + CLI)."
+requires-python = ">=3.13"
+# boto3 ships with the Lambda runtime; it is declared here for the CLI and the tests.
+dependencies = ["boto3>=1.40"]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.4",
+  "moto[ec2,eks,elbv2,ssm,scheduler,sns]>=5.1",
+  "ruff>=0.13",
+]
+
+[tool.uv]
+package = false
+# Resolve only releases at least two weeks old (supply-chain hygiene); move forward deliberately.
+exclude-newer = "2026-09-25T00:00:00Z"
+
+[tool.pytest.ini_options]
+testpaths = ["lambda/reaper/tests"]
+pythonpath = ["lambda/reaper/src"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 140
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S"]
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S603", "S607"]
+"lambda/reaper/tests/**" = ["S106"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["reaper", "aws_world", "script_harness"]

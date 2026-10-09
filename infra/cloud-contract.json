@@ -1,0 +1,74 @@
+{
+  "project": "shopflow",
+  "env": "aws",
+  "region": "ap-southeast-1",
+  "cluster_name": "shopflow",
+  "node_az": "ap-southeast-1a",
+  "kubernetes_version": "1.35",
+  "github_repository": "winthebest/shopflow",
+  "state_bucket_prefix": "shopflow-tfstate-",
+  "data_bucket_prefix": "shopflow-data-",
+  "state_keys": {
+    "bootstrap": "bootstrap/terraform.tfstate",
+    "network": "network/terraform.tfstate",
+    "cluster": "cluster/terraform.tfstate"
+  },
+  "data_prefixes": {
+    "iceberg": "iceberg/",
+    "pg_backup": "pg-backup/",
+    "flink_checkpoints": "flink-ckpt/",
+    "evidence": "evidence/"
+  },
+  "glue_databases": ["bronze", "silver", "gold"],
+  "ssm": {
+    "prefix": "/shopflow/aws",
+    "lease": "/shopflow/aws/control/lease-expires-at",
+    "session": "/shopflow/aws/control/session",
+    "pg_backup_pointer": "/shopflow/aws/control/pg-backup-pointer",
+    "pg_initialized": "/shopflow/aws/control/pg-initialized",
+    "resume_desired": "/shopflow/aws/control/resume-desired",
+    "cdc_epoch": "/shopflow/aws/kafka/cdc-epoch"
+  },
+  "reaper": {
+    "function_name": "shopflow-reaper",
+    "schedule_group": "shopflow",
+    "schedule_name": "shopflow-reaper",
+    "schedule_rate": "rate(15 minutes)",
+    "grace_hours": 1
+  },
+  "lease": {
+    "default_hours": 4,
+    "max_hours": 8
+  },
+  "roles": {
+    "operator": "shopflow-operator",
+    "cluster": "shopflow-eks-cluster",
+    "node": "shopflow-eks-node",
+    "ci_plan": "shopflow-ci-plan",
+    "reaper": "shopflow-reaper",
+    "reaper_lambda": "shopflow-reaper-lambda",
+    "reaper_scheduler": "shopflow-reaper-scheduler",
+    "budget_action": "shopflow-budget-action",
+    "pod_prefix": "shopflow-pod-",
+    "eso_prefix": "shopflow-eso-"
+  },
+  "allowed_instance_types": [
+    "m6g.large", "m6g.xlarge", "m6g.2xlarge",
+    "m7g.large", "m7g.xlarge", "m7g.2xlarge",
+    "r6g.large", "r6g.xlarge",
+    "r7g.large", "r7g.xlarge",
+    "c6g.xlarge", "c6g.2xlarge",
+    "c7g.xlarge", "c7g.2xlarge",
+    "t4g.large", "t4g.xlarge"
+  ],
+  "pod_identities": {
+    "ebs-csi": { "namespace": "kube-system", "service_account": "ebs-csi-controller-sa" },
+    "aws-lb-controller": { "namespace": "kube-system", "service_account": "aws-load-balancer-controller" },
+    "cnpg": { "namespace": "shop", "service_account": "shop-db" },
+    "kafka-connect": { "namespace": "kafka", "service_account": "cdc-connect" },
+    "trino": { "namespace": "lakehouse", "service_account": "trino" },
+    "flink": { "namespace": "lakehouse", "service_account": "flink" },
+    "external-secrets": { "namespace": "external-secrets", "service_account": "external-secrets" }
+  },
+  "eso_namespaces": ["shop", "kafka", "lakehouse", "airflow", "bi", "observability"]
+}
