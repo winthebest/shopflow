@@ -24,6 +24,7 @@ All bind `127.0.0.1`. The registry is created with the cluster and removed by `k
 |---|---|---|
 | 25432 | `docker-compose.yml` Postgres (15432 belongs to incident-lab) | sf-app |
 | 8000 | `docker-compose.yml` gateway | sf-app |
+| 18090 | `make cloud-argocd-ui`: port-forward to the EKS Argo CD (distinct from sf-main's 18080) | sf-cloud |
 | 5060–5063 | shared pull-through image caches `shopflow-cache-{docker,quay,ghcr,k8s}` (one per upstream; data in named volumes that survive `make down`; `make platform-cache-down` removes them) | sf-platform |
 - Cluster creation scripts take the cluster name and ports as parameters (default `sf-main`).
 
