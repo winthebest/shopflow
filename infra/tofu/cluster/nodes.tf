@@ -42,7 +42,7 @@ resource "aws_eks_node_group" "spot" {
   subnet_ids     = [data.aws_subnet.node.id]
   capacity_type  = "SPOT"
   ami_type       = "AL2023_ARM_64_STANDARD"
-  instance_types = var.node_instance_types
+  instance_types = local.node_instance_types
   labels         = { "shopflow.io/capacity" = "spot" }
 
   scaling_config {
@@ -72,7 +72,7 @@ resource "aws_eks_node_group" "spot" {
 resource "terraform_data" "instance_type_allow_list" {
   lifecycle {
     precondition {
-      condition     = alltrue([for t in var.node_instance_types : contains(local.contract.allowed_instance_types, t)])
+      condition     = alltrue([for t in local.node_instance_types : contains(local.contract.allowed_instance_types, t)])
       error_message = "node_instance_types must come from cloud-contract.json allowed_instance_types (the operator's RunInstances allow-list)."
     }
   }

@@ -9,7 +9,8 @@ locals {
   cluster  = local.contract.cluster_name
   roles    = local.contract.roles
 
-  kubernetes_version = coalesce(var.kubernetes_version, local.contract.kubernetes_version)
+  kubernetes_version  = coalesce(var.kubernetes_version, local.contract.kubernetes_version)
+  node_instance_types = coalesce(var.node_instance_types, local.contract.node_instance_types)
 
   instance_tags = {
     project = local.project
