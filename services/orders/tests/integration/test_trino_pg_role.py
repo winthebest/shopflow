@@ -48,10 +48,18 @@ async def test_trino_pg_is_a_plain_login_role(database_url):
 
 
 async def test_trino_pg_privileges_are_exactly_the_spec(database_url):
+    """SELECT on every published source table plus meta.cdc_epochs, USAGE on their schemas, nothing else.
+
+    Derived from the publication, so a new source table whose migration forgets the trino_pg grant fails here.
+    """
+    published = await query(
+        database_url, "SELECT schemaname || '.' || tablename FROM pg_publication_tables WHERE pubname = 'shop_cdc'"
+    )
     tables = await query(database_url, TABLE_PRIVILEGES)
     schemas = await query(database_url, SCHEMA_PRIVILEGES)
 
-    expected = sorted((name if "." in name else f"public.{name}", "SELECT") for name in READABLE)
+    expected = sorted([(name, "SELECT") for (name,) in published] + [("meta.cdc_epochs", "SELECT")])
+    assert expected == sorted((name if "." in name else f"public.{name}", "SELECT") for name in READABLE)
     assert tables == expected
     assert schemas == [("meta", "USAGE"), ("public", "USAGE")]
 

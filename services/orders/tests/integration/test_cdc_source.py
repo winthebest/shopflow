@@ -124,6 +124,10 @@ async def test_debezium_privileges_are_exactly_the_spec(database_url):
         "SELECT n.nspname, acl.privilege_type FROM pg_namespace n, aclexplode(n.nspacl) acl"
         " WHERE acl.grantee = 'debezium'::regrole ORDER BY 1, 2",
     )
-    expected = sorted([(f"public.{table}", "SELECT") for table in PUBLISHED] + [("public.heartbeat", "UPDATE")])
+    published = await query(
+        database_url, "SELECT schemaname || '.' || tablename FROM pg_publication_tables WHERE pubname = 'shop_cdc'"
+    )
+    # From the publication, so a new source table whose migration forgets the debezium grant fails here.
+    expected = sorted([(name, "SELECT") for (name,) in published] + [("public.heartbeat", "UPDATE")])
     assert tables == expected
     assert schemas == [("public", "USAGE")]
