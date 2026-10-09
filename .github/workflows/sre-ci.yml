@@ -28,7 +28,7 @@ on:
       - deploy/argocd/profiles/obs-lite/**
       - deploy/argocd/profiles/_common/**
       - slo/**
-      - docs/runbooks/checkout-*
+      - docs/runbooks/** # every alert must link to an existing runbook, whoever owns it
       - scripts/sre-*.sh
       - mk/sre.mk
       - .github/workflows/sre-ci.yml
