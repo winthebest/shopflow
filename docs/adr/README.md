@@ -2,7 +2,8 @@
 
 One page per decision, using `0000-template.md`. File name: `NNNN-kebab-case-title.md`.
 
-Parallel lanes draw numbers from their own range to avoid collisions:
+Parallel lanes draw numbers from their own range to avoid collisions. Lanes do not edit the index below; the
+orchestrator adds rows when merging a PR that contains ADRs.
 
 | Range | Lane |
 |---|---|

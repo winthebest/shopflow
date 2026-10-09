@@ -27,6 +27,19 @@
 | `observability` | OTel Collector, Prometheus, Loki, Tempo, Grafana (Phase 3) |
 | `kafka`, `lakehouse`, `airflow`, `bi` | data platform (Phases 4–5) |
 
+## Network flows (NetworkPolicy allow-list, Phase 6 security baseline; local too)
+
+Default-deny per namespace; these flows must be allowed. Owners add rows when they introduce a new flow.
+
+| From | To | Port | Why | Requested by |
+|---|---|---|---|---|
+| `shop` pods | `observability` otel-gateway | 4317, 4318 | OTLP traces/metrics | sf-sre |
+| `observability` Prometheus | `shop` CNPG exporter | 9187 | Postgres metrics (PodMonitor) | sf-sre |
+| `observability` OTel agent/gateway | kube-apiserver | 443/6443 | `k8sattributes` processor | sf-sre |
+| `shop` gateway | `shop` orders | 8001 | service call | sf-app |
+| `shop` orders | `shop` payments, `shop-db` | 8002, 5432 | service call, DB | sf-app |
+| `envoy-gateway-system` | `shop` gateway | 8000 | ingress | sf-platform |
+
 ## Trino catalogs and identities (Phase 4 onwards)
 
 Trino file-based access control cannot restrict table procedures (`expire_snapshots`, `remove_orphan_files`,

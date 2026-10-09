@@ -17,9 +17,19 @@ Timeouts: gateway → orders 1s, orders → payments 800ms.
 
 - **Health**: `GET /healthz` (liveness, no dependencies) and `GET /readyz` (readiness, checks downstream/DB).
 - **Shutdown**: handle SIGTERM, stop accepting requests, drain in-flight requests within 20s.
-- **Logs**: JSON lines on stdout with `trace_id` and `span_id` fields.
+- **Logs**: JSON lines on stdout, one object per line, with these keys (exact names):
+  `timestamp` (RFC 3339, UTC), `level` (`DEBUG|INFO|WARNING|ERROR`), `message`, `service`, `trace_id`,
+  `span_id` (32/16 lowercase hex, empty string when no active span). Extra keys are allowed.
 - **Container**: non-root UID/GID `10001`; works with `readOnlyRootFilesystem: true` (only `/tmp` writable).
-- **Telemetry**: OpenTelemetry SDK. Until Phase 3 lands: `OTEL_SDK_DISABLED=true`. After: `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`.
+- **Telemetry**: OpenTelemetry SDK. Until Phase 3 lands: `OTEL_SDK_DISABLED=true`. After Phase 3:
+
+  | Variable | Value |
+  |---|---|
+  | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-gateway.observability.svc:4317` (gRPC; HTTP is `:4318`) |
+  | `OTEL_SERVICE_NAME` | `gateway` \| `orders` \| `payments` |
+  | `OTEL_SEMCONV_STABILITY_OPT_IN` | `http` (spans carry `http.route` and `http.response.status_code`) |
+  | `OTEL_TRACES_SAMPLER` | unset (default `parentbased_always_on`). SLIs are computed from server spans via the spanmetrics connector, so traces must not be sampled below 100%. |
+  | `OTEL_RESOURCE_ATTRIBUTES` | `deployment.environment=<local\|aws>` |
 
 ## Environment variables
 
@@ -50,4 +60,6 @@ Timeouts: gateway → orders 1s, orders → payments 800ms.
 
 - Namespace `shop` for services, DB and migration Job.
 - Service names = service names above; ClusterIP; ports as above.
+- Pods carry `app.kubernetes.io/name: <service>` and `app.kubernetes.io/part-of: shopflow` (the log pipeline maps
+  `app.kubernetes.io/name` to `service.name`).
 - Only `gateway` gets an `HTTPRoute`. Local host: `shop.127.0.0.1.sslip.io`.
