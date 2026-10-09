@@ -26,9 +26,14 @@ prometheusOperator:
     limits: {memory: 128Mi}
 
 grafana:
+  # Measured on the sf-sre lane cluster: Grafana 13 sits at ~250Mi after start (256Mi limit → OOMKilled 3×).
   resources:
-    requests: {cpu: 50m, memory: 128Mi}
-    limits: {memory: 256Mi}
+    requests: {cpu: 50m, memory: 256Mi}
+    limits: {memory: 512Mi}
+  sidecar:
+    resources:
+      requests: {cpu: 5m, memory: 64Mi}
+      limits: {memory: 128Mi}
 
 kube-state-metrics:
   resources:
