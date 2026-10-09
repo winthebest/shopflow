@@ -19,8 +19,14 @@ spec:
       # and the shop stops. Cap it: past this size the slot is invalidated and CDC re-snapshots into a new
       # epoch (docs/adr/0203-cnpg-over-rds.md). Sized against the 5Gi volume, leaving room for max_wal_size.
       max_slot_wal_keep_size: 2GB
-    # polaris may only reach its own database; CNPG keeps its default rules after these.
+    # Each consumer role may only reach its own database; CNPG keeps its default rules after these. debezium's
+    # logical replication connections name database `shop`, so they match its first rule; `all` never matches
+    # physical replication, which only streaming_replica may use.
     pg_hba:
+      - host shop debezium all scram-sha-256
+      - host all debezium all reject
+      - host shop trino_pg all scram-sha-256
+      - host all trino_pg all reject
       - host catalog polaris all scram-sha-256
       - host all polaris all reject
   bootstrap:
