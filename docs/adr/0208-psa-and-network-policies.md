@@ -64,6 +64,12 @@ NetworkPolicy with its embedded controller (kube-router); on EKS the VPC CNI net
 - Negative / risks:
   - Every new flow needs a policy change (that is the point: add the row to the contract, then the policy).
   - The API server rule is port-based, not address-based.
+  - Measured on k3s: a brand-new pod is not isolated for its first few seconds. The policy controller adds it to
+    its rule sets shortly after start, so an immediate connection to the internet succeeded. Only stealing data in
+    the first seconds of a pod's life gets past this. The EKS network policy agent has a strict mode that closes
+    the window; revisit in Phase 6.
+  - Proof: `scripts/platform-netpol-probe.sh` runs labelled probe pods (positive and negative, waiting for the
+    policy sync) and exits non-zero on any mismatch.
   - Policies for namespaces of later profiles must land with or before those profiles.
 - When to revisit: the flow table grows past what plain NetworkPolicy expresses well (FQDN egress, L7), or Phase 8
   adds Kyverno to enforce these baselines cluster-wide.
