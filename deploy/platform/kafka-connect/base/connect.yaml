@@ -19,6 +19,13 @@ spec:
   configStorageTopic: cdc-connect-configs
   offsetStorageTopic: cdc-connect-offsets
   statusStorageTopic: cdc-connect-status
+  # Debezium and Connect metrics on port 9404 (rules in metrics.yaml).
+  metricsConfig:
+    type: jmxPrometheusExporter
+    valueFrom:
+      configMapKeyRef:
+        name: cdc-connect-metrics
+        key: metrics-config.yml
   tls:
     trustedCertificates:
       - secretName: shopflow-cluster-ca-cert

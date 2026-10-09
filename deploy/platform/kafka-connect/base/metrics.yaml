@@ -1,0 +1,35 @@
+# Prometheus JMX exporter rules for KafkaConnect cdc (spec.metricsConfig; Strimzi serves them on port 9404).
+# Debezium MBeans look like debezium.postgres:type=connector-metrics,context=<snapshot|streaming>,server=shop and
+# become debezium_metrics_<attribute>{plugin,context,name}; booleans are exported as 0/1. Used by:
+#   scripts/cdc-epoch.sh wait   debezium_metrics_snapshotcompleted{context="snapshot",name="shop"} == 1
+#   SLO cdc-lag (source side)   debezium_metrics_millisecondsbehindsource{context="streaming"}
+# The Connect smoke test loads this same file into the exporter agent and checks both series.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cdc-connect-metrics
+  namespace: kafka
+data:
+  metrics-config.yml: |
+    lowercaseOutputName: true
+    lowercaseOutputLabelNames: true
+    rules:
+      - pattern: "debezium.([^:]+)<type=connector-metrics, context=([^,]+), server=([^,>]+)(?:, task=([^>]+))?><>([^:]+)"
+        name: "debezium_metrics_$5"
+        type: GAUGE
+        labels:
+          plugin: "$1"
+          context: "$2"
+          name: "$3"
+          task: "$4"
+      - pattern: "kafka.connect<type=connector-task-metrics, connector=([^,]+), task=([^>]+)><>status: ([a-z-]+)"
+        name: "kafka_connect_connector_task_status"
+        type: GAUGE
+        value: 1
+        labels:
+          connector: "$1"
+          task: "$2"
+          status: "$3"
+      - pattern: "kafka.connect<type=connect-worker-metrics>([^:]+):"
+        name: "kafka_connect_worker_$1"
+        type: GAUGE
