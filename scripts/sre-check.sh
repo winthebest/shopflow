@@ -13,6 +13,7 @@ OUT="${SRE_OUT:-$ROOT/out/sre}"
 KUBE_VERSION="${KUBE_VERSION:-1.34.12}"   # same schema set as scripts/platform-validate.sh
 SHOPFLOW_REPO="https://github.com/winthebest/shopflow.git"
 APPS=(kube-prometheus-stack loki tempo otel-collector otel-collector-lite slo grafana-dashboards)
+COMPONENTS=(kube-prometheus-stack loki tempo otel-collector slo grafana-dashboards)   # deploy/platform/<c>
 PROFILES=(obs-lite obs)
 
 # Tool images, pinned by digest (multi-arch index).
@@ -40,6 +41,21 @@ log() { printf '==> %s\n' "$*" >&2; }
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 docker_run() { docker run --rm -u "$(id -u):$(id -g)" "$@"; }
 
+# Copy deploy/ to $OUT/work without KSOPS generators: CI has no age key (decryption is exercised in-cluster
+# by `make up`). Same approach as scripts/platform-validate.sh.
+prepare_work_copy() {
+  local work="$OUT/work" kfile dir gen
+  rm -rf "$work" && mkdir -p "$work" && cp -R "$ROOT/deploy" "$work/deploy"
+  while IFS= read -r kfile; do
+    dir="$(dirname "$kfile")"
+    for gen in $(yq '.generators[]?' "$kfile"); do
+      if [[ "$(yq '.kind' "$dir/$gen")" == "ksops" ]]; then
+        GEN="$gen" yq -i 'del(.generators[] | select(. == strenv(GEN)))' "$kfile"
+      fi
+    done
+  done < <(find "$work/deploy" -name kustomization.yaml)
+}
+
 # Render one Argo Application (every chart source + every repo path source) into one multi-doc YAML.
 render_app() {
   local app="$1" file="$ROOT/deploy/argocd/apps/$1/application.yaml" ns n i src
@@ -57,7 +73,7 @@ render_app() {
         --namespace "$ns" --kube-version "$KUBE_VERSION" "${args[@]}"
     elif [[ "$(yq "$src.path // \"\"" "$file")" != "" ]]; then
       [[ "$(yq "$src.repoURL" "$file")" == "$SHOPFLOW_REPO" ]] || fail "$app: path source outside this repo"
-      kubectl kustomize "$ROOT/$(yq "$src.path" "$file")"
+      kubectl kustomize "$OUT/work/$(yq "$src.path" "$file")"
     fi
     echo "---"
   done
@@ -65,6 +81,7 @@ render_app() {
 
 cmd_render() {
   mkdir -p "$OUT/rendered"
+  prepare_work_copy
   local app
   for app in "${APPS[@]}"; do
     log "render $app"
@@ -192,6 +209,29 @@ cmd_lint() {
   uids="$(jq -r '.uid' "$ROOT"/deploy/platform/grafana-dashboards/base/dashboards/*.json | sort | uniq -d)"
   [[ -z "$uids" ]] || fail "duplicate dashboard uid: $uids"
   log "dashboards: valid JSON, unique uids"
+  local c bad
+  for c in "${COMPONENTS[@]}"; do
+    while IFS= read -r f; do
+      yq -e '.sops.mac' "$f" >/dev/null 2>&1 || fail "$f: not a SOPS-encrypted file"
+      bad="$(yq '[(.data // {}), (.stringData // {})] | .[] | to_entries[] | select(.value | test("^ENC\\[") | not) | .key' "$f")"
+      [[ -z "$bad" ]] || fail "$f: plaintext values for: $bad"
+    done < <(find "$ROOT/deploy/platform/$c" -path '*/secrets/*.enc.yaml')
+  done
+  log "secrets: every *.enc.yaml value is SOPS-encrypted"
+  # KSOPS resolves `files` from the kustomization root, not from the generator file's directory.
+  local kfile kdir gen enc
+  for c in "${COMPONENTS[@]}"; do
+    while IFS= read -r kfile; do
+      kdir="$(dirname "$kfile")"
+      for gen in $(yq '.generators[]?' "$kfile"); do
+        [[ "$(yq '.kind' "$kdir/$gen")" == "ksops" ]] || continue
+        for enc in $(yq '.files[]' "$kdir/$gen"); do
+          [[ -f "$kdir/$enc" ]] || fail "$kdir/$gen: '$enc' not found relative to the kustomization root $kdir"
+        done
+      done
+    done < <(find "$ROOT/deploy/platform/$c" -name kustomization.yaml)
+  done
+  log "secrets: every KSOPS file path resolves from its kustomization root"
   [[ -d "$OUT/rendered" ]] || cmd_render
   # Image fields and image flags (e.g. --prometheus-config-reloader=, --thanos-default-base-image=), same rule as
   # scripts/platform-validate.sh.
@@ -212,7 +252,7 @@ usage: $0 <step>...
   slo-drift    fail if $SLO_RULES is stale
   rules        runbook links + promtool check/test of our PrometheusRules
   configs      validate OTel Collector, Loki, Tempo and Alertmanager configs with their own binaries
-  lint         shellcheck + dashboards JSON + image digest pinning
+  lint         shellcheck + dashboards JSON + encrypted secrets + image digest pinning
   all          render kubeconform slo-drift rules configs lint
 EOF
   exit 2

@@ -24,5 +24,5 @@ sre-rules: ## Runbook links + promtool check/test of the SLO rules
 sre-configs: ## Validate OTel Collector, Loki, Tempo, Alertmanager configs with their own binaries
 	$(SRE_CHECK) configs
 
-sre-lint: ## shellcheck, dashboard JSON checks, every rendered image pinned by digest
+sre-lint: ## shellcheck, dashboard JSON, secrets encrypted, every rendered image pinned by digest
 	$(SRE_CHECK) lint
