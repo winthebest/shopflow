@@ -41,7 +41,7 @@ spec:
         host: "*"
       - resource:
           type: topic
-          name: __debezium-heartbeat.shop
+          name: debezium-heartbeat.shop
           patternType: literal
         operations: [Describe, Write]
         host: "*"

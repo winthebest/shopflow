@@ -83,7 +83,7 @@ tools python -I /smoke-deploy/polaris-setup.py
 tools python -I /smoke/create-bronze-tables.py customers orders heartbeat
 
 echo "== topics (auto-create is off, as on the cluster)"
-for topic in shop.public.customers shop.public.orders shop.public.heartbeat __debezium-heartbeat.shop \
+for topic in shop.public.customers shop.public.orders shop.public.heartbeat debezium-heartbeat.shop \
   "iceberg-control-$CDC_EPOCH"; do
   docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 \
     --create --if-not-exists --topic "$topic" --partitions 1 --replication-factor 1 > /dev/null
@@ -107,6 +107,11 @@ psql_shop "INSERT INTO customers (email, name) VALUES ('c@example.test', 'Carol'
 psql_shop "INSERT INTO orders (customer_id, status, total) VALUES (3, 'pending', 99.90)"
 psql_shop "UPDATE orders SET status = 'paid' WHERE id = 2"
 psql_shop "DELETE FROM orders WHERE id = 1"
+
+echo "== Debezium heartbeat topic (topic.heartbeat.prefix=debezium-heartbeat)"
+docker compose exec -T kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
+  --topic debezium-heartbeat.shop --from-beginning --max-messages 1 --timeout-ms 60000 > /dev/null
+echo "heartbeat event received"
 
 echo "== bronze, read back as the read-only principal (waits for the sink to commit)"
 tools sh -c 'pip install --quiet --root-user-action=ignore "pyiceberg[pyarrow]==0.12.0" "pyarrow==25.0.1" \

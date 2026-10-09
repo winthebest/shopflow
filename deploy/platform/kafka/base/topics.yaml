@@ -88,7 +88,7 @@ metadata:
   labels:
     strimzi.io/cluster: shopflow
 spec:
-  topicName: __debezium-heartbeat.shop
+  topicName: debezium-heartbeat.shop
   partitions: 1
   config:
     cleanup.policy: delete
