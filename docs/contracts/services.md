@@ -82,6 +82,9 @@ every gateway 5xx as bad).
   `heartbeat.action.query=UPDATE heartbeat SET beat_at = now() WHERE id = 1`.
 - The migration fails if role `debezium` does not exist; the migration Job's retries cover the short window
   before CNPG reconciles managed roles.
+- `debezium` has `REPLICATION`: it could open its own logical slot with another output plugin and read changes of
+  every table, whatever the publication and grants say. Treat Secret `shop-db-debezium` (and any copy for Kafka
+  Connect) as a database-wide read credential: limit who can read it.
 - Adding a source table = one migration that creates it, adds it to `shop_cdc`, grants `SELECT` to `debezium`,
   plus a file in `data/contracts/`. The contract check fails if published tables and contract files differ.
 
