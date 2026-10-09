@@ -120,6 +120,9 @@ Config that belongs to one controller may instead live inside that controller's 
     component reads the origin (Role in the origin namespace: `get` with `resourceNames`) and writes the copy in its
     own namespace (Role: `create`, plus `get`/`update` with `resourceNames`), in a sync wave before the consumer and
     re-run on every sync. No second copy in git, no drift on rotation.
+- On AWS every origin Secret comes from SSM through External Secrets (same names/keys as the local SOPS files);
+  derived copies keep coming from the in-cluster copy Jobs. One writer per Secret: ESO never writes a Secret a
+  Job or a generator also writes.
 - Lanes never decrypt with the user's age private key (`sops -d`, KSOPS builds on a laptop). Encrypting new SOPS
   files needs only the public recipient in `.sops.yaml`. The only decryption outside the cluster is the bootstrap in
   `make up` (ADR 0204); anything else needs the user's approval through the orchestrator.
