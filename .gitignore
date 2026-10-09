@@ -1,0 +1,31 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Build / output
+out/
+dist/
+build/
+
+# Secrets and state (never commit)
+.env
+.env.*
+*.agekey
+*.tfstate
+*.tfstate.*
+.terraform/
+crash.log
+kubeconfig*
+*.pem
+*.key
+
+# Local tooling
+.DS_Store
+.idea/
+.vscode/
+*.log
