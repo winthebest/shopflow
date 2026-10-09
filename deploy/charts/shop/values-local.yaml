@@ -11,6 +11,8 @@ services:
     replicas: 1
   payments:
     replicas: 1
+    env:
+      PAYMENT_LATENCY_MS: "600"   # EXPERIMENT (never merged): Phase 3 step 7, page timing for checkout-latency
 seed:
   enabled: true
 route:
