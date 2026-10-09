@@ -2,12 +2,7 @@
 serviceAccount:
   create: true
   name: aws-load-balancer-controller
-# Session parameters (platform-params, ADR 0206): aws.clusterName, aws.region, aws.vpcId. The cluster name and
-# region are fixed by infra/cloud-contract.json; the VPC ID comes from layer 1 and must be set before the
-# controller can start (pods cannot read it from instance metadata: hop limit 1).
-clusterName: shopflow
-region: ap-southeast-1
-vpcId: ""
+# clusterName, region and vpcId are session parameters: they live in the Application's helm.valuesObject.
 # Every AWS resource the controller creates (NLB, target groups, security groups) carries the cost and reaper tags.
 defaultTags:
   project: shopflow

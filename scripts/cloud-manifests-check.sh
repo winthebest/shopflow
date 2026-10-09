@@ -4,8 +4,11 @@
 # digests; this adds what it cannot know:
 #   1. External Secrets custom resources validated against the CRDs shipped in the pinned chart (the public
 #      catalog has no schema for external-secrets.io/v1, so they would only be "skipped");
-#   2. the manifests agree with infra/cloud-contract.json: Pod Identity service accounts, ESO namespaces,
-#      role prefix, SSM prefix and region, the CDC epoch parameter, the LB controller's cost/reaper tags.
+#   2. the manifests agree with infra/cloud-contract.json: Pod Identity service accounts, ESO namespaces, role
+#      prefix and region, the LB controller's cost/reaper tags;
+#   3. every ExternalSecret in the repo (each lives in its component's aws overlay) uses the ClusterSecretStore of
+#      its own namespace, reads only /shopflow/aws/<namespace>/*, carries SkipDryRunOnMissingResource=true and
+#      matches the CRD. An ExternalSecret in a namespace without a store fails.
 # Needs: helm, yq, jq, kubeconform. Reads chart repositories over the network; never touches AWS.
 # shellcheck disable=SC2016 # single-quoted strings are yq/jq programs, not shell
 set -euo pipefail
@@ -23,9 +26,9 @@ EOF
 
 fail() { die "$*"; }
 
-# Render one Application's chart and path sources, as Argo CD would (no session parameters: placeholders).
+# Render one Application's chart and path sources, as Argo CD would (session parameters: their placeholders).
 render_app() {
-  local app_file="$1" count i chart repo ns release dir
+  local app_file="$1" count i chart repo ns release dir vo
   ns="$(yq '.spec.destination.namespace' "$app_file")"
   count="$(yq '.spec.sources | length' "$app_file")"
   for ((i = 0; i < count; i++)); do
@@ -37,11 +40,16 @@ render_app() {
       while IFS= read -r vf; do
         [ -n "$vf" ] && values+=(--values "$REPO_ROOT/${vf#\$values/}")
       done < <(yq ".spec.sources[$i].helm.valueFiles[]?" "$app_file")
+      vo="$(mktemp "$WORK_DIR/values-object.XXXXXX")"
+      yq ".spec.sources[$i].helm.valuesObject // {}" "$app_file" >"$vo"
+      values+=(--values "$vo")
       helm template "$release" "$chart" --repo "$repo" --version "$(yq ".spec.sources[$i].targetRevision" "$app_file")" \
         --namespace "$ns" --kube-version "$KUBERNETES_VERSION" --include-crds "${values[@]}"
     elif [ "$(yq ".spec.sources[$i].path // \"\"" "$app_file")" != "" ]; then
       dir="$REPO_ROOT/$(yq ".spec.sources[$i].path" "$app_file")"
-      helm template "$release" "$dir" --namespace "$ns" --kube-version "$KUBERNETES_VERSION"
+      vo="$(mktemp "$WORK_DIR/values-object.XXXXXX")"
+      yq ".spec.sources[$i].helm.valuesObject // {}" "$app_file" >"$vo"
+      helm template "$release" "$dir" --namespace "$ns" --kube-version "$KUBERNETES_VERSION" --values "$vo"
     fi
     echo "---"
   done
@@ -65,6 +73,22 @@ crd_schemas() {
   done
 }
 
+# Every ExternalSecret in deploy/: plain manifests as they are, templated ones rendered with their chart's defaults.
+collect_external_secrets() {
+  local file chart
+  while IFS= read -r file; do
+    if grep -q '{{' "$file"; then
+      chart="$(dirname "$(dirname "$file")")"
+      [ -f "$chart/Chart.yaml" ] || fail "$file is templated but $chart has no Chart.yaml"
+      helm template x "$chart" --kube-version "$KUBERNETES_VERSION" | yq 'select(.kind == "ExternalSecret")' ||
+        fail "$chart does not render"
+    else
+      yq 'select(.kind == "ExternalSecret")' "$file"
+    fi
+    echo "---"
+  done < <(grep -rlE '^kind:[[:space:]]*ExternalSecret' "$REPO_ROOT/deploy" --include='*.yaml' | sort)
+}
+
 expect() { # expect <description> <actual> <expected>
   [ "$2" = "$3" ] || fail "$1: got '$2', want '$3'"
   log "ok: $1"
@@ -83,9 +107,11 @@ main() {
     log "rendered $app"
   done
 
-  # 1. External Secrets CRs against the CRDs of the pinned chart.
+  # 1. External Secrets CRs (stores here, ExternalSecrets from every overlay) against the pinned chart's CRDs.
   crd_schemas "$work/external-secrets.yaml" "$work/schemas"
-  yq 'select(.apiVersion == "external-secrets.io/*")' "$work/external-secrets.yaml" >"$work/eso-crs.yaml"
+  collect_external_secrets >"$work/external-secret-list.yaml"
+  { yq 'select(.apiVersion == "external-secrets.io/*")' "$work/external-secrets.yaml"; echo "---"; cat "$work/external-secret-list.yaml"; } |
+    yq 'select(. != null)' >"$work/eso-crs.yaml"
   kubeconform -strict -summary -kubernetes-version "$KUBERNETES_VERSION" \
     -schema-location "$work/schemas/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" "$work/eso-crs.yaml" ||
     fail "External Secrets resources do not match the chart's CRDs"
@@ -94,20 +120,30 @@ main() {
   local stores_values="$REPO_ROOT/deploy/platform/external-secrets/aws/secret-stores/values.yaml"
   expect "ESO namespaces = eso_namespaces" "$(yq -o=json -I=0 '.namespaces' "$stores_values")" "$(jq -c .eso_namespaces "$CONTRACT")"
   expect "ESO role prefix" "$(yq '.rolePrefix' "$stores_values")" "$(contract .roles.eso_prefix)"
-  expect "SSM prefix" "$(yq '.parameterPrefix' "$stores_values")" "$SSM_PREFIX"
   expect "ESO region" "$(yq '.region' "$stores_values")" "$REGION"
   expect "one ClusterSecretStore per namespace" \
     "$(yq -N 'select(.kind == "ClusterSecretStore") | .spec.conditions[0].namespaces[0]' "$work/external-secrets.yaml" | sort | tr '\n' ' ')" \
     "$(jq -r '.eso_namespaces[]' "$CONTRACT" | sort | tr '\n' ' ')"
-  expect "CDC epoch parameter" \
-    "$(yq -N 'select(.kind == "ExternalSecret" and .metadata.name == "cdc-epoch") | .spec.data[0].remoteRef.key' "$work/external-secrets.yaml")" \
-    "$SSM_CDC_EPOCH"
-  local ns key
-  while read -r ns key; do
-    case "$key" in "$SSM_PREFIX/$ns/"*) ;; *) fail "ExternalSecret in $ns reads $key, outside $SSM_PREFIX/$ns/" ;; esac
-  done < <(yq -N 'select(.kind == "ExternalSecret") | .metadata.namespace as $ns | .spec.data[] | $ns + " " + .remoteRef.key' \
-    "$work/external-secrets.yaml")
-  log "ok: every ExternalSecret reads only its namespace's parameters"
+
+  # 3. ExternalSecrets of every component.
+  local count name ns store key options
+  count="$(yq -N 'select(.kind == "ExternalSecret") | .metadata.name' "$work/external-secret-list.yaml" | grep -c . || true)"
+  while IFS=$'\t' read -r ns name store options; do
+    [ -n "$name" ] || continue
+    jq -e --arg ns "$ns" '.eso_namespaces | index($ns)' "$CONTRACT" >/dev/null ||
+      fail "ExternalSecret $ns/$name: namespace $ns has no ClusterSecretStore (add it to eso_namespaces)"
+    [ "$store" = "ClusterSecretStore/ssm-$ns" ] || fail "ExternalSecret $ns/$name must use ClusterSecretStore/ssm-$ns, not $store"
+    case "$options" in *SkipDryRunOnMissingResource=true*) ;; *) fail "ExternalSecret $ns/$name: add the SkipDryRunOnMissingResource=true sync option" ;; esac
+  done < <(yq -N 'select(.kind == "ExternalSecret") | [.metadata.namespace, .metadata.name,
+      (.spec.secretStoreRef.kind // "SecretStore") + "/" + .spec.secretStoreRef.name,
+      .metadata.annotations["argocd.argoproj.io/sync-options"] // ""] | @tsv' "$work/external-secret-list.yaml")
+  while IFS=$'\t' read -r ns name key; do
+    [ -n "$name" ] || continue
+    case "$key" in "$SSM_PREFIX/$ns/"*) ;; *) fail "ExternalSecret $ns/$name reads $key, outside $SSM_PREFIX/$ns/" ;; esac
+  done < <(yq -N 'select(.kind == "ExternalSecret") | .metadata.namespace as $ns | .metadata.name as $name
+      | [(.spec.data // [])[] | .remoteRef.key] + [(.spec.dataFrom // [])[] | (.extract.key // .find.path // "")]
+      | .[] | [$ns, $name, .] | @tsv' "$work/external-secret-list.yaml")
+  log "ok: $count ExternalSecret(s) use their namespace's store and parameters"
 
   # The Pod Identity key of each component is also its app name.
   local sa

@@ -1,6 +1,6 @@
 # OpenCost (AWS only, spike): cost per namespace from Prometheus (kube-prometheus-stack `kps`) and AWS public
 # on-demand prices. UI through port-forward only (ADR 0205). No AWS credentials and no session parameters.
-# Not part of any profile yet: the aws root apps wire it once ADR 0206 lands.
+# Runs in profiles-aws/obs and profiles-aws/obs-lite (it needs Prometheus; gitops.md §1b).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -8,7 +8,7 @@ metadata:
   namespace: argocd
   labels:
     app.kubernetes.io/part-of: shopflow
-    shopflow.io/profile: aws
+    shopflow.io/profile: obs
   annotations:
     argocd.argoproj.io/sync-wave: "1"
 spec:
