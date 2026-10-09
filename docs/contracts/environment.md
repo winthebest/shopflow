@@ -2,8 +2,10 @@
 
 ## Docker and clusters
 
-- Docker Desktop VM: 16GB. At most **2 k3d clusters at the same time**: `sf-main` (orchestrator, tracks `main`)
-  plus one lane cluster holding the **slot**. Ask the orchestrator for the slot; delete your cluster when done.
+- Docker Desktop VM: 16GB. At most **2 k3d clusters at the same time**, and their profiles must fit ~11GB together
+  (measured: `core` ≈ 3.3GB; `obs` adds ≈ 2.5GB; `data` adds ≈ 5–6GB). `sf-main` (orchestrator, pinned to a `main`
+  SHA) runs only during gates. Lane clusters hold **slots** assigned by the orchestrator; ask before `make up`,
+  run `make down` when your cluster work is done.
 - Deterministic names and ports. On "address in use", stop and report; never pick another port.
 
 | Cluster | Owner | API port | HTTPS (load balancer) | Local registry (API − 1500) | Argo CD UI port-forward (API + 11530) |
