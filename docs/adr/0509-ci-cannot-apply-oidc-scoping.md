@@ -29,6 +29,13 @@ apply-capable CI role would turn a malicious or careless PR into account takeove
 | Apply on merge to main | a merged mistake creates or destroys billable resources unattended |
 | Default `sub` (`repo:<repo>:ref:...`) | any workflow in the repo could assume the role |
 
+Limit of the `job_workflow_ref` pin for `ci-plan`: on a pull request it names the PR's **own** copy of
+`infra-ci.yml` (`…@refs/pull/<n>/merge`). Anyone who can push a branch to this repository can change that file in
+their PR and run arbitrary steps with `ci-plan` credentials. The pin only stops other workflows and forks. So
+`ci-plan` must stay read-only forever: never grant it a write action, `ssm:GetParameter*`, `kms:Decrypt`, secrets,
+data objects or state writes, whatever a future plan seems to need. The reaper is not exposed this way: it trusts
+only `refs/heads/main`, which needs a reviewed merge.
+
 ## Consequences
 
 - Positive: a compromised PR can at most read infrastructure metadata; the reaper can only remove session compute.
