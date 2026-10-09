@@ -40,3 +40,12 @@ hand-set constant `7d`; `scripts/data-validate.sh` fails if they change.
 - Positive: three independent layers for read-only users (Trino catalog mode, Polaris principal, S3 identity).
 - Negative / risks: duplicated catalog properties for `lake` and `lake_ro`; Trino holds four credential Secrets.
 - When to revisit: Trino adds procedure-level access control, or the Phase 9 refusal matrix finds a gap.
+
+## Open question (Phase 6, AWS)
+
+On AWS `lake` and `lake_ro` use Glue (docs/adr/0506) and S3 through Pod Identity: Trino has one ServiceAccount, so
+both catalogs share one IAM role with write access, and there is no Polaris principal. Read-only then rests on the
+engine layer alone (`iceberg.security=READ_ONLY`, the boundary in docs/contracts/environment.md); the S3 and catalog
+layers of the table above are lost, a defence-in-depth gap rather than a broken boundary. To decide in Phase 6, with
+sf-cloud: accept it and record it, or restore a storage-level layer (Lake Formation permissions, or a separate
+identity for read-only queries).
