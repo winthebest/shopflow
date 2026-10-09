@@ -30,12 +30,12 @@ variable "kubernetes_version" {
 }
 
 variable "node_instance_types" {
-  description = "Graviton spot instance types, diverse to survive spot shortages in a single AZ. Final list follows the RAM measured on k3d."
+  description = "Graviton spot instance types override; null uses node_instance_types from cloud-contract.json (ADR 0505)."
   type        = list(string)
-  default     = ["m7g.xlarge", "m6g.xlarge", "r7g.large", "r6g.large", "c7g.2xlarge"]
+  default     = null
 
   validation {
-    condition     = length(var.node_instance_types) >= 2 && alltrue([for t in var.node_instance_types : can(regex("^[a-z][0-9]+g[a-z]*\\.", t))])
+    condition     = var.node_instance_types == null || (length(coalesce(var.node_instance_types, [])) >= 2 && alltrue([for t in coalesce(var.node_instance_types, []) : can(regex("^[a-z][0-9]+g[a-z]*\\.", t))]))
     error_message = "Use at least two Graviton (arm64) instance types."
   }
 }

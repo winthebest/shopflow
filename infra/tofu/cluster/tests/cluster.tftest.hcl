@@ -61,6 +61,11 @@ run "nodes_are_graviton_spot_in_one_az_without_pod_imds" {
   }
 
   assert {
+    condition     = aws_eks_node_group.spot.instance_types == tolist(jsondecode(file("../../cloud-contract.json")).node_instance_types)
+    error_message = "Node types come from cloud-contract.json (ADR 0505)."
+  }
+
+  assert {
     condition     = aws_eks_node_group.spot.subnet_ids == toset(["subnet-0aaaaaaaaaaaaaaaa"])
     error_message = "Nodes live only in the AZ-a subnet."
   }

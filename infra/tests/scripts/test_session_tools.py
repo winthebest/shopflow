@@ -176,6 +176,34 @@ def test_orphan_check_deletes_ours_and_reports_strangers(fake):
     assert "UNKNOWN  us-east-1 volume vol-0stranger" in result.stderr
 
 
+def test_untagged_load_balancers_in_the_shopflow_vpc_block_cleanup(fake):
+    """A Classic ELB from EKS's legacy cloud provider carries only the cluster tag: reapers cannot delete it."""
+    orphan_world(fake)
+    nlb = "arn:aws:elasticloadbalancing:ap-southeast-1:123456789012:loadbalancer/net/k8s-shop/abc"
+    fake.on("aws", r"--region ap-southeast-1 .*ec2 describe-vpcs", json_out=["vpc-0shopflow"])
+    fake.on("aws", r"--region ap-southeast-1 .*elbv2 describe-load-balancers", json_out=[{"id": nlb, "vpc": "vpc-0shopflow"}])
+    fake.on(
+        "aws",
+        r"elbv2 describe-tags",
+        json_out={"TagDescriptions": [{"ResourceArn": nlb, "Tags": [{"Key": "project", "Value": "shopflow"}]}]},
+    )
+    fake.on("aws", r"--region ap-southeast-1 .*elb describe-load-balancers", json_out=[{"id": "a1b2c3", "vpc": "vpc-0shopflow"}])
+    fake.on(
+        "aws",
+        r"elb describe-tags",
+        json_out={
+            "TagDescriptions": [{"LoadBalancerName": "a1b2c3", "Tags": [{"Key": "kubernetes.io/cluster/shopflow", "Value": "owned"}]}]
+        },
+    )
+
+    result = fake.run("aws-orphan-check.sh", "--regions", "ap-southeast-1", "--delete-tagged")
+
+    assert result.returncode == 2, result.stderr
+    assert "UNTAGGED ap-southeast-1 classic-load-balancer a1b2c3 (in the shopflow VPC" in result.stderr
+    deleted = [c.line for c in fake.calls("aws") if "delete-load-balancer" in c.argv]
+    assert deleted == [f"aws --region ap-southeast-1 --output json elbv2 delete-load-balancer --load-balancer-arn {nlb}"]
+
+
 def test_orphan_check_without_delete_reports_ours(fake):
     orphan_world(fake)
 
@@ -291,3 +319,4 @@ def test_reaper_has_nothing_to_do_without_a_cluster(fake):
 
     assert result.returncode == 0 and "nothing to reap" in result.stderr
     assert fake.mutations() == []
+    fake.index_of(r"ec2 describe-regions")  # still checks for orphans every hour

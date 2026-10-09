@@ -5,6 +5,7 @@
   "cluster_name": "shopflow",
   "node_az": "ap-southeast-1a",
   "kubernetes_version": "1.35",
+  "node_instance_types": ["r8g.large", "r6g.large", "m8g.xlarge", "c6g.2xlarge", "c7g.2xlarge"],
   "github_repository": "winthebest/shopflow",
   "state_bucket_prefix": "shopflow-tfstate-",
   "data_bucket_prefix": "shopflow-data-",
@@ -57,8 +58,11 @@
     "m7g.large", "m7g.xlarge", "m7g.2xlarge",
     "r6g.large", "r6g.xlarge",
     "r7g.large", "r7g.xlarge",
+    "m8g.large", "m8g.xlarge", "m8g.2xlarge",
+    "r8g.large", "r8g.xlarge",
     "c6g.xlarge", "c6g.2xlarge",
     "c7g.xlarge", "c7g.2xlarge",
+    "c8g.xlarge", "c8g.2xlarge",
     "t4g.large", "t4g.xlarge"
   ],
   "pod_identities": {

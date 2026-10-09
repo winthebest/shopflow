@@ -230,6 +230,7 @@ cluster; reaper workflow disabled → the Lambda destroys it; a paused cluster �
 | cloud-down step 4/5 over 10 minutes (finalizers, LB) | re-run `make cloud-down`; still stuck → `CLOUD_ARGS=--force-api`; write a postmortem |
 | `tofu destroy` keeps failing | `make cloud-down` again (it resumes); check `aws eks list-nodegroups`, ENIs in use, then the orphan check |
 | Orphan check exit 2 | an untagged resource exists somewhere: identify it by hand; the scripts never delete it |
+| Orphan check: `UNTAGGED … load-balancer` | a load balancer in the shopflow VPC without `project=shopflow`, typically a Classic ELB made by EKS's legacy cloud provider for a Service without the NLB class. Reapers cannot delete it (their IAM needs the tag). Check its tags and listeners, delete it (`aws elb delete-load-balancer` / `aws elbv2 delete-load-balancer`), and fix the Service that caused it. cloud-down stays failed and the hourly reaper keeps alerting until it is gone |
 | Orphan check exit 3 | shopflow-tagged leftovers outside the home region or an EKS cluster: `cloud-down --force-api`, or delete by hand |
 | Reaper: "state lock is old" | a run died holding `cluster/terraform.tfstate.tflock`; confirm nothing runs, delete the object |
 | cloud-up: "Budget Action has fired" | spend passed $25: review `docs/cost.md`, raise `action_threshold_usd` in layer 0, then reset the action in the Budgets console |

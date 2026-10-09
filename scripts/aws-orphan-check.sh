@@ -4,6 +4,9 @@
 # own none of these, so every hit is an orphan.
 #   shopflow-tagged orphans: deleted with --delete-tagged (in the home region; others are reported)
 #   anything else:           reported, never touched; exit 2 so a human looks at it
+# Load balancers count as shopflow's only with the `project` tag, the one the reapers' IAM conditions need. A
+# load balancer in the shopflow VPC without it (for example a Classic ELB made by EKS's legacy cloud provider
+# when a Service had no NLB class) is reported as such and blocks cloud-down until a human removes it.
 # Exit codes: 0 clean, 2 unknown resources found, 3 shopflow resources remain, 1 error.
 set -euo pipefail
 # shellcheck source=scripts/cloud-lib.sh
@@ -23,12 +26,14 @@ DELETE_TAGGED=0
 ALERT=0
 REGIONS=""
 
-# A resource is "ours" when it carries the project tag or a tag the session's controllers set.
+# A resource is "ours" when it carries the project tag or a tag the session's controllers set; load balancers
+# only with the project tag (see above).
 # shellcheck disable=SC2016 # a jq program, not shell
-OURS_JQ='def ours($p; $c): any(.tags[]?; (.Key == "project" and .Value == $p)
-  or (.Key == "elbv2.k8s.aws/cluster" and .Value == $c)
+OURS_JQ='def project($p): any(.tags[]?; .Key == "project" and .Value == $p);
+def ours($p; $c): if (.type | test("load-balancer$")) then project($p) else project($p) or any(.tags[]?;
+  (.Key == "elbv2.k8s.aws/cluster" and .Value == $c)
   or (.Key == "cluster.k8s.amazonaws.com/name" and .Value == $c)
-  or (.Key == ("kubernetes.io/cluster/" + $c)));'
+  or (.Key == ("kubernetes.io/cluster/" + $c))) end;'
 
 in_region() {
   local region="$1"
@@ -36,9 +41,9 @@ in_region() {
   aws --region "$region" --output json "$@"
 }
 
-# One JSON object per resource: {region, type, id, tags}.
+# One JSON object per resource: {region, type, id, tags}; load balancers add {in_shopflow_vpc}.
 scan_region() {
-  local r="$1" arns
+  local r="$1" vpcs lbs
   in_region "$r" ec2 describe-instances --filters Name=instance-state-name,Values=pending,running,stopping,stopped |
     jq -c --arg r "$r" '.Reservations[].Instances[] | {region: $r, type: "instance", id: .InstanceId, tags: (.Tags // [])}'
   in_region "$r" ec2 describe-volumes --filters Name=status,Values=available |
@@ -49,18 +54,22 @@ scan_region() {
     jq -c --arg r "$r" '.Addresses[] | {region: $r, type: "elastic-ip", id: .AllocationId, tags: (.Tags // [])}'
   in_region "$r" ec2 describe-nat-gateways --filter Name=state,Values=pending,available |
     jq -c --arg r "$r" '.NatGateways[] | {region: $r, type: "nat-gateway", id: .NatGatewayId, tags: (.Tags // [])}'
-  arns="$(in_region "$r" elbv2 describe-load-balancers --query 'LoadBalancers[].LoadBalancerArn' --output text)"
-  if [ -n "$arns" ] && [ "$arns" != None ]; then
-    # shellcheck disable=SC2086 # split the ARN list on purpose (at most 20 per call)
-    printf '%s\n' $arns | xargs -n 20 aws --region "$r" --output json elbv2 describe-tags --resource-arns |
-      jq -c --arg r "$r" '.TagDescriptions[] | {region: $r, type: "load-balancer", id: .ResourceArn, tags: (.Tags // [])}'
+  vpcs="$(in_region "$r" ec2 describe-vpcs --filters "Name=tag:project,Values=$PROJECT" --query 'Vpcs[].VpcId')"
+  vpcs="${vpcs:-[]}"
+  # ELBv2 (NLB/ALB) and Classic ELB: list with their VPC, then tags in batches of 20.
+  lbs="$(in_region "$r" elbv2 describe-load-balancers --query 'LoadBalancers[].{id: LoadBalancerArn, vpc: VpcId}')"
+  if [ -n "$lbs" ] && [ "$(jq 'length' <<<"$lbs")" -gt 0 ]; then
+    jq -r '.[].id' <<<"$lbs" | xargs -n 20 aws --region "$r" --output json elbv2 describe-tags --resource-arns |
+      jq -c --arg r "$r" --argjson lbs "$lbs" --argjson vpcs "$vpcs" '.TagDescriptions[] | .ResourceArn as $id
+        | {region: $r, type: "load-balancer", id: $id, tags: (.Tags // []),
+           in_shopflow_vpc: ([$lbs[] | select(.id == $id) | .vpc] | length > 0 and (. - $vpcs | length == 0))}'
   fi
-  local names
-  names="$(in_region "$r" elb describe-load-balancers --query 'LoadBalancerDescriptions[].LoadBalancerName' --output text)"
-  if [ -n "$names" ] && [ "$names" != None ]; then
-    # shellcheck disable=SC2086
-    printf '%s\n' $names | xargs -n 20 aws --region "$r" --output json elb describe-tags --load-balancer-names |
-      jq -c --arg r "$r" '.TagDescriptions[] | {region: $r, type: "classic-load-balancer", id: .LoadBalancerName, tags: (.Tags // [])}'
+  lbs="$(in_region "$r" elb describe-load-balancers --query 'LoadBalancerDescriptions[].{id: LoadBalancerName, vpc: VPCId}')"
+  if [ -n "$lbs" ] && [ "$(jq 'length' <<<"$lbs")" -gt 0 ]; then
+    jq -r '.[].id' <<<"$lbs" | xargs -n 20 aws --region "$r" --output json elb describe-tags --load-balancer-names |
+      jq -c --arg r "$r" --argjson lbs "$lbs" --argjson vpcs "$vpcs" '.TagDescriptions[] | .LoadBalancerName as $id
+        | {region: $r, type: "classic-load-balancer", id: $id, tags: (.Tags // []),
+           in_shopflow_vpc: ([$lbs[] | select(.id == $id) | .vpc] | length > 0 and (. - $vpcs | length == 0))}'
   fi
   local cluster
   for cluster in $(in_region "$r" eks list-clusters --query 'clusters[]' --output text); do
@@ -112,7 +121,10 @@ main() {
     type="$(jq -r .type <<<"$line")"
     id="$(jq -r .id <<<"$line")"
     ours="$(jq -r .ours <<<"$line")"
-    if [ "$ours" != true ]; then
+    if [ "$ours" != true ] && [ "$(jq -r '.in_shopflow_vpc // false' <<<"$line")" = true ]; then
+      log "UNTAGGED $region $type $id (in the shopflow VPC without project=$PROJECT: the reapers cannot delete it; remove it by hand)"
+      unknown=$((unknown + 1))
+    elif [ "$ours" != true ]; then
       log "UNKNOWN  $region $type $id (not shopflow; left alone)"
       unknown=$((unknown + 1))
     elif [ "$DELETE_TAGGED" = 1 ] && [ "$region" = "$REGION" ] && delete_orphan "$region" "$type" "$id"; then
