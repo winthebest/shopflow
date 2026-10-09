@@ -12,7 +12,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FAKE_CLI = Path(__file__).with_name("fake_cli.py")
-FAKED_TOOLS = ("aws", "tofu", "kubectl", "helm", "gh", "curl", "uv")
+FAKED_TOOLS = ("aws", "tofu", "kubectl", "helm", "gh", "curl", "uv", "openssl", "htpasswd")
 ACCOUNT = "123456789012"
 OPERATOR_ARN = f"arn:aws:sts::{ACCOUNT}:assumed-role/shopflow-operator/me"
 REAPER_ARN = f"arn:aws:sts::{ACCOUNT}:assumed-role/shopflow-reaper/GitHubActions"

@@ -18,7 +18,11 @@ import sys
 def main() -> int:
     tool, argv = sys.argv[1], sys.argv[2:]
     joined = " ".join(argv)
-    reads_stdin = "file:///dev/stdin" in argv or (tool == "kubectl" and ("-i" in argv or argv[-2:] == ["-f", "-"]))
+    reads_stdin = (
+        "file:///dev/stdin" in argv
+        or (tool == "kubectl" and ("-i" in argv or argv[-2:] == ["-f", "-"]))
+        or (tool == "htpasswd" and "-niBC" in argv)
+    )
     stdin = sys.stdin.read() if reads_stdin else ""
 
     log_path = os.environ["FAKE_LOG"]

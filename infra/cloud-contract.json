@@ -28,7 +28,8 @@
     "pg_backup_pointer": "/shopflow/aws/control/pg-backup-pointer",
     "pg_initialized": "/shopflow/aws/control/pg-initialized",
     "resume_desired": "/shopflow/aws/control/resume-desired",
-    "cdc_epoch": "/shopflow/aws/kafka/cdc-epoch"
+    "cdc_epoch": "/shopflow/aws/kafka/cdc-epoch",
+    "argocd_admin": "/shopflow/aws/argocd/admin-password"
   },
   "reaper": {
     "function_name": "shopflow-reaper",

@@ -14,6 +14,8 @@ NODES = {"items": [{"status": {"conditions": [{"type": "Ready", "status": "True"
 APPS = {"items": [{"status": {"sync": {"status": "Synced"}, "health": {"status": "Healthy"}}}]}
 CNPG = {"status": {"conditions": [{"type": "Ready", "status": "True"}]}}
 TRINO_PASSWORD = "trino-smoke-password-value"
+ARGOCD_PASSWORD = "argocd-admin-password-value"
+ARGOCD_HASH = "$2y$10$abcdefghijklmnopqrstuvFakeBcryptHashForTheTestsOnly0123"
 GATEWAY_SVC = {"items": [{"status": {"loadBalancer": {"ingress": [{"hostname": "k8s-shop-abc.elb.ap-southeast-1.amazonaws.com"}]}}}]}
 
 
@@ -155,6 +157,19 @@ def full_session(h: Harness) -> Harness:
         "kubectl", r"exec -i deploy/trino-coordinator .*--user .*exporter .*lake_ro .*bronze.orders WHERE id = 42 AND _cdc_epoch = 1", "1\n"
     )
     h.not_found("aws", r"scheduler get-schedule", "ResourceNotFoundException", "GetSchedule")
+    # Argo CD admin password: absent, generated into SSM, then read back only to hash it.
+    h.on("aws", r"ssm describe-parameters .*argocd/admin-password", "0\n")
+    h.on("openssl", r"rand", ARGOCD_PASSWORD)
+    h.rules.insert(
+        0,
+        {
+            "tool": "aws",
+            "match": r"ssm get-parameter --name /shopflow/aws/argocd/admin-password --with-decryption",
+            "stdout": ARGOCD_PASSWORD,
+            "exit": 0,
+        },
+    )
+    h.on("htpasswd", r"-niBC 10 admin", f"admin:{ARGOCD_HASH}\n")
     return h
 
 
@@ -189,6 +204,22 @@ def test_first_session_initdb_end_to_end(fake, hooks):
     assert hook_calls.index("--check") < hook_calls.index(f"platform-root-apps.sh KUBECONFIG={kubeconfig} --overlay aws --revision main")
     assert "pg.recoveryFrom= " in hook_calls and "aws.vpcId=vpc-0123456789abcdef0" in hook_calls
     assert f"cdc-epoch.sh KUBECONFIG={kubeconfig} wait --epoch 1" in hook_calls
+
+    # Argo CD admin: generated into SSM through stdin; only the bcrypt hash reaches Helm, through /dev/fd.
+    admin = next(c for c in fake.calls("aws") if "put-parameter" in c.argv and "argocd/admin-password" in c.stdin)
+    assert json.loads(admin.stdin) == {
+        "Name": "/shopflow/aws/argocd/admin-password",
+        "Value": ARGOCD_PASSWORD,
+        "Type": "SecureString",
+        "KeyId": "alias/aws/ssm",
+        "Tags": [{"Key": "project", "Value": "shopflow"}],
+    }
+    assert next(c for c in fake.calls("htpasswd")).stdin == ARGOCD_PASSWORD
+    helm = next(c for c in fake.calls("helm") if "upgrade" in c.argv)
+    assert helm.argv[-1].startswith("/dev/fd/"), "admin values come through process substitution"
+    assert all(ARGOCD_PASSWORD not in arg and ARGOCD_HASH not in arg for c in fake.calls() for arg in c.argv)
+    assert ARGOCD_PASSWORD not in result.stderr + result.stdout
+    assert fake.index_of(r"ssm put-parameter --cli-input-json") < fake.index_of(r"helm upgrade --install argocd")
 
     smoke = next(c for c in fake.calls("kubectl") if "deploy/trino-coordinator" in c.argv)
     assert smoke.stdin.strip() == TRINO_PASSWORD, "the Trino password reaches the CLI through stdin"

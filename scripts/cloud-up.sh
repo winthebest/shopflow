@@ -182,6 +182,35 @@ apply_cluster_layer() {
   fi
 }
 
+# Argo CD admin password (ADR 0205: never the chart's random initial secret). Created once, generated inside a
+# pipe straight into SSM as SecureString: nobody types or sees it, and it never touches argv or a file.
+# scripts/cloud-argocd.sh password copies it to the clipboard.
+ensure_argocd_admin_password() {
+  local exists
+  exists="$(aws_ ssm describe-parameters --parameter-filters "Key=Name,Values=$SSM_ARGOCD_ADMIN" \
+    --query 'length(Parameters)' --output text)" || die "cannot read $SSM_ARGOCD_ADMIN"
+  [ "$exists" = 0 ] || return 0
+  if dry_run; then
+    log "DRY-RUN: would generate the Argo CD admin password into $SSM_ARGOCD_ADMIN (SecureString)"
+    return 0
+  fi
+  openssl rand -base64 24 | tr -d '\n' |
+    jq -Rs --arg name "$SSM_ARGOCD_ADMIN" --arg project "$PROJECT" \
+      '{Name: $name, Value: ., Type: "SecureString", KeyId: "alias/aws/ssm", Tags: [{Key: "project", Value: $project}]}' |
+    aws_ ssm put-parameter --cli-input-json file:///dev/stdin >/dev/null
+  log "generated the Argo CD admin password in $SSM_ARGOCD_ADMIN"
+}
+
+# Helm values with the bcrypt hash only; the password goes from SSM to htpasswd through a pipe (as in k3d-up.sh).
+argocd_admin_values() {
+  local hash
+  # shellcheck disable=SC2016 # $2y$ and $2a$ are literal bcrypt prefixes
+  hash="$(aws_ ssm get-parameter --name "$SSM_ARGOCD_ADMIN" --with-decryption --query Parameter.Value --output text |
+    htpasswd -niBC 10 admin | cut -d: -f2- | tr -d '\n' | sed 's/^\$2y\$/$2a$/')"
+  printf 'configs:\n  secret:\n    argocdServerAdminPassword: "%s"\n    argocdServerAdminPasswordMtime: "%s"\n' \
+    "$hash" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+
 install_argocd() {
   [ -f "$ARGOCD_CHART_FILE" ] || die "missing $ARGOCD_CHART_FILE (sf-platform)"
   local values=(--values "$ARGOCD_VALUES")
@@ -192,9 +221,19 @@ install_argocd() {
   else
     die "missing $ARGOCD_AWS_VALUES (sf-platform: aws values without the SOPS/age mount)"
   fi
-  run helm upgrade --install argocd "$(yq '.chart' "$ARGOCD_CHART_FILE")" \
-    --repo "$(yq '.repo' "$ARGOCD_CHART_FILE")" --version "$(yq '.version' "$ARGOCD_CHART_FILE")" \
-    --kubeconfig "$KUBECONFIG_FILE" --namespace argocd --create-namespace --wait --timeout 10m "${values[@]}" >&2
+  local chart=(argocd "$(yq '.chart' "$ARGOCD_CHART_FILE")" --repo "$(yq '.repo' "$ARGOCD_CHART_FILE")"
+    --version "$(yq '.version' "$ARGOCD_CHART_FILE")" --kubeconfig "$KUBECONFIG_FILE" --namespace argocd
+    --create-namespace --wait --timeout 10m)
+  ensure_argocd_admin_password
+  if dry_run; then
+    run helm upgrade --install "${chart[@]}" "${values[@]}" --values "<bcrypt of $SSM_ARGOCD_ADMIN>"
+    return 0
+  fi
+  local admin_values
+  admin_values="$(argocd_admin_values)"
+  # shellcheck disable=SC2016 # literal bcrypt prefix
+  case "$admin_values" in *'"$2a$'*) ;; *) die "could not derive the Argo CD admin password hash" ;; esac
+  helm upgrade --install "${chart[@]}" "${values[@]}" --values <(printf '%s\n' "$admin_values") >&2
 }
 
 # Root apps are created by the same sf-platform mechanism as `make up`; cloud-up only passes the
@@ -338,7 +377,7 @@ on_exit() {
 
 main() {
   parse_args "$@"
-  require_cmds aws tofu kubectl helm jq yq curl gh
+  require_cmds aws tofu kubectl helm jq yq curl gh openssl htpasswd
   trap on_exit EXIT
   dry_run && log "DRY-RUN: reads only; changes are printed"
 

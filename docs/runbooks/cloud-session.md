@@ -114,7 +114,7 @@ parameter.
 
 | Command | What it does |
 |---|---|
-| `make cloud-up` | preflight (operator role, Budget Action not fired, EKS version in standard support, no active lease, backup chain) → provisional lease → apply layer 2 → kubeconfig → Argo CD (chart + values from `deploy/argocd/bootstrap/`) → root apps through `scripts/platform-root-apps.sh --overlay aws` → wait Synced/Healthy → Postgres chain → CDC epoch → smoke (a checkout through the NLB is in `lake_ro` `bronze.orders` with this session's `_cdc_epoch` within 2 min, queried as the read-only `exporter` user; the password goes through stdin) → prints RTO-infra and RTO-service → final lease + Lambda schedule → re-enables the GitHub reaper |
+| `make cloud-up` | preflight (operator role, Budget Action not fired, EKS version in standard support, no active lease, backup chain) → provisional lease → apply layer 2 → kubeconfig → Argo CD (chart + values from `deploy/argocd/bootstrap/`; admin password from SSM, see below) → root apps through `scripts/platform-root-apps.sh --overlay aws` → wait Synced/Healthy → Postgres chain → CDC epoch → smoke (a checkout through the NLB is in `lake_ro` `bronze.orders` with this session's `_cdc_epoch` within 2 min, queried as the read-only `exporter` user; the password goes through stdin) → prints RTO-infra and RTO-service → final lease + Lambda schedule → re-enables the GitHub reaper |
 | `make cloud-up CLOUD_ARGS=--dry-run` | reads AWS, runs `tofu plan`, prints every change instead of making it |
 | `make cloud-up CLOUD_ARGS=--resume` | continues a cloud-up that stopped (reuses the recorded session plan) |
 | `make cloud-up CLOUD_ARGS="--pitr 2026-11-02T10:15:00Z"` | restores Postgres to that time |
@@ -122,6 +122,15 @@ parameter.
 | `make cloud-pause` / `make cloud-resume` | node group to 0 and back (< 4 h breaks; control plane, NLB and volumes still bill ~$0.16/h) |
 | `make cloud-down` | auto-sync off → final backup + pointer → evidence to S3 → Gateway/LB deleted, wait for ELBv2 → stateful CRs + PVCs deleted, wait for EBS → uninstall Argo CD → `tofu destroy` layer 2 (3 tries) → orphan check in every region → drop lease, session, schedule. Re-run it after any interruption |
 | `make cloud-down CLOUD_ARGS=--force-api` | paused or unreachable cluster: AWS API teardown like the reapers, no final backup |
+
+### Argo CD admin on AWS
+
+Never the chart's random initial secret (ADR 0205). The first cloud-up generates a password inside a pipe straight
+into SSM `/shopflow/aws/argocd/admin-password` (SecureString); nobody types or sees it. Each cloud-up reads it,
+pipes it through `htpasswd -i` and hands Helm only the bcrypt hash, through process substitution (no file, no
+argv), as `make up` does locally. Access: `make cloud-argocd-ui` (port-forward, user `admin`) and
+`make cloud-argocd-password` (copies it to the clipboard). To rotate it, delete the parameter; the next cloud-up
+generates a new one.
 
 ### Parameters cloud-up passes to the root apps
 
