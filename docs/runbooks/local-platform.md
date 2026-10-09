@@ -35,6 +35,20 @@ Profile changes on an existing cluster:
 - With `data`: right after the root apps, `make up` runs `scripts/cdc-epoch.sh new` (sf-data), so every `make up`
   starts a new CDC epoch (ADR 0406).
 
+## Root apps and session parameters
+
+`make up` and `make cloud-up` both create root apps through `scripts/platform-root-apps.sh` (ADR 0206):
+
+```bash
+scripts/platform-root-apps.sh --print --overlay local --revision main --profiles core     # what would be applied
+scripts/platform-root-apps.sh --check --overlay aws --revision main --profiles core \
+  --param aws.region=ap-southeast-1 ...                                                   # validate a cloud call
+```
+
+- New parameter: declare it in `deploy/argocd/profiles/_common/platform-params.yaml` (and in
+  `shopflow.io/required-aws` if cloud-up must always pass it), then copy it into a Helm value with a top-level
+  replacement in the aws profile. `make platform-validate` fails on undeclared keys.
+
 ## Image pull-through caches
 
 Every node of every local cluster pulls through four shared caches (ADR 0207): `k3d-shopflow-cache-docker`
