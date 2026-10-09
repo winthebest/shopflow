@@ -32,11 +32,11 @@ def test_contracts_hold_on_the_migrated_schema(app_database, capsys):
 def test_schema_change_without_contract_update_fails(app_database, capsys):
     url = app_database("contracts_drop")
     assert main(["--database-url", url]) == 0
-    execute(url, "ALTER TABLE customers DROP COLUMN name")  # what a careless migration would do
+    execute(url, "ALTER TABLE payments DROP COLUMN provider_ref")  # what a careless migration would do
     capsys.readouterr()
 
     assert main(["--database-url", url]) == 1
-    assert "ERROR customers: column name is in the contract but not in the database" in capsys.readouterr().out
+    assert "ERROR payments: column provider_ref is in the contract but not in the database" in capsys.readouterr().out
 
 
 def test_publication_and_contract_files_must_match(app_database, tmp_path, capsys):
