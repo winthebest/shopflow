@@ -1,5 +1,9 @@
-# k3d overlay: one replica each (PDBs still allow a drain), demo data seeded, laptop hostname.
+# k3d overlay: one replica each (PDBs still allow a drain), demo data seeded, laptop hostname, telemetry on.
 environment: local
+# Every local validation profile includes obs or obs-lite (docs/contracts/services.md); on a core-only cluster the
+# SDK only logs exporter warnings.
+otel:
+  enabled: true
 services:
   gateway:
     replicas: 1
