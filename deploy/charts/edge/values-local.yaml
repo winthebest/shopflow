@@ -1,0 +1,3 @@
+# k3d: the shop hostname resolves to 127.0.0.1, where the k3d load balancer maps HTTPS_PORT to 443.
+listener:
+  hostname: shop.127.0.0.1.sslip.io

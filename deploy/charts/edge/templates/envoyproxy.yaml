@@ -1,0 +1,30 @@
+# Envoy proxy pods and their Service. The image is pinned here (the Envoy Gateway chart does not render it).
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: {{ .Values.name }}
+  labels:
+    app.kubernetes.io/part-of: shopflow
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        replicas: {{ .Values.envoy.replicas }}
+        container:
+          image: {{ required "envoy.image is required" .Values.envoy.image }}
+          resources:
+            {{- toYaml .Values.envoy.resources | nindent 12 }}
+      envoyService:
+        type: {{ .Values.service.type }}
+        {{- with .Values.service.loadBalancerClass }}
+        loadBalancerClass: {{ . }}
+        {{- end }}
+        {{- with .Values.service.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.operatorCidr }}
+        loadBalancerSourceRanges:
+          - {{ . | quote }}
+        {{- end }}

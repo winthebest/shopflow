@@ -1,0 +1,5 @@
+apiVersion: v2
+name: edge
+description: shopflow public edge - EnvoyProxy, GatewayClass, the single HTTPS Gateway and its TLS certificate
+type: application
+version: 0.1.0

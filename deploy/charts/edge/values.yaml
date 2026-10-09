@@ -1,0 +1,35 @@
+# Public edge (docs/adr/0202, 0205, 0206). Rendered as the third source of the envoy-gateway app, in its namespace.
+# Overlays: values-local.yaml (k3d), values-aws.yaml (EKS, plus session params as Helm values).
+
+name: shopflow            # EnvoyProxy, GatewayClass and Gateway name (HTTPRoutes attach to Gateway shopflow/https)
+
+envoy:
+  image: docker.io/envoyproxy/envoy:distroless-v1.39.1@sha256:eb2c01c13125d1629637cb4e4cce7207009fb7cc2c8027f9742758549d15b6f4
+  replicas: 1
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 256Mi}
+
+service:
+  type: LoadBalancer
+  # Set on AWS to service.k8s.aws/nlb: only the AWS LB Controller handles the Service, never the in-tree
+  # Classic ELB provider (which would create an untagged load balancer the reapers cannot see).
+  loadBalancerClass: ""
+  annotations: {}
+
+# Session param operatorCidr (AWS): the only source range the load balancer accepts. Empty = no restriction
+# (local: the k3d load balancer listens on 127.0.0.1 only).
+operatorCidr: ""
+
+listener:
+  # Empty = any host (AWS: clients use the NLB's DNS name, unknown before the session).
+  hostname: ""
+  # Namespaces whose HTTPRoutes may attach. Only the shop is public.
+  routeNamespaces: [shop]
+
+tls:
+  secretName: shop-tls
+  clusterIssuer: shopflow-ca
+  # With a listener hostname, cert-manager's Gateway API support issues the certificate for it. Without one it
+  # skips the listener, so an explicit Certificate is issued for these names instead.
+  dnsNames: []
