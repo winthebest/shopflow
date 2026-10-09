@@ -1,7 +1,5 @@
-# Local overlay: one instance on k3d local-path storage; the debezium password comes from SOPS via KSOPS.
+# Local role passwords for shop-db (SOPS + KSOPS). The Cluster, roles and databases come from deploy/charts/shop-db.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources:
-  - ../base
 generators:
   - secrets/ksops-generator.yaml

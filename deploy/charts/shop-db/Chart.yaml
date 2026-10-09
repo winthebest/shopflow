@@ -1,0 +1,5 @@
+apiVersion: v2
+name: shop-db
+description: CNPG Cluster shop-db - consumer login roles, their databases and pg_hba, backups and recovery on AWS
+type: application
+version: 0.1.0

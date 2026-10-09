@@ -1,0 +1,17 @@
+{{- range $name := include "shop-db.enabled" .Values.databases | fromJsonArray }}
+{{- $db := index $.Values.databases $name }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: shop-db-{{ $name }}
+  labels:
+    app.kubernetes.io/part-of: shopflow
+spec:
+  cluster:
+    name: shop-db
+  name: {{ $name }}
+  owner: {{ $db.owner }}
+  ensure: present
+  databaseReclaimPolicy: retain
+{{- end }}

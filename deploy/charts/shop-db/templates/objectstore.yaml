@@ -1,0 +1,21 @@
+{{- if or .Values.backup.enabled .Values.recovery.fromServerName }}
+# Backup destination for the barman-cloud plugin. Credentials: the pod's IAM role (EKS Pod Identity), no keys.
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: {{ include "shop-db.barmanObject" . }}
+  labels:
+    app.kubernetes.io/part-of: shopflow
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  retentionPolicy: {{ .Values.backup.retentionPolicy | quote }}
+  configuration:
+    destinationPath: {{ printf "s3://%s/%s" (required "backup.bucket (session param aws.dataBucket) is required" .Values.backup.bucket) .Values.backup.path | quote }}
+    s3Credentials:
+      inheritFromIAMRole: true
+    wal:
+      compression: gzip
+    data:
+      compression: gzip
+{{- end }}

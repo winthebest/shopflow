@@ -1,0 +1,88 @@
+# Postgres for the shop (docs/contracts/services.md "Database", "CDC source objects"; ADR 0203, 0206).
+# Overlays: values-local.yaml (k3d, passwords from SOPS via KSOPS), values-aws.yaml (EKS, passwords from SSM via
+# External Secrets, backups to S3 with the barman-cloud plugin). Session params arrive as Helm values (ADR 0206).
+
+image: ghcr.io/cloudnative-pg/postgresql:17.11-minimal-trixie@sha256:ca2c3bb893d185fe4e5d0401a010454bd87dcb67c53003c38fd828804928f5d9
+instances: 1
+storage:
+  size: 5Gi
+resources:
+  requests: {cpu: 100m, memory: 256Mi}
+  limits: {memory: 512Mi}
+
+postgresql:
+  parameters:
+    wal_level: logical          # Debezium CDC from day 1
+    # A slot whose consumer is gone would retain WAL until the volume is full and the shop stops. Past this size
+    # the slot is invalidated and CDC re-snapshots into a new epoch (ADR 0203). Sized against the 5Gi volume.
+    max_slot_wal_keep_size: 2GB
+
+# Consumer login roles, managed by CNPG (`managed.roles`). Each may reach only `database` (pg_hba); the password
+# Secret (keys username, password) comes from the overlay: KSOPS locally, External Secrets on AWS. Grants on shop
+# tables are Alembic's (sf-app). The owner of database `shop` (`shop_app`) comes from bootstrap.initdb instead.
+roles:
+  debezium:
+    enabled: true
+    database: shop
+    secret: shop-db-debezium
+    replication: true
+    comment: Debezium CDC (LOGIN REPLICATION, owns nothing)
+  trino_pg:
+    enabled: true
+    database: shop
+    secret: shop-db-trino-pg
+    comment: Trino catalog pg (read-only grants from Alembic)
+  polaris:
+    enabled: true
+    database: catalog
+    secret: shop-db-polaris
+    comment: Polaris catalog metastore (owns database catalog only)
+  airflow:
+    enabled: true
+    database: airflow
+    secret: shop-db-airflow
+    comment: Airflow metadata (owns database airflow only)
+  flink_serving:
+    enabled: true
+    database: serving
+    secret: shop-db-flink-serving
+    comment: Flink serving sink (owns database serving, writes kpi_minute)
+  grafana_serving:
+    enabled: true
+    database: serving
+    secret: shop-db-grafana-serving
+    comment: Grafana KPI datasource (read-only on serving, grants from flink_serving)
+
+# Databases besides `shop`, as CNPG Database objects. Kept when the object is deleted: dropping one loses data.
+databases:
+  catalog:
+    enabled: true
+    owner: polaris
+  airflow:
+    enabled: true
+    owner: airflow
+  serving:
+    enabled: true
+    owner: flink_serving
+
+# AWS: WAL archive + base backups through the barman-cloud plugin. serverName names this session's chain
+# (session param pg.serverName); bucket is aws.dataBucket.
+backup:
+  enabled: false
+  bucket: ""
+  path: pg-backup
+  serverName: ""
+  retentionPolicy: 30d
+
+# AWS: restore from the chain `fromServerName` (session param pg.recoveryFrom) instead of initdb; empty = initdb.
+# targetTime (pg.recoveryTargetTime) is a PITR target; empty = latest.
+recovery:
+  fromServerName: ""
+  targetTime: ""
+
+# AWS: role passwords from SSM (/shopflow/aws/shop/<secret>, JSON {username, password}) through External Secrets.
+externalSecrets:
+  enabled: false
+  store: ssm-shop
+  keyPrefix: /shopflow/aws/shop
+  refreshInterval: 1h

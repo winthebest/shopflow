@@ -1,0 +1,3 @@
+# k3d: one instance on local-path storage, initdb, no backups. Role passwords come from SOPS through KSOPS
+# (second source of the shop-db app: deploy/platform/shop-db/local).
+{}
