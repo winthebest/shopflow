@@ -149,6 +149,64 @@ def test_seed_rejects_unknown_namespace(fake):
     assert fake.mutations() == []
 
 
+# Atomic group: the Trino password and its bcrypt hash (another Secret) must always come from the same run.
+GROUPED = {
+    "_groups": [["lakehouse/trino-dbt", "lakehouse/trino-password-db"]],
+    "lakehouse": {"trino-dbt": {"password": "S3CRET-dbt"}, "trino-password-db": {"password.db": "dbt:$2y$10$hash"}},
+    "kafka": {"connect-scram": "S3CRET-kafka"},
+}
+
+
+def group_world(h: Harness, *, existing: tuple[str, ...]) -> Harness:
+    operator(h)
+    for name in existing:
+        h.on("aws", rf"describe-parameters .*Values=/shopflow/aws/{name} ", "1\n")
+    h.on("aws", r"describe-parameters", "0\n")
+    return h
+
+
+def written(fake) -> set[str]:
+    return {json.loads(c.stdin)["Name"] for c in fake.calls("aws") if "put-parameter" in c.argv}
+
+
+def test_partially_seeded_group_writes_nothing(fake):
+    group_world(fake, existing=("lakehouse/trino-dbt",))
+
+    result = fake.run("aws-seed-params.sh", stdin=json.dumps(GROUPED))
+
+    assert result.returncode != 0
+    assert "partially seeded group" in result.stderr and "only lakehouse/trino-dbt exist" in result.stderr
+    assert written(fake) == set(), "no parameter may be written, not even outside the group"
+
+
+def test_rotate_replaces_a_partial_group_as_a_whole(fake):
+    group_world(fake, existing=("lakehouse/trino-dbt",))
+
+    assert fake.run("aws-seed-params.sh", "--rotate", stdin=json.dumps(GROUPED)).returncode == 0
+    assert written(fake) == {
+        "/shopflow/aws/lakehouse/trino-dbt",
+        "/shopflow/aws/lakehouse/trino-password-db",
+        "/shopflow/aws/kafka/connect-scram",
+    }
+
+
+def test_complete_or_absent_groups_follow_the_usual_rules(fake):
+    group_world(fake, existing=("lakehouse/trino-dbt", "lakehouse/trino-password-db"))
+
+    assert fake.run("aws-seed-params.sh", stdin=json.dumps(GROUPED)).returncode == 0
+    assert written(fake) == {"/shopflow/aws/kafka/connect-scram"}, "a complete group is kept without --rotate"
+
+
+def test_group_member_must_be_in_the_input(fake):
+    group_world(fake, existing=())
+    bad = {**GROUPED, "_groups": [["lakehouse/trino-dbt", "lakehouse/missing"]]}
+
+    result = fake.run("aws-seed-params.sh", stdin=json.dumps(bad))
+
+    assert result.returncode != 0 and "group member lakehouse/missing is not in the input" in result.stderr
+    assert fake.mutations() == []
+
+
 # ---- aws-orphan-check -----------------------------------------------------------------------------
 
 
