@@ -23,7 +23,6 @@ from shopflow_common.telemetry import setup_telemetry
 SERVICE = "gateway"
 PORT = 8000
 ORDERS_TIMEOUT_S = 1.0  # contract: gateway -> orders 1s
-READY_TIMEOUT_S = 0.5
 
 log = logging.getLogger(SERVICE)
 
@@ -81,16 +80,10 @@ def create_app(settings: Settings | None = None, orders_transport: httpx.AsyncBa
         return {"status": "ok"}
 
     @app.get("/readyz")
-    async def readyz(request: Request) -> JSONResponse:
-        try:
-            async with asyncio.timeout(READY_TIMEOUT_S):
-                upstream = await request.app.state.orders.get("/healthz")
-            ready = upstream.status_code == 200
-        except (TimeoutError, httpx.HTTPError):
-            ready = False
-        if ready:
-            return JSONResponse({"status": "ok"})
-        return JSONResponse({"status": "orders unavailable"}, status_code=503)
+    async def readyz() -> dict[str, str]:
+        # No dependencies: when orders is down the gateway must stay in rotation and answer 502/504 itself
+        # (with server spans for the SLI) instead of Envoy's "503 no healthy upstream".
+        return {"status": "ok"}
 
     @app.get("/products")
     async def list_products(request: Request) -> Response:

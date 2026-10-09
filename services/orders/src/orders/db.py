@@ -1,9 +1,10 @@
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-# A request has a 1s end-to-end budget: fail fast instead of queueing on a busy pool or a dead host.
-POOL_TIMEOUT_S = 1.0
-CONNECT_TIMEOUT_S = 2.0
+# A request has a 1s end-to-end budget (gateway -> orders): fail fast instead of queueing on a busy pool or
+# waiting on a dead host, so orders answers before the gateway gives up.
+POOL_TIMEOUT_S = 0.5
+CONNECT_TIMEOUT_S = 0.5
 
 
 def async_dsn(url: str) -> str:
