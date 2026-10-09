@@ -1,0 +1,11 @@
+# AWS variant of the shop chart: environment aws, route for any host (clients call the NLB's DNS name).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../apps/shop
+patches:
+  - target: {kind: Application, name: shop}
+    patch: |-
+      - op: replace
+        path: /spec/sources/0/helm/valueFiles/1
+        value: values-aws.yaml

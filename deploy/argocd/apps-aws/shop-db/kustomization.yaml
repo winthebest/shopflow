@@ -1,0 +1,15 @@
+# AWS variant of shop-db: the chart's aws values (backups + recovery through the barman-cloud plugin, role passwords
+# from SSM through External Secrets, no polaris/catalog: Glue is the catalog on AWS) and no KSOPS source.
+# Session params (pg.*, aws.dataBucket) arrive as Helm values from profiles-aws/core (ADR 0206).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../apps/shop-db
+patches:
+  - target: {kind: Application, name: shop-db}
+    patch: |-
+      - op: replace
+        path: /spec/sources/0/helm/valueFiles/1
+        value: values-aws.yaml
+      - op: remove
+        path: /spec/sources/1

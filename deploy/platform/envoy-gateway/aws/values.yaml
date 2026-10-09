@@ -1,0 +1,2 @@
+# AWS overrides for the Envoy Gateway controller (none yet; the edge chart carries the NLB settings).
+{}

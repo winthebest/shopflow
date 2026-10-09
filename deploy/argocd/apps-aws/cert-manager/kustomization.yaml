@@ -1,0 +1,14 @@
+# AWS variant of cert-manager: aws values and the aws issuers overlay (same internal CA as local).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../apps/cert-manager
+patches:
+  - target: {kind: Application, name: cert-manager}
+    patch: |-
+      - op: replace
+        path: /spec/sources/0/helm/valueFiles/1
+        value: $values/deploy/platform/cert-manager/aws/values.yaml
+      - op: replace
+        path: /spec/sources/2/path
+        value: deploy/platform/cert-manager/aws

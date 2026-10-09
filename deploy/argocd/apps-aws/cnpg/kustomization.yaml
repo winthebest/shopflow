@@ -1,0 +1,11 @@
+# AWS variant of the CNPG operator: aws values (the barman-cloud plugin is its own app, cnpg-barman-plugin).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../apps/cnpg
+patches:
+  - target: {kind: Application, name: cnpg}
+    patch: |-
+      - op: replace
+        path: /spec/sources/0/helm/valueFiles/1
+        value: $values/deploy/platform/cnpg/aws/values.yaml

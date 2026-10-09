@@ -16,7 +16,7 @@ data:
   pg.recoveryFrom: ""        # serverName of the backup chain to restore from; empty = initdb (first session)
   pg.serverName: ""          # this session's backup chain (shop-db-<session>)
   pg.recoveryTargetTime: ""  # PITR target, empty = latest
-  cdcEpoch: ""               # this session's CDC epoch (cloud-up also writes it to SSM for ESO)
+  cdcEpoch: ""               # this session's CDC epoch (scripts/cdc-epoch.sh writes the Secret; SSM keeps the last one)
   aws.region: ""
   aws.accountId: ""
   aws.vpcId: ""

@@ -1,0 +1,6 @@
+# barman-cloud plugin v0.15.0 (chart 0.8.0). The chart composes registry/repository:tag, so the digest rides in the
+# tag; the sidecar image is injected into the Postgres pods by the plugin.
+image:
+  tag: v0.15.0@sha256:563c680fe7fda3466ca2b1f55a1397ed2ddc9e760360107dd7724f1959c1a536
+sidecarImage:
+  tag: v0.15.0@sha256:06c78deca670525daa35fb1e5323159092785d11cf87b86217bdd5c679a41a84
