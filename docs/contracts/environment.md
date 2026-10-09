@@ -6,13 +6,15 @@
   plus one lane cluster holding the **slot**. Ask the orchestrator for the slot; delete your cluster when done.
 - Deterministic names and ports. On "address in use", stop and report; never pick another port.
 
-| Cluster | Owner | API port | HTTPS (load balancer) |
-|---|---|---|---|
-| `sf-main` | orchestrator | 6550 | 9443 |
-| `sf-platform` | sf-platform | 6551 | 8443 |
-| `sf-sre` | sf-sre | 6552 | 8444 |
-| `sf-data` | sf-data | 6553 | 8445 |
-| `sf-app` | sf-app | 6554 | 8446 |
+| Cluster | Owner | API port | HTTPS (load balancer) | Local registry (API − 1500) | Argo CD UI port-forward (API + 11530) |
+|---|---|---|---|---|---|
+| `sf-main` | orchestrator | 6550 | 9443 | 5050 | 18080 |
+| `sf-platform` | sf-platform | 6551 | 8443 | 5051 | 18081 |
+| `sf-sre` | sf-sre | 6552 | 8444 | 5052 | 18082 |
+| `sf-data` | sf-data | 6553 | 8445 | 5053 | 18083 |
+| `sf-app` | sf-app | 6554 | 8446 | 5054 | 18084 |
+
+All bind `127.0.0.1`. The registry is created with the cluster and removed by `k3d cluster delete`.
 
 - Host ports for docker compose stacks (bind to `127.0.0.1` only). Lanes declare new host ports here before using them:
 
