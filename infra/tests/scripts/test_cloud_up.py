@@ -1,5 +1,6 @@
 """cloud-up: the backup chain fails closed, dry-run is read-only, a full run arms both kill switches."""
 
+import base64
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -11,6 +12,7 @@ POINTER = {"serverName": "shop-db-20261001t080000z", "backupId": "20261001T11000
 NODES = {"items": [{"status": {"conditions": [{"type": "Ready", "status": "True"}]}}]}
 APPS = {"items": [{"status": {"sync": {"status": "Synced"}, "health": {"status": "Healthy"}}}]}
 CNPG = {"status": {"conditions": [{"type": "Ready", "status": "True"}]}}
+TRINO_PASSWORD = "trino-smoke-password-value"
 GATEWAY_SVC = {"items": [{"status": {"loadBalancer": {"ingress": [{"hostname": "k8s-shop-abc.elb.ap-southeast-1.amazonaws.com"}]}}}]}
 
 
@@ -39,7 +41,7 @@ def hooks(tmp_path):
     paths = {}
     for name in ("platform-root-apps.sh", "cdc-epoch.sh"):
         hook = tmp_path / name
-        hook.write_text(f'#!/bin/sh\necho "{name} $*" >> "{record}"\n')
+        hook.write_text(f'#!/bin/sh\necho "{name} KUBECONFIG=$KUBECONFIG $*" >> "{record}"\n')
         hook.chmod(0o755)
         paths[name] = hook
     chart = tmp_path / "argocd-chart.yaml"
@@ -134,7 +136,14 @@ def full_session(h: Harness) -> Harness:
     h.on("kubectl", r"-n envoy-gateway-system get svc", json_out=GATEWAY_SVC)
     h.on("curl", r"-X POST .*/checkout", json_out={"id": 42, "status": "paid"})
     h.on("curl", r"/products$", json_out=[{"id": 3}])
-    h.on("kubectl", r"exec deploy/trino-coordinator .*_cdc_epoch = 1", "1\n")
+    h.on(
+        "kubectl",
+        r"-n lakehouse get secret trino-exporter -o json",
+        json_out={"data": {"password": base64.b64encode(TRINO_PASSWORD.encode()).decode()}},
+    )
+    h.on(
+        "kubectl", r"exec -i deploy/trino-coordinator .*--user .*exporter .*lake_ro .*bronze.orders WHERE id = 42 AND _cdc_epoch = 1", "1\n"
+    )
     h.not_found("aws", r"scheduler get-schedule", "ResourceNotFoundException", "GetSchedule")
     return h
 
@@ -166,9 +175,14 @@ def test_first_session_initdb_end_to_end(fake, hooks):
     assert "--overwrite" not in marker.argv, "the marker is write-once"
 
     hook_calls = record.read_text()
-    assert "platform-root-apps.sh --overlay aws --revision main" in hook_calls
+    kubeconfig = str(fake.home / ".kube" / "shopflow-aws")
+    assert f"platform-root-apps.sh KUBECONFIG={kubeconfig} --overlay aws --revision main" in hook_calls
     assert "pg.recoveryFrom= " in hook_calls and "aws.vpcId=vpc-0123456789abcdef0" in hook_calls
-    assert "cdc-epoch.sh wait --epoch 1" in hook_calls
+    assert f"cdc-epoch.sh KUBECONFIG={kubeconfig} wait --epoch 1" in hook_calls
+
+    smoke = next(c for c in fake.calls("kubectl") if "deploy/trino-coordinator" in c.argv)
+    assert smoke.stdin.strip() == TRINO_PASSWORD, "the Trino password reaches the CLI through stdin"
+    assert all(TRINO_PASSWORD not in arg for c in fake.calls() for arg in c.argv), "never on a command line"
 
     leases = [
         c.argv[c.argv.index("--value") + 1]

@@ -19,7 +19,9 @@ Usage: scripts/cloud-up.sh [--dry-run] [--resume] [--hours N] [--pitr TIME] [--p
 
 Environment: AWS_PROFILE (default shopflow), CLOUD_KUBECONFIG, ROOT_APPS_HOOK, CDC_EPOCH_HOOK,
 ARGOCD_CHART_FILE, ARGOCD_VALUES, ARGOCD_AWS_VALUES (Argo CD chart and values, sf-platform),
-PG_BACKUP_METHOD (plugin|barmanObjectStore), BRONZE_ORDERS_TABLE, SMOKE_CUSTOMER_ID.
+PG_BACKUP_METHOD (plugin|barmanObjectStore), SMOKE_CUSTOMER_ID, BRONZE_ORDERS_TABLE (in catalog TRINO_CATALOG),
+TRINO_USER, TRINO_PASSWORD_SECRET (read-only Trino identity for the smoke query, sf-data).
+Hooks get the session kubeconfig through KUBECONFIG.
 EOF
 }
 
@@ -28,7 +30,11 @@ ARGOCD_VALUES="${ARGOCD_VALUES:-$REPO_ROOT/deploy/argocd/bootstrap/values.yaml}"
 ARGOCD_AWS_VALUES="${ARGOCD_AWS_VALUES:-$REPO_ROOT/deploy/argocd/bootstrap/values-aws.yaml}"
 ROOT_APPS_HOOK="${ROOT_APPS_HOOK:-$REPO_ROOT/scripts/platform-root-apps.sh}"
 CDC_EPOCH_HOOK="${CDC_EPOCH_HOOK:-$REPO_ROOT/scripts/cdc-epoch.sh}"
-BRONZE_ORDERS_TABLE="${BRONZE_ORDERS_TABLE:-lake.bronze.orders}"
+# Smoke query identity: read-only catalog and user (sf-data contract); the password never leaves stdin.
+TRINO_CATALOG="${TRINO_CATALOG:-lake_ro}"
+TRINO_USER="${TRINO_USER:-exporter}"
+TRINO_PASSWORD_SECRET="${TRINO_PASSWORD_SECRET:-trino-exporter}"
+BRONZE_ORDERS_TABLE="${BRONZE_ORDERS_TABLE:-bronze.orders}"
 SMOKE_CUSTOMER_ID="${SMOKE_CUSTOMER_ID:-1}"
 
 RESUME=0
@@ -211,7 +217,7 @@ create_root_apps() {
     dry_run || die "missing $ROOT_APPS_HOOK (sf-platform root app mechanism)"
     warn "missing $ROOT_APPS_HOOK (sf-platform root app mechanism)"
   fi
-  run "$ROOT_APPS_HOOK" --overlay aws --revision "$REVISION" --profiles "$PROFILES" --kubeconfig "$KUBECONFIG_FILE" "${params[@]}"
+  run env KUBECONFIG="$KUBECONFIG_FILE" "$ROOT_APPS_HOOK" --overlay aws --revision "$REVISION" --profiles "$PROFILES" "${params[@]}"
 }
 
 apps_healthy() {
@@ -238,7 +244,8 @@ postgres_chain() {
 
 cdc_epoch_snapshot() {
   if [ -x "$CDC_EPOCH_HOOK" ]; then
-    run "$CDC_EPOCH_HOOK" wait --epoch "$CDC_EPOCH" --kubeconfig "$KUBECONFIG_FILE"
+    # Idempotent (sf-data): creates the control topic, records meta.cdc_epochs, waits for SnapshotCompleted.
+    run env KUBECONFIG="$KUBECONFIG_FILE" "$CDC_EPOCH_HOOK" wait --epoch "$CDC_EPOCH"
   else
     warn "missing $CDC_EPOCH_HOOK (sf-data): epoch $CDC_EPOCH is not recorded in meta.cdc_epochs"
   fi
@@ -257,16 +264,24 @@ gateway_answers() {
   [ -n "$host" ] && curl -fsSk --max-time 10 -o /dev/null "https://$host/products"
 }
 
+# Count the smoke order in bronze for this session's epoch (bronze is append-only and keeps older
+# epochs). Trino requires HTTPS + password; the password goes to the CLI through stdin, never argv.
+# shellcheck disable=SC2016 # $1..$3 in trino_cli are expanded by sh inside the pod
 order_in_bronze() {
-  local count
-  count="$(kube -n lakehouse exec deploy/trino-coordinator -- trino --output-format TSV \
-    --execute "SELECT count(*) FROM $BRONZE_ORDERS_TABLE WHERE id = $1 AND _cdc_epoch = $CDC_EPOCH" 2>/dev/null | tr -d '[:space:]')"
+  local query count trino_cli
+  query="SELECT count(*) FROM $BRONZE_ORDERS_TABLE WHERE id = $1 AND _cdc_epoch = $CDC_EPOCH"
+  trino_cli='read -r TRINO_PASSWORD && export TRINO_PASSWORD && exec trino --server https://localhost:8443'
+  trino_cli="$trino_cli"' --truststore-path /etc/trino/tls/ca.crt --truststore-type PEM --user "$1" --password'
+  trino_cli="$trino_cli"' --catalog "$2" --output-format TSV --execute "$3"'
+  count="$(kube -n lakehouse get secret "$TRINO_PASSWORD_SECRET" -o json | jq -r '.data.password | @base64d' |
+    kube -n lakehouse exec -i deploy/trino-coordinator -- sh -c "$trino_cli" smoke "$TRINO_USER" "$TRINO_CATALOG" "$query" 2>/dev/null |
+    tr -d '[:space:]')"
   [ "${count:-0}" -ge 1 ] 2>/dev/null
 }
 
 smoke_test() {
   if dry_run; then
-    log "dry-run: would place one order through the NLB and wait for it in $BRONZE_ORDERS_TABLE (epoch $CDC_EPOCH)"
+    log "dry-run: would place one order through the NLB and wait for it in $TRINO_CATALOG.$BRONZE_ORDERS_TABLE (epoch $CDC_EPOCH)"
     return 0
   fi
   wait_until 900 "the NLB answers GET /products" gateway_answers || die "the shop is not reachable through the NLB"
@@ -277,7 +292,7 @@ smoke_test() {
     --data "{\"customer_id\":$SMOKE_CUSTOMER_ID,\"items\":[{\"product_id\":$product,\"quantity\":1}]}" \
     "https://$host/checkout" | jq -er '.id')" || die "checkout through the NLB failed"
   log "order $order placed through https://$host"
-  wait_until 120 "order $order in $BRONZE_ORDERS_TABLE (epoch $CDC_EPOCH)" order_in_bronze "$order" ||
+  wait_until 120 "order $order in $TRINO_CATALOG.$BRONZE_ORDERS_TABLE (epoch $CDC_EPOCH)" order_in_bronze "$order" ||
     die "order $order did not reach bronze within 2 minutes"
 }
 

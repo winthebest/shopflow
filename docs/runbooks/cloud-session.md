@@ -108,7 +108,7 @@ make cloud-seed-params CLOUD_ARGS=--rotate < new.json  # overwrite the ones give
 
 | Command | What it does |
 |---|---|
-| `make cloud-up` | preflight (operator role, Budget Action not fired, EKS version in standard support, no active lease, backup chain) → provisional lease → apply layer 2 → kubeconfig → Argo CD (chart + values from `deploy/argocd/bootstrap/`) → root apps through `scripts/platform-root-apps.sh --overlay aws` → wait Synced/Healthy → Postgres chain → CDC epoch → smoke (checkout via NLB reaches bronze ≤ 2 min) → prints RTO-infra and RTO-service → final lease + Lambda schedule → re-enables the GitHub reaper |
+| `make cloud-up` | preflight (operator role, Budget Action not fired, EKS version in standard support, no active lease, backup chain) → provisional lease → apply layer 2 → kubeconfig → Argo CD (chart + values from `deploy/argocd/bootstrap/`) → root apps through `scripts/platform-root-apps.sh --overlay aws` → wait Synced/Healthy → Postgres chain → CDC epoch → smoke (a checkout through the NLB is in `lake_ro` `bronze.orders` with this session's `_cdc_epoch` within 2 min, queried as the read-only `exporter` user; the password goes through stdin) → prints RTO-infra and RTO-service → final lease + Lambda schedule → re-enables the GitHub reaper |
 | `make cloud-up CLOUD_ARGS=--dry-run` | reads AWS, runs `tofu plan`, prints every change instead of making it |
 | `make cloud-up CLOUD_ARGS=--resume` | continues a cloud-up that stopped (reuses the recorded session plan) |
 | `make cloud-up CLOUD_ARGS="--pitr 2026-11-02T10:15:00Z"` | restores Postgres to that time |
@@ -120,7 +120,9 @@ make cloud-seed-params CLOUD_ARGS=--rotate < new.json  # overwrite the ones give
 ### Parameters cloud-up passes to the root apps
 
 The only differences between local and AWS are the `aws` overlays and these parameters
-(`--param key=value` to `scripts/platform-root-apps.sh`, owned by sf-platform):
+(`--param key=value` to `scripts/platform-root-apps.sh`, owned by sf-platform). Hooks receive the session
+kubeconfig through `KUBECONFIG`; after the apps are healthy cloud-up runs `scripts/cdc-epoch.sh wait --epoch N`
+(sf-data: control topic, `meta.cdc_epochs`, waits for `SnapshotCompleted`).
 
 | Parameter | Value |
 |---|---|
@@ -128,7 +130,7 @@ The only differences between local and AWS are the `aws` overlays and these para
 | `pg.recoveryFrom` | `serverName` of the backup chain to recover from; empty on the very first session (initdb) |
 | `pg.serverName` | new `shop-db-<session>` every session, so a restored cluster never writes into the old chain |
 | `pg.recoveryTargetTime` | `--pitr` value or empty (latest) |
-| `cdcEpoch` | previous epoch + 1 (also written to SSM `/shopflow/aws/kafka/cdc-epoch` before sync, for ESO) |
+| `cdcEpoch` | previous epoch + 1. Also written to SSM `/shopflow/aws/kafka/cdc-epoch` before the sync; ESO turns it into Secret `kafka/cdc-epoch` (key `epoch`), which the connector reads as `${secrets:kafka/cdc-epoch:epoch}` |
 | `aws.region`, `aws.vpcId`, `aws.clusterName` | for controllers that cannot read IMDS (hop limit 1), e.g. the LB controller |
 | `aws.dataBucket` | `shopflow-data-<account>` (Iceberg warehouse, CNPG backups, Flink checkpoints) |
 
