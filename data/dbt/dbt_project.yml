@@ -15,9 +15,11 @@ flags:
   require_certificate_validation: true  # profiles.yml points `cert` at the internal CA
 
 vars:
-  # Reconciliation skips rows changed in the last N minutes (CDC lag allowance). Pass 0 at a quiet point (k6
-  # stopped, lag ~ 0): silver must then equal Postgres exactly.
+  # Reconciliation skips rows changed after (last silver commit - N minutes): CDC lag allowance. Pass 0 at a quiet
+  # point (k6 stopped, lag ~ 0) right after a rebuild: silver must then equal Postgres exactly.
   reconcile_lag_minutes: 15
+  # Reconciliation tests are enabled only when this is true: dbt test --select tag:reconciliation --vars '{reconcile: true}'
+  reconcile: false
 
 models:
   shopflow:

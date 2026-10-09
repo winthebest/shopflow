@@ -1,0 +1,11 @@
+# Build context of data/airflow/Dockerfile: only the DAGs and the dbt project go in.
+*
+!airflow/dags/
+!airflow/tests/
+!dbt/
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+dbt/.venv/
+dbt/.user.yml
+**/__pycache__/
