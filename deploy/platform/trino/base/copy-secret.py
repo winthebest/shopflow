@@ -5,18 +5,15 @@ Secrets only from their own namespace. This Job copies the keys instead of keepi
 or decrypting with the age key (docs/contracts/gitops.md section 5), so a password change never drifts.
 
 Env: SOURCE_NAMESPACE, SOURCE_NAME, TARGET_NAMESPACE, TARGET_NAME; optional EXTRA_DATA (JSON object of fixed keys
-to add, e.g. a JDBC URL) and DERIVED_DATA (JSON object of keys built from the source's keys, e.g. a database URI:
-"postgresql://{username}:{password}@host/db"; every substituted value is percent-encoded). Standard library only.
-The same file exists in every component that needs a copy; scripts/data-validate.sh fails if the copies differ.
+to add, e.g. a JDBC URL). Standard library only. The same file exists in every component that needs a copy;
+scripts/data-validate.sh fails if the copies differ.
 """
 
-import base64
 import json
 import os
 import ssl
 import sys
 import urllib.error
-import urllib.parse
 import urllib.request
 
 SA = "/var/run/secrets/kubernetes.io/serviceaccount"
@@ -48,8 +45,6 @@ def main() -> None:
     if status != 200:
         sys.exit(f"read {source_ref}: HTTP {status} {source.get('message')}")
     extra = json.loads(env.get("EXTRA_DATA", "{}"))
-    values = {k: urllib.parse.quote(base64.b64decode(v).decode(), safe="") for k, v in source.get("data", {}).items()}
-    extra.update({k: template.format_map(values) for k, template in json.loads(env.get("DERIVED_DATA", "{}")).items()})
     target = {
         "apiVersion": "v1",
         "kind": "Secret",

@@ -14,7 +14,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-COMPONENTS=(strimzi kafka kafka-connect seaweedfs iceberg-catalog trino freshness-exporter airflow)
+COMPONENTS=(strimzi kafka kafka-connect seaweedfs iceberg-catalog trino freshness-exporter)
 K8S_VERSION="${K8S_VERSION:-1.34.0}"
 SCHEMA_DIR="${SCHEMA_DIR:-out/data-schemas}"
 ARGOCD_CRD_VERSION=v3.5.3
@@ -161,14 +161,11 @@ check_secrets() {
       echo "FAIL $f: unencrypted keys: $plain" >&2
       return 1
     fi
-  done < <(find deploy/platform/{strimzi,kafka,kafka-connect,seaweedfs,iceberg-catalog,trino,airflow} -name '*.enc.yaml' 2> /dev/null)
-  local copy
-  for copy in deploy/platform/*/base/copy-secret.py; do
-    if ! cmp -s "$copy" deploy/platform/trino/base/copy-secret.py; then
-      echo "FAIL $copy differs from deploy/platform/trino/base/copy-secret.py" >&2
-      return 1
-    fi
-  done
+  done < <(find deploy/platform/{strimzi,kafka,kafka-connect,seaweedfs,iceberg-catalog,trino} -name '*.enc.yaml' 2> /dev/null)
+  if ! cmp -s deploy/platform/iceberg-catalog/base/copy-secret.py deploy/platform/trino/base/copy-secret.py; then
+    echo "FAIL copy-secret.py differs between iceberg-catalog and trino" >&2
+    return 1
+  fi
   echo "secrets: all sf-data *.enc.yaml values encrypted; copy-secret.py identical"
 }
 
