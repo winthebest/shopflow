@@ -98,8 +98,12 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
-    entrypoint: ["/opt/kafka/bin/connect-distributed.sh"]
-    command: ["/opt/smoke/connect-distributed.properties"]
+    # Same JMX exporter agent and rules as Strimzi's metricsConfig (deploy/platform/kafka-connect/base/metrics.yaml).
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        export KAFKA_OPTS="-javaagent:$$(ls /opt/prometheus-jmx-exporter/jmx_prometheus_javaagent-*.jar)=9404:/opt/smoke/connect-metrics.yml"
+        && exec /opt/kafka/bin/connect-distributed.sh /opt/smoke/connect-distributed.properties
     environment:
       KAFKA_HEAP_OPTS: -Xms640m -Xmx640m
       KAFKA_LOG4J_OPTS: -Dlog4j2.configurationFile=/opt/kafka/config/connect-log4j2.yaml
@@ -110,6 +114,7 @@ services:
       SINK_S3_SECRET_KEY: ${SINK_S3_SECRET_KEY:?run via run.sh}
     volumes:
       - ./connect-distributed.properties:/opt/smoke/connect-distributed.properties:ro
+      - ${SMOKE_DIR}/connect-metrics.yml:/opt/smoke/connect-metrics.yml:ro
       # Polaris credentials written by polaris-setup.py, read through FileConfigProvider.
       - ${SMOKE_DIR}/secrets:/opt/smoke/secrets:ro
     healthcheck:

@@ -3,5 +3,6 @@ kind: Kustomization
 # Namespaces are explicit in each resource: rbac.yaml also grants a Role in namespace shop.
 resources:
   - connect.yaml
+  - metrics.yaml
   - rbac.yaml
   - connectors.yaml
