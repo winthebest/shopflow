@@ -29,3 +29,15 @@ orchestrator adds rows when merging a PR that contains ADRs.
 | [0300](0300-slo-tooling-sloth.md) | Generate SLO rules with Sloth (Pyrra as fallback) | Accepted |
 | [0301](0301-otel-collector-single-pipeline.md) | One OpenTelemetry Collector pipeline; SLIs from span metrics | Accepted |
 | [0302](0302-observability-backends-chart-sources.md) | Observability backends, chart sources and pinning | Accepted |
+| [0400](0400-kafka-kraft-debezium-iceberg-versions.md) | Kafka 4.3 on Strimzi 1.2 (KRaft), Debezium 3.7, Iceberg 1.12 sink | Accepted |
+| [0401](0401-connect-image-built-in-ci.md) | Kafka Connect image built in CI, not by Strimzi `spec.build` | Accepted |
+| [0402](0402-freshness-exporter-custom.md) | Custom freshness exporter for lakehouse tables | Accepted |
+| [0403](0403-strimzi-over-msk.md) | Kafka on Strimzi in both environments (not Amazon MSK) | Accepted |
+| [0404](0404-kafka-tls-scram-acl.md) | Kafka clients authenticate with SCRAM-SHA-512 over TLS, one KafkaUser per role | Accepted |
+| [0405](0405-json-converter-no-registry.md) | Schemaless JSON on Kafka, the bronze DDL is the schema (no Schema Registry) | Accepted |
+| [0406](0406-append-only-bronze-cdc-epoch.md) | Append-only bronze with a CDC epoch, and one Iceberg control topic per epoch | Accepted |
+| [0407](0407-iceberg-format-v2.md) | Apache Iceberg tables, format version 2, created by DDL | Accepted |
+| [0408](0408-iceberg-rest-catalog-polaris.md) | Iceberg REST catalog: Apache Polaris (not Lakekeeper) | Accepted |
+| [0409](0409-seaweedfs-over-minio.md) | Local object storage: SeaweedFS (not MinIO) | Accepted |
+| [0410](0410-trino-catalogs-per-identity.md) | Trino as the query engine, with the safety boundary at the catalog | Accepted |
+| [0411](0411-trino-https-internal-ca.md) | Trino HTTPS with a certificate from the internal cert-manager CA | Accepted |
