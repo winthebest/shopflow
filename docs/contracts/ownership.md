@@ -14,7 +14,7 @@ makes the change. Shared root files are owned by the orchestrator.
 | `infra/`, `scripts/{cloud-*,aws-*,export-evidence}.sh`, `deploy/platform/{external-secrets,aws-lb-controller,opencost}/`, `.github/workflows/{infra-ci,cloud-reaper}.yml`, `docs/cost.md`, `docs/runbooks/{cloud-session,restore}.md`, `mk/cloud.mk` | sf-cloud | 6, 7 (restore drill with sf-sre) |
 | `deploy/platform/<component>/aws/` | owner of `<component>` | 6 |
 | `deploy/argocd/apps/<component>/` (one Argo Application per component) | owner of `<component>` | 2–7 |
-| `deploy/argocd/profiles/_common/` (incl. `platform-params.yaml`), `scripts/platform-root-apps.sh`, `deploy/charts/shop-db/` | sf-platform | 2, 6 |
+| `deploy/argocd/profiles/_common/` (incl. `platform-params.yaml`), `scripts/platform-root-apps.sh`, `deploy/charts/{shop-db,edge}/`, `deploy/argocd/bootstrap/` (incl. `values-aws.yaml`) | sf-platform | 2, 6 |
 | `deploy/argocd/apps-aws/<component>/` | owner of `<component>` | 6 |
 | `deploy/argocd/profiles-aws/<profile>/` | same owner as the local profile (`gitops.md` §4) | 6 |
 | `deploy/argocd/profiles/<profile>/` | see `gitops.md` §4 (core: sf-platform; obs, obs-lite, ops: sf-sre; data, rt, batch, bi: sf-data) | 2–7 |
