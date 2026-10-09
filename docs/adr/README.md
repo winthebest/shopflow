@@ -29,6 +29,7 @@ orchestrator adds rows when merging a PR that contains ADRs.
 | [0205](0205-admin-ui-port-forward-only.md) | Admin UIs only through `kubectl port-forward` | Accepted |
 | [0206](0206-root-apps-overlays-and-params.md) | Root apps with overlays and session parameters | Accepted |
 | [0207](0207-pull-through-image-cache.md) | Shared pull-through image caches for local clusters | Accepted |
+| [0208](0208-psa-and-network-policies.md) | Pod Security `restricted` and default-deny NetworkPolicies | Accepted |
 | [0300](0300-slo-tooling-sloth.md) | Generate SLO rules with Sloth (Pyrra as fallback) | Accepted |
 | [0301](0301-otel-collector-single-pipeline.md) | One OpenTelemetry Collector pipeline; SLIs from span metrics | Accepted |
 | [0302](0302-observability-backends-chart-sources.md) | Observability backends, chart sources and pinning | Accepted |
