@@ -1,0 +1,2 @@
+# Local overrides for cert-manager (none yet; the aws overlay adds its own values.yaml).
+{}

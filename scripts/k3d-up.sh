@@ -133,13 +133,27 @@ apply_root_apps() {
   [[ -z "$extra" ]] || log "warning: root apps for other profiles still exist: $(echo "$extra" | tr '\n' ' ')"
 }
 
-# name, sync, health, and whether the app has synced TARGET_SHA (stale status from the previous revision
-# must not count as ready).
+# name, sync, health, and whether the app has synced TARGET_SHA or a later commit (stale status from the
+# previous revision must not count as ready; a branch that moves on while we wait must not cause a timeout).
 app_table() {
-  kc -n argocd get applications.argoproj.io -o json | jq -r --arg sha "$TARGET_SHA" '
+  local name sync health revisions rev state
+  while IFS=$'\t' read -r name sync health revisions; do
+    state="old-revision"
+    for rev in ${revisions//,/ }; do
+      if [[ "$rev" == "$TARGET_SHA" ]] || is_descendant "$rev"; then state="current"; break; fi
+    done
+    printf '%s\t%s\t%s\t%s\n' "$name" "$sync" "$health" "$state"
+  done < <(kc -n argocd get applications.argoproj.io -o json | jq -r '
     .items[] | [.metadata.name, (.status.sync.status // "Unknown"), (.status.health.status // "Unknown"),
-      (if (.status.sync.revision == $sha) or any(.status.sync.revisions[]?; . == $sha)
-       then "current" else "old-revision" end)] | @tsv'
+      ([.status.sync.revision // empty] + (.status.sync.revisions // []) | join(","))] | @tsv')
+}
+
+# True if commit $1 contains TARGET_SHA (fetches when either commit is not known locally).
+is_descendant() {
+  [[ "$1" =~ ^[0-9a-f]{40}$ ]] || return 1
+  { git -C "$ROOT_DIR" cat-file -e "$1^{commit}" && git -C "$ROOT_DIR" cat-file -e "$TARGET_SHA^{commit}"; } 2>/dev/null \
+    || git -C "$ROOT_DIR" fetch -q origin 2>/dev/null || true
+  git -C "$ROOT_DIR" merge-base --is-ancestor "$TARGET_SHA" "$1" 2>/dev/null
 }
 
 wait_for_apps() {
