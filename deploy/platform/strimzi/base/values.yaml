@@ -1,0 +1,16 @@
+# Strimzi Cluster Operator, chart strimzi-kafka-operator 1.2.0 (docs/adr/0400, 0403). CRDs are v1 only.
+# Watches only its own namespace (kafka). The chart has no digest field, so digests ride in the tag.
+watchNamespaces: []
+watchAnyNamespace: false
+
+image:
+  tag: "1.2.0@sha256:77f8fa8121a67561c3418de985783d197f51b8931e9a47f793dc0437dc6bb21f"
+topicOperator:
+  image:
+    tag: "1.2.0@sha256:77f8fa8121a67561c3418de985783d197f51b8931e9a47f793dc0437dc6bb21f"
+userOperator:
+  image:
+    tag: "1.2.0@sha256:77f8fa8121a67561c3418de985783d197f51b8931e9a47f793dc0437dc6bb21f"
+kafkaInit:
+  image:
+    tag: "1.2.0@sha256:77f8fa8121a67561c3418de985783d197f51b8931e9a47f793dc0437dc6bb21f"

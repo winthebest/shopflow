@@ -1,0 +1,35 @@
+# Strimzi Cluster Operator (CRDs + operator). OCI chart: repoURL without oci:// is detected as OCI by Argo CD.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: strimzi
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: shopflow
+    shopflow.io/profile: data
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kafka
+  sources:
+    - repoURL: quay.io/strimzi-helm
+      chart: strimzi-kafka-operator
+      targetRevision: 1.2.0
+      helm:
+        releaseName: strimzi
+        valueFiles:
+          - $values/deploy/platform/strimzi/base/values.yaml
+          - $values/deploy/platform/strimzi/local/values.yaml
+    - repoURL: https://github.com/winthebest/shopflow.git
+      targetRevision: main
+      ref: values
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

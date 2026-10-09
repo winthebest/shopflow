@@ -1,0 +1,67 @@
+# Creates the bronze schema and tables (bronze-tables.sql) through Trino as `dbt`, the owner of catalog lake,
+# after every sync of this app. The Iceberg sink only appends; it never creates tables. Retries cover the window
+# in which Polaris (iceberg-catalog app, same wave) is still being set up.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: trino-bronze-tables
+  namespace: lakehouse
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 10
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: trino-bronze-tables
+        app.kubernetes.io/part-of: shopflow
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ddl
+          image: trinodb/trino:483@sha256:db58cc93e593a2706553745f276bb119c9810e69918be56ecde088ba7ccb0534
+          command:
+            - trino
+            - --server=https://trino.lakehouse.svc:8443
+            - --truststore-path=/etc/trino-ca/ca.crt
+            - --truststore-type=PEM
+            - --user=dbt
+            - --password
+            - --file=/sql/bronze-tables.sql
+          env:
+            # Read by the CLI instead of prompting.
+            - name: TRINO_PASSWORD
+              valueFrom: {secretKeyRef: {name: trino-dbt, key: password}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: sql
+              mountPath: /sql
+              readOnly: true
+            - name: ca
+              mountPath: /etc/trino-ca
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: sql
+          configMap:
+            name: trino-bronze-tables
+        - name: ca
+          secret:
+            secretName: trino-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: tmp
+          emptyDir: {}

@@ -1,0 +1,12 @@
+# Extra manifests next to the Polaris Helm release (Argo CD multi-source: chart + values + this directory).
+# Namespaces are explicit per resource: rbac.yaml also grants a Role in namespace kafka.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - setup-jobs.yaml
+  - rbac.yaml
+configMapGenerator:
+  - name: polaris-setup-script
+    namespace: lakehouse
+    files:
+      - polaris-setup.py

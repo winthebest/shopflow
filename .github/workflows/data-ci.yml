@@ -1,0 +1,140 @@
+# sf-data checks that need no cluster: GitOps components (render + kubeconform), freshness-exporter tests, and the
+# Kafka Connect image build (only when images/kafka-connect changes). Nothing here publishes, so the image build may
+# use the Actions cache; publishing is connect-image.yml.
+# Actions are pinned by commit SHA (tag in the comment). Read-only token, no id-token.
+name: data-ci
+
+on:
+  pull_request:
+    paths:
+      - deploy/platform/strimzi/**
+      - deploy/platform/kafka/**
+      - deploy/platform/kafka-connect/**
+      - deploy/platform/seaweedfs/**
+      - deploy/platform/iceberg-catalog/**
+      - deploy/platform/trino/**
+      - deploy/argocd/apps/**
+      - images/kafka-connect/**
+      - services/freshness-exporter/**
+      - scripts/data-*.sh
+      - mk/data.mk
+      - .github/workflows/data-ci.yml
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+# Same rule as ci.yml: superseded pull-request runs are cancelled, runs on main never are.
+concurrency:
+  group: data-ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  manifests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      KUBECONFORM_VERSION: v0.8.0
+      KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.0
+
+      - name: Install kubeconform (checksum verified)
+        run: |
+          curl -fsSL -o kubeconform.tar.gz \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  kubeconform.tar.gz" | sha256sum -c -
+          tar -xzf kubeconform.tar.gz kubeconform
+          sudo install kubeconform /usr/local/bin/kubeconform
+
+      - name: Render and validate data components
+        run: make data-validate
+
+  freshness-exporter:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.12"
+          enable-cache: false
+
+      - name: Lint and unit tests
+        run: make data-exporter-test
+
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      connect-image: ${{ steps.diff.outputs.connect_image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Did images/kafka-connect change?
+        id: diff
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          changed=true
+          if [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2> /dev/null; then
+            git diff --name-only "$BASE" HEAD | grep -qE '^(images/kafka-connect/|\.github/workflows/data-ci\.yml$)' \
+              || changed=false
+          fi
+          echo "connect_image=$changed" >> "$GITHUB_OUTPUT"
+
+  connect-image:
+    needs: changes
+    if: needs.changes.outputs.connect-image == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Both platforms must build. The Iceberg build stage is cached by its inputs (version + sha512 ARGs), so it
+      # only recompiles when the pinned Iceberg release changes.
+      - name: Build both platforms
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: images/kafka-connect
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: type=gha,scope=kafka-connect
+          cache-to: type=gha,scope=kafka-connect,mode=max
+
+      - name: Load amd64 for the plugin check
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: images/kafka-connect
+          platforms: linux/amd64
+          load: true
+          tags: shopflow-kafka-connect:ci
+          cache-from: type=gha,scope=kafka-connect
+
+      - name: Check that Connect discovers both plugins
+        run: images/kafka-connect/check-plugins.sh shopflow-kafka-connect:ci

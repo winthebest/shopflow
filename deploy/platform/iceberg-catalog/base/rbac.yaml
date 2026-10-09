@@ -1,0 +1,64 @@
+# The setup Job writes each Polaris principal's credentials into a Secret next to its consumer.
+# Kubernetes cannot scope `create` to a name, so create is namespace-wide; read/replace is limited to the
+# three Secrets the Job owns.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: polaris-setup
+  namespace: lakehouse
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: polaris-setup
+  namespace: lakehouse
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [polaris-trino-lake, polaris-trino-lake-ro]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: polaris-setup
+  namespace: lakehouse
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: polaris-setup
+subjects:
+  - kind: ServiceAccount
+    name: polaris-setup
+    namespace: lakehouse
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: polaris-setup
+  namespace: kafka
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [polaris-iceberg-sink]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: polaris-setup
+  namespace: kafka
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: polaris-setup
+subjects:
+  - kind: ServiceAccount
+    name: polaris-setup
+    namespace: lakehouse

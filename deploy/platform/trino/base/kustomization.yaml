@@ -1,0 +1,11 @@
+# Extra manifests next to the Trino Helm release (Argo CD multi-source: chart + values + this directory).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: lakehouse
+resources:
+  - certificate.yaml
+  - bronze-tables-job.yaml
+configMapGenerator:
+  - name: trino-bronze-tables
+    files:
+      - bronze-tables.sql

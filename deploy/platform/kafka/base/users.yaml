@@ -1,0 +1,137 @@
+# Kafka identities (SCRAM-SHA-512) and their ACLs. The User Operator writes each password to a Secret with the
+# user's name (keys: password, sasl.jaas.config); nothing is stored in git. docs/adr/0404.
+#
+# Prefixes the ACLs rely on (keep in sync with deploy/platform/kafka-connect):
+#   cdc-connect*              Connect worker group and internal topics (KafkaConnect `cdc`)
+#   shop.                     Debezium change topics (topic.prefix=shop)
+#   iceberg-control-<epoch>   Iceberg sink control topic, one per CDC epoch
+#   connect-iceberg-sink*     Iceberg sink consumer groups (Connect group, coordinator, control consumers)
+#   iceberg-sink-             Iceberg sink transactional ids (iceberg.coordinator.transactional.prefix)
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: debezium
+  labels:
+    strimzi.io/cluster: shopflow
+spec:
+  authentication:
+    type: scram-sha-512
+  authorization:
+    type: simple
+    acls:
+      # Kafka Connect worker identity: group membership and the three internal topics.
+      - resource:
+          type: group
+          name: cdc-connect
+          patternType: literal
+        operations: [Read]
+        host: "*"
+      - resource:
+          type: topic
+          name: cdc-connect-
+          patternType: prefix
+        operations: [Create, Describe, Read, Write]
+        host: "*"
+      # Debezium source: change events for shop.public.* and the heartbeat topic.
+      - resource:
+          type: topic
+          name: shop.
+          patternType: prefix
+        operations: [Describe, Write]
+        host: "*"
+      - resource:
+          type: topic
+          name: debezium-heartbeat.shop
+          patternType: literal
+        operations: [Describe, Write]
+        host: "*"
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: iceberg-sink
+  labels:
+    strimzi.io/cluster: shopflow
+spec:
+  authentication:
+    type: scram-sha-512
+  authorization:
+    type: simple
+    acls:
+      - resource:
+          type: topic
+          name: shop.public.
+          patternType: prefix
+        operations: [Describe, Read]
+        host: "*"
+      - resource:
+          type: topic
+          name: iceberg-control-
+          patternType: prefix
+        operations: [Describe, Read, Write]
+        host: "*"
+      - resource:
+          type: group
+          name: connect-iceberg-sink
+          patternType: prefix
+        operations: [Describe, Read]
+        host: "*"
+      # Worker and coordinator commit through transactions (exactly-once).
+      - resource:
+          type: transactionalId
+          name: iceberg-sink-
+          patternType: prefix
+        operations: [Describe, Write]
+        host: "*"
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: flink
+  labels:
+    strimzi.io/cluster: shopflow
+spec:
+  authentication:
+    type: scram-sha-512
+  authorization:
+    type: simple
+    acls:
+      - resource:
+          type: topic
+          name: shop.public.
+          patternType: prefix
+        operations: [Describe, Read]
+        host: "*"
+      - resource:
+          type: group
+          name: flink-
+          patternType: prefix
+        operations: [Describe, Read]
+        host: "*"
+---
+# Read-only metadata access for a lag exporter. Strimzi's built-in Kafka Exporter (Kafka.spec.kafkaExporter)
+# authenticates with operator-issued certificates instead; this user is for a standalone exporter, if chosen.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: kafka-exporter
+  labels:
+    strimzi.io/cluster: shopflow
+spec:
+  authentication:
+    type: scram-sha-512
+  authorization:
+    type: simple
+    acls:
+      - resource:
+          type: topic
+          name: "*"
+          patternType: literal
+        operations: [Describe]
+        host: "*"
+      - resource:
+          type: group
+          name: "*"
+          patternType: literal
+        operations: [Describe]
+        host: "*"
