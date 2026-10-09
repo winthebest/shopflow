@@ -20,6 +20,11 @@ for tool in kubectl helm yq kubeconform; do
   command -v "$tool" >/dev/null 2>&1 || fail "missing tool: $tool"
 done
 
+# Argo CD must build with Kustomize's default load restrictor, like this script does (ADR 0204).
+build_options="$(yq '.configs.cm."kustomize.buildOptions" // ""' "$ROOT_DIR/deploy/argocd/bootstrap/values.yaml")"
+[[ "$build_options" != *load-restrictor* ]] \
+  || fail "deploy/argocd/bootstrap/values.yaml: kustomize.buildOptions must not change the load restrictor"
+
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 rm -rf "$OUT_DIR" && mkdir -p "$OUT_DIR"

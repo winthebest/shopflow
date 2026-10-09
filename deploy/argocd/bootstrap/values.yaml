@@ -23,9 +23,10 @@ configs:
     # Faster Git polling for the local GitOps loop (no webhook can reach a laptop cluster).
     timeout.reconciliation: 60s
     timeout.reconciliation.jitter: 10s
-    # KSOPS runs as a Kustomize exec plugin. Profiles list app files from ../../apps, which is outside the
-    # profile root, so the load restrictor is relaxed. Both flags trust the repo contents (see ADR 0204).
-    kustomize.buildOptions: --enable-alpha-plugins --enable-exec --load-restrictor LoadRestrictionsNone
+    # KSOPS runs as a Kustomize exec plugin; these flags trust the repo contents (ADR 0204). The load restrictor
+    # stays at its default so no kustomization can read files outside its root (e.g. the mounted age key);
+    # scripts/platform-validate.sh fails if it is ever relaxed here.
+    kustomize.buildOptions: --enable-alpha-plugins --enable-exec
     # Argo CD does not assess the health of child Applications by default. Without this, app-of-apps sync
     # waves would not wait for CRDs/operators in earlier waves to become Healthy.
     resource.customizations.health.argoproj.io_Application: |

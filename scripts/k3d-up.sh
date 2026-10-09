@@ -42,10 +42,15 @@ preflight() {
     die "PROFILES cannot contain both obs and obs-lite; pick one"
   fi
 
-  # Argo CD reads Git from GitHub, not from this checkout, so the revision must be pushed.
-  if [[ ! "$GIT_REVISION" =~ ^[0-9a-f]{40}$ ]]; then
-    git -C "$ROOT_DIR" ls-remote --exit-code origin "$GIT_REVISION" >/dev/null \
-      || die "revision '$GIT_REVISION' not found on origin; push it first"
+  # Argo CD reads Git from GitHub, not from this checkout, so the revision must be pushed. Resolve it to the
+  # commit SHA that every Application must report before `make up` calls the cluster ready.
+  if [[ "$GIT_REVISION" =~ ^[0-9a-f]{40}$ ]]; then
+    TARGET_SHA="$GIT_REVISION"
+  else
+    TARGET_SHA="$(git -C "$ROOT_DIR" ls-remote origin "$GIT_REVISION" | awk -v rev="$GIT_REVISION" '
+      $2 == "refs/heads/" rev { head = $1 } $2 == "refs/tags/" rev "^{}" { peeled = $1 } $2 == "refs/tags/" rev { tag = $1 }
+      END { print (head != "" ? head : (peeled != "" ? peeled : tag)) }')"
+    [[ -n "$TARGET_SHA" ]] || die "revision '$GIT_REVISION' not found on origin; push it first"
   fi
   if [[ "$GIT_REVISION" == "$(git -C "$ROOT_DIR" branch --show-current)" ]] \
     && [[ -n "$(git -C "$ROOT_DIR" log --oneline "origin/$GIT_REVISION..HEAD" 2>/dev/null)" ]]; then
@@ -118,6 +123,8 @@ apply_root_apps() {
       .spec.source.kustomize.patches[0].patch =
         "- op: replace\n  path: /data/revision\n  value: \"" + strenv(REVISION) + "\""
     ' "$ROOT_APP_TEMPLATE" | kc apply -f - >/dev/null
+    # Reconcile now instead of at the next poll, so the new revision is picked up right away.
+    kc -n argocd annotate applications.argoproj.io "root-$profile" argocd.argoproj.io/refresh=normal --overwrite >/dev/null
   done
   # Root apps of profiles that are no longer requested keep running; say so instead of deleting them silently.
   local extra
@@ -126,18 +133,22 @@ apply_root_apps() {
   [[ -z "$extra" ]] || log "warning: root apps for other profiles still exist: $(echo "$extra" | tr '\n' ' ')"
 }
 
+# name, sync, health, and whether the app has synced TARGET_SHA (stale status from the previous revision
+# must not count as ready).
 app_table() {
-  kc -n argocd get applications.argoproj.io -o json | jq -r '
-    .items[] | [.metadata.name, (.status.sync.status // "Unknown"), (.status.health.status // "Unknown")] | @tsv'
+  kc -n argocd get applications.argoproj.io -o json | jq -r --arg sha "$TARGET_SHA" '
+    .items[] | [.metadata.name, (.status.sync.status // "Unknown"), (.status.health.status // "Unknown"),
+      (if (.status.sync.revision == $sha) or any(.status.sync.revisions[]?; . == $sha)
+       then "current" else "old-revision" end)] | @tsv'
 }
 
 wait_for_apps() {
   [[ "$WAIT_TIMEOUT" -gt 0 ]] || return 0
-  log "waiting up to ${WAIT_TIMEOUT}s for all Applications to be Synced + Healthy"
+  log "waiting up to ${WAIT_TIMEOUT}s for all Applications to be Synced + Healthy at ${TARGET_SHA:0:12}"
   local deadline=$((SECONDS + WAIT_TIMEOUT)) table pending
   while :; do
     table="$(app_table)"
-    pending="$(awk -F'\t' '$2 != "Synced" || $3 != "Healthy"' <<<"$table")"
+    pending="$(awk -F'\t' '$2 != "Synced" || $3 != "Healthy" || $4 != "current"' <<<"$table")"
     if [[ -n "$table" && -z "$pending" ]]; then
       column -t <<<"$table" >&2
       return 0
@@ -146,7 +157,7 @@ wait_for_apps() {
       column -t <<<"$table" >&2
       die "timed out; inspect with: make status CLUSTER=$CLUSTER"
     fi
-    log "pending: $(awk -F'\t' '{printf "%s(%s/%s) ", $1, $2, $3}' <<<"$pending")"
+    log "pending: $(awk -F'\t' '{printf "%s(%s/%s/%s) ", $1, $2, $3, $4}' <<<"$pending")"
     sleep 15
   done
 }
