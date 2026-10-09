@@ -1,0 +1,45 @@
+{{- if .Values.migration.enabled }}
+---
+# Alembic `upgrade head` before the new release rolls out (Argo CD PreSync hook; the DB comes from the
+# `shop-db` app in an earlier wave). The previous Job is replaced on the next sync.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: shop-migrate
+  labels:
+    {{- include "shop.labels" (dict "root" $ "name" "shop-migrate") | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: {{ .Values.migration.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "shop.labels" (dict "root" $ "name" "shop-migrate") | nindent 8 }}
+    spec:
+      {{- include "shop.jobPodSpec" (dict "root" $ "name" "shop-migrate" "job" .Values.migration) | nindent 6 }}
+{{- end }}
+{{- if .Values.seed.enabled }}
+---
+# Idempotent demo data (products, customers) after the services are up (Argo CD PostSync hook).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: shop-seed
+  labels:
+    {{- include "shop.labels" (dict "root" $ "name" "shop-seed") | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: {{ .Values.seed.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "shop.labels" (dict "root" $ "name" "shop-seed") | nindent 8 }}
+    spec:
+      {{- include "shop.jobPodSpec" (dict "root" $ "name" "shop-seed" "job" .Values.seed) | nindent 6 }}
+{{- end }}

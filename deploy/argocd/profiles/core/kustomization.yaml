@@ -5,6 +5,9 @@ resources:
   - ../../apps/gateway-api-crds
   - ../../apps/envoy-gateway
   - ../../apps/cert-manager
+  - ../../apps/cnpg
+  - ../../apps/shop-db
+  - ../../apps/shop
   - ../../apps/cluster-secrets
 components:
   - ../_common

@@ -1,0 +1,105 @@
+{{- range $name, $svc := .Values.services }}
+{{- $ctx := dict "root" $ "name" $name "svc" $svc }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "shop.labels" $ctx | nindent 4 }}
+spec:
+  replicas: {{ $svc.replicas }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      {{- include "shop.selectorLabels" $ctx | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        {{- include "shop.labels" $ctx | nindent 8 }}
+    spec:
+      serviceAccountName: shop
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ $.Values.lifecycle.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- include "shop.podSecurityContext" $ctx | nindent 8 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "shop.selectorLabels" $ctx | nindent 14 }}
+      containers:
+        - name: {{ $name }}
+          image: {{ include "shop.image" (dict "name" $name "image" $svc.image) }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: {{ $svc.port }}
+              protocol: TCP
+          env:
+            {{- include "shop.commonEnv" $ctx | nindent 12 }}
+            {{- range $key, $value := $svc.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            {{- toYaml $.Values.probes.startup | nindent 12 }}
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            {{- toYaml $.Values.probes.liveness | nindent 12 }}
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            {{- toYaml $.Values.probes.readiness | nindent 12 }}
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: {{ $.Values.lifecycle.preStopSleepSeconds }}
+          resources:
+            {{- toYaml $svc.resources | nindent 12 }}
+          securityContext:
+            {{- include "shop.containerSecurityContext" $ctx | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "shop.labels" $ctx | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "shop.selectorLabels" $ctx | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $svc.port }}
+      targetPort: http
+      protocol: TCP
+---
+# Voluntary disruptions (drains, upgrades) take down at most one pod per service at a time.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "shop.labels" $ctx | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "shop.selectorLabels" $ctx | nindent 6 }}
+{{- end }}

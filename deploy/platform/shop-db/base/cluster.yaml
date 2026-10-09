@@ -1,0 +1,25 @@
+# Shop database (docs/contracts/services.md): database `shop`, owner `shop_app` (non-superuser). CNPG creates the
+# Secret `shop-db-app` (keys `uri`, `password`, ...) that the orders service and the migration Job read.
+# wal_level=logical from day 1 for Debezium CDC (Phase 4).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: shop-db
+  labels:
+    app.kubernetes.io/part-of: shopflow
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.11-minimal-trixie@sha256:ca2c3bb893d185fe4e5d0401a010454bd87dcb67c53003c38fd828804928f5d9
+  postgresql:
+    parameters:
+      wal_level: logical
+  bootstrap:
+    initdb:
+      database: shop
+      owner: shop_app
+  enableSuperuserAccess: false
+  storage:
+    size: 2Gi
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 512Mi}
