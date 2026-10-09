@@ -1,0 +1,7 @@
+# gateway-crds-helm renders CRDs as templates, so Argo CD manages them like any other resource.
+crds:
+  gatewayAPI:
+    enabled: true
+    channel: standard   # Gateway, HTTPRoute, GRPCRoute, ReferenceGrant, BackendTLSPolicy; no TCP/TLS/UDP routes
+  envoyGateway:
+    enabled: true

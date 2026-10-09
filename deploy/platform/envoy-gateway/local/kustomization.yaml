@@ -1,0 +1,13 @@
+# Local overlay: shop hostname on the laptop (resolves to 127.0.0.1; the k3d load balancer maps HTTPS_PORT -> 443).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base
+patches:
+  - target:
+      kind: Gateway
+      name: shopflow
+    patch: |-
+      - op: add
+        path: /spec/listeners/0/hostname
+        value: shop.127.0.0.1.sslip.io
