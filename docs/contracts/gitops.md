@@ -5,7 +5,12 @@ component owner follows these conventions for its own component.
 
 ## 1. One Argo CD Application per component
 
-- File: `deploy/argocd/apps/<component>.yaml`, owned by the component owner.
+- Directory: `deploy/argocd/apps/<component>/` with `application.yaml` + `kustomization.yaml`
+  (`resources: [application.yaml]`), owned by the component owner. Directories (not loose files) let profiles
+  reference apps under Kustomize's default load restrictor; `LoadRestrictionsNone` is **not** used.
+- `spec.sources` is always a **list** (even with one source) and contains at least one source with
+  `repoURL: https://github.com/winthebest/shopflow.git`; the profile replacement sets its `targetRevision`.
+  An app without such a source fails the build on purpose, so no app silently stays on `main`.
 - Git source: `repoURL: https://github.com/winthebest/shopflow.git`. `targetRevision` is `main` on `sf-main`;
   a lane cluster may point at the lane branch (the root app passes the revision as a parameter).
 - Labels: `app.kubernetes.io/part-of: shopflow`, `shopflow.io/profile: <profile>`.
@@ -48,9 +53,21 @@ Third-party images are pinned by digest (Helm values or Kustomize `images:`).
 
 ## 4. Profiles
 
-- Profile = a directory `deploy/argocd/profiles/<profile>/kustomization.yaml` listing app files
-  (`resources: [../../apps/<component>.yaml, …]`). `make up PROFILES=core,obs` creates one root Application
-  per listed profile pointing at that directory. Labels are metadata only; selection is by directory.
+- Profile = a directory `deploy/argocd/profiles/<profile>/kustomization.yaml`:
+
+  ```yaml
+  apiVersion: kustomize.config.k8s.io/v1beta1
+  kind: Kustomization
+  resources:
+    - ../../apps/<component>      # app directories
+  components:
+    - ../_common                  # git-revision ConfigMap + replacement into every shopflow source
+  ```
+
+  `deploy/argocd/profiles/_common/` (sf-platform) is a Kustomize `Component` holding the `git-revision`
+  ConfigMap and the replacement into `spec.sources.[repoURL=https://github.com/winthebest/shopflow.git].targetRevision`.
+  `make up PROFILES=core,obs` creates one root Application per profile and patches the ConfigMap with the
+  revision (`main` on `sf-main`, the lane branch on a lane cluster). Labels are metadata only.
 - Profile files and their owners:
 
 | Profile | Owner | Contents |
