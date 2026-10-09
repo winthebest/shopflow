@@ -149,6 +149,31 @@ def test_seed_rejects_unknown_namespace(fake):
     assert fake.mutations() == []
 
 
+def test_prompt_mode_reads_the_terminal_silently(fake, tmp_path):
+    seed_world(fake)
+    tty = tmp_path / "tty"
+    tty.write_text("https://hooks.example/S3CRET-webhook\n")
+
+    result = fake.run("aws-seed-params.sh", "--prompt", "observability/alertmanager-webhook", "--keys", "url", env={"CLOUD_TTY": str(tty)})
+
+    assert result.returncode == 0, result.stderr
+    put = next(c for c in fake.calls("aws") if "put-parameter" in c.argv)
+    payload = json.loads(put.stdin)
+    assert payload["Name"] == "/shopflow/aws/observability/alertmanager-webhook"
+    assert json.loads(payload["Value"]) == {"url": "https://hooks.example/S3CRET-webhook"}
+    assert all("S3CRET" not in arg for c in fake.calls() for arg in c.argv)
+    assert "S3CRET" not in result.stderr + result.stdout, "the value is never echoed"
+
+
+def test_keys_without_prompt_is_rejected(fake):
+    seed_world(fake)
+
+    result = fake.run("aws-seed-params.sh", "--keys", "url", stdin=json.dumps(SECRETS))
+
+    assert result.returncode != 0 and "--keys goes with --prompt" in result.stderr
+    assert fake.mutations() == []
+
+
 # Atomic group: the Trino password and its bcrypt hash (another Secret) must always come from the same run.
 GROUPED = {
     "_groups": [["lakehouse/trino-dbt", "lakehouse/trino-password-db"]],

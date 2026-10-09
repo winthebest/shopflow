@@ -10,6 +10,31 @@ read by OpenTofu and by the scripts; this page explains them, it does not redefi
 | 1 network | `infra/tofu/network` | whole project (free) | `shopflow` operator profile |
 | 2 cluster | `infra/tofu/cluster` | one session | `make cloud-up` / `make cloud-down` |
 
+## First AWS session: the order
+
+Each **approval** below is the user's, relayed by the orchestrator. Costs are estimates from [`docs/cost.md`](../cost.md).
+
+| # | Step | Who | Time | Cost | Details |
+|---|---|---|---|---|---|
+| 1 | Note the account creation date; **upgrade to the Paid plan**; root MFA; Identity Center user, permission sets, SSO profiles, `aws sso login` | user | ~45 min | $0 | [One-time account setup](#one-time-account-setup-user) |
+| 2 | GitHub: OIDC `sub` customization, variable `AWS_ACCOUNT_ID`, secret `ALERT_EMAIL` | user (repo admin) | 5 min | $0 | [GitHub settings](#github-settings-user-repository-admin) |
+| 3 | **Approval 1.** Layer 0 with the admin profile: local state → apply → migrate the state to S3. Confirm the SNS email. If the anomaly monitor already exists, reuse it | sf-cloud + user | ~15 min | ≈ $0.5/month from now on | [Bootstrap layer 0](#bootstrap-layer-0-first-time) |
+| 4 | **Approval 2.** Layer 1 with the operator profile | sf-cloud | ~3 min | $0 | same section |
+| 5 | Seed the secrets through pipes, never a file: `scripts/data-secrets.sh --aws-json \| make cloud-seed-params`; values only you know (the Discord webhook) with the silent prompt `make cloud-seed-params CLOUD_ARGS="--prompt observability/alertmanager-webhook --keys url"` | user | 10 min | $0 | [Bootstrap layer 0](#bootstrap-layer-0-first-time), end of section |
+| 6 | Arm the guards: uncomment the reaper cron (PR), run it once with `dry_run: true`, set `INFRA_PLAN_ENABLED=true` | sf-cloud + orchestrator | 10 min | $0 | [Kill switches](#kill-switches) |
+| 7 | `make cloud-up CLOUD_ARGS="--dry-run --profiles core,obs-lite"`: reads AWS, prints the plan, changes nothing | sf-cloud | 5 min | $0 | [Session lifecycle](#session-lifecycle) |
+| 8 | **Approval 3.** `make cloud-up CLOUD_ARGS="--profiles core,obs-lite"` (on AWS, `core` also runs External Secrets and the LB controller; `obs-lite` adds OpenCost), then the first-session checks | sf-cloud | 30–45 min to RTO | ≈ $0.30/h | [First-session checks](#first-session-checks) |
+| 9 | `make cloud-down` (same day); the orphan check must be clean | sf-cloud | ~20 min | — | |
+| 10 | Next day: Cost Explorer with the Credit charge type excluded → measured $/hour in `docs/cost.md`; then activate the cost allocation tags | sf-cloud | 15 min | $0 | [`docs/cost.md`](../cost.md) |
+
+Expected spend for the first session: about **$1.2 for 4 hours** (`core,obs-lite`), plus layer 0 at ≈ $0.5/month.
+Guardrails live from step 3: emails at $10 and $20 actual and $25 forecast; the Budget Action at $25 blocks new
+capacity; the lease (4 h by default) with the GitHub and Lambda reapers is the real stop.
+
+Before step 7 these must be merged (other lanes): the sf-platform root-app hook with the session parameters
+(ADR 0206), the `profiles-aws` trees, and the `aws` overlays of the core and obs-lite components, including the
+Envoy Gateway Service with the NLB load balancer class.
+
 ## One-time account setup (user)
 
 - [ ] Note the account creation date in [`docs/cost.md`](../cost.md).
@@ -97,18 +122,23 @@ tofu -chdir=infra/tofu/network init -backend-config="bucket=shopflow-tfstate-<AC
 tofu -chdir=infra/tofu/network apply
 ```
 
-Secrets for External Secrets (SecureString, never on a command line):
+Secrets for External Secrets (SecureString). Values go from their producer to SSM through a pipe or a silent
+prompt: never a command line, and never a file (backups and sync tools such as Time Machine or iCloud may copy it
+before it is deleted).
 
 ```sh
-make cloud-seed-params < secrets.json                  # {"<namespace>": {"<name>": "<value>" or {"<key>": "<value>"}}}
-make cloud-seed-params CLOUD_ARGS=--rotate < new.json  # overwrite the ones given
-scripts/data-secrets.sh --aws-json | scripts/aws-seed-params.sh   # sf-data's secrets, with their groups
+# Generated values, with their groups (sf-data); the producer refuses to write to a terminal.
+scripts/data-secrets.sh --aws-json | make cloud-seed-params
+# A value only you know (e.g. the Discord webhook): asked without echo, one prompt per key.
+make cloud-seed-params CLOUD_ARGS="--prompt observability/alertmanager-webhook --keys url"
+# Replace existing values (and whole groups): add --rotate.
+scripts/data-secrets.sh --aws-json | make cloud-seed-params CLOUD_ARGS=--rotate
 ```
 
-Values that must match each other (a password and the bcrypt hash of it in another Secret) are declared by the
-producer as a group, `"_groups": [["lakehouse/trino-dbt", "lakehouse/trino-password-db"]]`. A group is written
-whole or not at all: if SSM holds only part of it and `--rotate` is not given, the script stops before writing any
-parameter.
+Values that must match each other (passwords and the bcrypt hashes of them in another Secret) are declared by the
+producer as a group, e.g. `"_groups": [["lakehouse/trino-dbt", "lakehouse/trino-exporter",
+"lakehouse/trino-password-db"]]`. A group is written whole or not at all: if SSM holds only part of it and
+`--rotate` is not given, the script stops before writing any parameter.
 
 ## Session lifecycle
 

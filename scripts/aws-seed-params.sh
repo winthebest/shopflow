@@ -21,10 +21,14 @@ source "$(dirname "${BASH_SOURCE[0]}")/cloud-lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/aws-seed-params.sh [--dry-run] [--rotate] < secrets.json
+Usage: producer | scripts/aws-seed-params.sh [--dry-run] [--rotate]
+       scripts/aws-seed-params.sh [--dry-run] [--rotate] --prompt <namespace>/<name> [--keys k1,k2]
 
-  --rotate   overwrite parameters that already exist (default: keep them)
-Namespaces must be listed in eso_namespaces of infra/cloud-contract.json.
+  --rotate          overwrite parameters that already exist (default: keep them)
+  --prompt NS/NAME  ask on the terminal, without echo, for a value only you know (e.g. a webhook URL);
+                    with --keys, one prompt per key of a multi-key Secret
+Pipe the JSON from its producer (e.g. scripts/data-secrets.sh --aws-json); never keep it in a file, which
+backups and sync tools may copy. Namespaces must be listed in eso_namespaces of infra/cloud-contract.json.
 EOF
 }
 
@@ -32,21 +36,51 @@ parameter_exists() {
   [ "$(aws_ ssm describe-parameters --parameter-filters "Key=Name,Values=$1" --query 'length(Parameters)' --output text)" != 0 ]
 }
 
+# Build the input JSON from silent terminal prompts. Values travel only through pipes and builtins (printf),
+# never through a command line or a file. CLOUD_TTY lets the tests replace the terminal.
+prompt_input() {
+  local target="$1" keys="$2" ns name key value
+  ns="${target%%/*}"
+  name="${target#*/}"
+  [ -n "$ns" ] && [ -n "$name" ] && [ "$ns" != "$target" ] || die "--prompt takes <namespace>/<name>"
+  exec 3<"${CLOUD_TTY:-/dev/tty}" || die "--prompt needs a terminal"
+  if [ -z "$keys" ]; then
+    IFS= read -rs -u 3 -p "value for $target: " value
+    echo >&2
+    printf '%s' "$value" | jq -Rs --arg ns "$ns" --arg name "$name" '{($ns): {($name): .}}'
+  else
+    for key in $(printf '%s' "$keys" | tr ',' ' '); do
+      IFS= read -rs -u 3 -p "$target $key: " value
+      echo >&2
+      printf '%s\0%s\0' "$key" "$value"
+    done | jq -Rs --arg ns "$ns" --arg name "$name" \
+      'split("\u0000")[:-1] | [range(0; length; 2) as $i | {(.[$i]): .[$i + 1]}] | add | {($ns): {($name): .}}'
+  fi
+  exec 3<&-
+}
+
 main() {
-  local rotate=0
+  local rotate=0 prompt="" keys=""
   parse_common_args "$@"
   set -- ${ARGS[@]+"${ARGS[@]}"}
   while [ $# -gt 0 ]; do
     case "$1" in
       --rotate) rotate=1 ;;
+      --prompt) prompt="${2:?--prompt needs <namespace>/<name>}"; shift ;;
+      --keys) keys="${2:?--keys needs k1,k2}"; shift ;;
       *) usage >&2; die "unknown argument: $1" ;;
     esac
     shift
   done
   require_cmds aws jq
-  [ ! -t 0 ] || die "pipe the secrets JSON on stdin (see --help)"
   local input
-  input="$(cat)"
+  if [ -n "$prompt" ]; then
+    input="$(prompt_input "$prompt" "$keys")"
+  else
+    [ -z "$keys" ] || die "--keys goes with --prompt"
+    [ ! -t 0 ] || die "pipe the secrets JSON on stdin, or use --prompt (see --help)"
+    input="$(cat)"
+  fi
   jq -e 'def value: (type == "string" and length > 0)
                      or (type == "object" and length > 0 and all(.[]; type == "string" and length > 0));
          type == "object" and ((._groups // []) | type == "array" and all(.[]; type == "array" and length > 1
