@@ -1,0 +1,75 @@
+# sf-sre offline checks (no cluster): render every observability Argo app exactly as Argo CD will (chart,
+# version and value files are read from deploy/argocd/apps/), then validate it the way it will run:
+# kubeconform (+ CRD schemas), otelcol/loki/tempo/amtool config checks, promtool rule checks + unit tests,
+# SLO rules regenerated from slo/checkout.yaml with no drift, runbook links, image digests.
+# Same entrypoint as `make sre-ci` (scripts/sre-check.sh, which also pins every tool image by digest).
+#
+# Supply-chain rules as in ci.yml: `uses:` pinned to full commit SHAs (comment = tag), least-privilege
+# permissions per job, no pull_request_target, downloaded binaries checksum-verified.
+name: sre-ci
+
+on:
+  pull_request:
+    paths: &sre-paths
+      - deploy/platform/otel-collector/**
+      - deploy/platform/kube-prometheus-stack/**
+      - deploy/platform/loki/**
+      - deploy/platform/tempo/**
+      - deploy/platform/slo/**
+      - deploy/platform/grafana-dashboards/**
+      - deploy/argocd/apps/otel-collector/**
+      - deploy/argocd/apps/otel-collector-lite/**
+      - deploy/argocd/apps/kube-prometheus-stack/**
+      - deploy/argocd/apps/loki/**
+      - deploy/argocd/apps/tempo/**
+      - deploy/argocd/apps/slo/**
+      - deploy/argocd/apps/grafana-dashboards/**
+      - deploy/argocd/profiles/obs/**
+      - deploy/argocd/profiles/obs-lite/**
+      - deploy/argocd/profiles/_common/**
+      - slo/**
+      - docs/runbooks/checkout-*
+      - scripts/sre-*.sh
+      - mk/sre.mk
+      - .github/workflows/sre-ci.yml
+  push:
+    branches: [main]
+    paths: *sre-paths
+
+permissions: {}
+
+concurrency:
+  group: sre-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  HELM_VERSION: "v4.3.0"
+  KUBECONFORM_VERSION: "v0.8.0"
+  KUBECONFORM_SHA256: "9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883" # linux-amd64 tarball, from the release CHECKSUMS
+
+jobs:
+  validate:
+    name: render + validate (observability, SLOs)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+      - name: Install kubeconform (checksum-verified)
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/kubeconform.tar.gz" \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  $RUNNER_TEMP/kubeconform.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/kubeconform.tar.gz" -C "$RUNNER_TEMP/bin" kubeconform
+      - name: make sre-ci
+        run: |
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          helm version --short; kubectl version --client | head -1; yq --version; jq --version; kubeconform -v
+          make sre-ci
