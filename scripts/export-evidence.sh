@@ -67,7 +67,10 @@ main() {
   capture "$dir/argocd-applications.json" kube -n argocd get applications.argoproj.io -o json
   capture "$dir/events.txt" kube get events --all-namespaces --sort-by=.lastTimestamp
   capture "$dir/pvc.txt" kube get pvc --all-namespaces
-  [ ! -f "$OUT_DIR/$session/timings.json" ] || cp "$OUT_DIR/$session/timings.json" "$dir/"
+  local file
+  for file in timings.json netpol-probe.json; do
+    [ ! -f "$OUT_DIR/$session/$file" ] || cp "$OUT_DIR/$session/$file" "$dir/"
+  done
   if ls "$K6_SUMMARY_DIR"/*.json >/dev/null 2>&1; then
     mkdir -p "$dir/k6"
     cp "$K6_SUMMARY_DIR"/*.json "$dir/k6/"
