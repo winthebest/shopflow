@@ -1,0 +1,17 @@
+# Profile obs-lite: metrics + SLOs only (no Loki/Tempo, no log agent). The otel-gateway still turns spans into
+# SLI metrics. Mutually exclusive with profile obs (same otel-gateway release).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../apps/kube-prometheus-stack
+  - ../../apps/slo
+  - ../../apps/grafana-dashboards
+  - ../../apps/otel-collector-lite
+components:
+  - ../_common
+replacements:
+  - source: {kind: ConfigMap, name: git-revision, fieldPath: data.revision}
+    targets:
+      - select: {kind: Application}
+        fieldPaths:
+          - spec.sources.[repoURL=https://github.com/winthebest/shopflow.git].targetRevision
