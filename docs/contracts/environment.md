@@ -55,6 +55,7 @@ Default-deny per namespace; these flows must be allowed. Owners add rows when th
 | `lakehouse` polaris | `shop` shop-db; `lakehouse` seaweedfs | 5432; 8333 | metadata DB `catalog`; object store | sf-data |
 | `lakehouse` polaris-setup Job | `lakehouse` polaris | 8181 | bootstrap principals | sf-data |
 | `lakehouse` trino-bronze-tables Job | `lakehouse` trino | 8443 | create bronze tables | sf-data |
+| `lakehouse` polaris-db-copy, trino-pg-copy Jobs | kube-apiserver | 443/6443 | copy `shop/shop-db-{polaris,trino-pg}` into `lakehouse` (gitops.md §5) | sf-data |
 
 ## Trino catalogs and identities (Phase 4 onwards)
 
