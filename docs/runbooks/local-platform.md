@@ -115,6 +115,21 @@ and `generators: [secrets/ksops-generator.yaml]` in the overlay's `kustomization
 without seeing it: generate it in a pipe and encrypt from stdin with
 `sops -e --filename-override <path> /dev/stdin > <path>`.
 
+## AWS: seeding sf-platform secrets
+
+On AWS the shop-db role passwords come from SSM through External Secrets (same Secret names and keys as the local
+SOPS files). Seed them once, before the first session that needs them:
+
+```bash
+scripts/platform-secrets.sh --aws-json | scripts/aws-seed-params.sh
+```
+
+- The producer prints one random password per role enabled in `deploy/charts/shop-db/values-aws.yaml` and refuses
+  to write to a terminal; values never appear in arguments or files.
+- **Keep these passwords stable.** The roles come back with the database restored every session, so the SSM value
+  must keep matching the role. Seeding keeps existing parameters, so re-running the pipe changes nothing. Rotate only
+  on purpose: `aws-seed-params.sh --rotate` together with an `ALTER ROLE ... PASSWORD` in the same session.
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |
