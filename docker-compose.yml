@@ -115,3 +115,5 @@ configs:
       CREATE DATABASE shop OWNER shop_app;
       -- CDC reader (Phase 4): replication, no superuser, owns nothing; grants come from Alembic 0002.
       CREATE ROLE debezium LOGIN REPLICATION PASSWORD 'debezium';
+      -- Trino catalog `pg` (Phase 5): read-only; grants come from Alembic 0003.
+      CREATE ROLE trino_pg LOGIN PASSWORD 'trino_pg';

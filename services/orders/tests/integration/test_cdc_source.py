@@ -110,3 +110,20 @@ def test_downgrade_removes_cdc_objects_and_grants(app_database):
 
     command.upgrade(config, "head")
     command.check(config)
+
+
+async def test_debezium_privileges_are_exactly_the_spec(database_url):
+    tables = await query(
+        database_url,
+        "SELECT n.nspname || '.' || c.relname, acl.privilege_type"
+        " FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace, aclexplode(c.relacl) acl"
+        " WHERE acl.grantee = 'debezium'::regrole ORDER BY 1, 2",
+    )
+    schemas = await query(
+        database_url,
+        "SELECT n.nspname, acl.privilege_type FROM pg_namespace n, aclexplode(n.nspacl) acl"
+        " WHERE acl.grantee = 'debezium'::regrole ORDER BY 1, 2",
+    )
+    expected = sorted([(f"public.{table}", "SELECT") for table in PUBLISHED] + [("public.heartbeat", "UPDATE")])
+    assert tables == expected
+    assert schemas == [("public", "USAGE")]

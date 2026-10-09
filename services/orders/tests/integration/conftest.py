@@ -29,6 +29,8 @@ APP_ROLE = "shop_app"
 APP_PASSWORD = "test-only"
 CDC_ROLE = "debezium"
 CDC_PASSWORD = "test-only"
+TRINO_ROLE = "trino_pg"
+TRINO_PASSWORD = "test-only"
 
 
 def psql(pg: PostgresContainer, sql: str) -> None:
@@ -44,6 +46,7 @@ def postgres() -> Iterator[PostgresContainer]:
     with container as pg:
         psql(pg, f"CREATE ROLE {APP_ROLE} LOGIN PASSWORD '{APP_PASSWORD}'")
         psql(pg, f"CREATE ROLE {CDC_ROLE} LOGIN REPLICATION PASSWORD '{CDC_PASSWORD}'")
+        psql(pg, f"CREATE ROLE {TRINO_ROLE} LOGIN PASSWORD '{TRINO_PASSWORD}'")
         yield pg
 
 
@@ -79,6 +82,12 @@ def superuser_sql(postgres: PostgresContainer) -> Callable[[str], None]:
 def cdc_url(postgres: PostgresContainer, database_url: str) -> str:
     """The migrated `shop` database, connected as the CDC role."""
     return connection_url(postgres, CDC_ROLE, CDC_PASSWORD, "shop")
+
+
+@pytest.fixture(scope="session")
+def trino_url(postgres: PostgresContainer, database_url: str) -> str:
+    """The migrated `shop` database, connected as the Trino `pg` catalog role."""
+    return connection_url(postgres, TRINO_ROLE, TRINO_PASSWORD, "shop")
 
 
 @pytest.fixture
