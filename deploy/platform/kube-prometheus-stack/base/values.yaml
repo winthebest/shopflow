@@ -36,6 +36,10 @@ prometheusOperator:
   # (make sre-rules-check), and Argo CD would otherwise fight the webhook caBundle patched at runtime.
   admissionWebhooks:
     enabled: false
+  # The operator's TLS cert (Secret kps-admission) is created by those same webhook Jobs: without them the operator
+  # pod waits forever for the Secret. Plain HTTP on its in-cluster metrics port instead.
+  tls:
+    enabled: false
 
 prometheus:
   prometheusSpec:

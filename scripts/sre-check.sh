@@ -287,6 +287,19 @@ cmd_lint() {
     | sort -u | grep -v '@sha256:' || true)"
   [[ -z "$unpinned" ]] || fail "images not pinned by digest:"$'\n'"$unpinned"
   log "images: all pinned by digest"
+  # Every Secret a rendered workload/CR needs must come from somewhere: the render itself or a SOPS file in deploy/
+  # (KSOPS). A Secret normally made by a disabled chart Job (e.g. the operator's kps-admission TLS cert) is caught
+  # here instead of as a pod stuck in ContainerCreating.
+  local refs known missing
+  refs="$({ yq -N '.. | select(tag == "!!map") | select(has("secretName") and (.optional // false) != true) | .secretName' "$OUT"/rendered/*.yaml
+    yq -N '.. | select(tag == "!!map") | select(has("secretKeyRef") and (.secretKeyRef.optional // false) != true) | .secretKeyRef.name' "$OUT"/rendered/*.yaml
+    yq -N '.. | select(tag == "!!map") | select(has("secretRef") and (.secretRef.optional // false) != true) | .secretRef.name' "$OUT"/rendered/*.yaml
+    yq -N 'select(.kind == "Alertmanager" or .kind == "Prometheus") | .spec.secrets[]?' "$OUT"/rendered/*.yaml; } | sort -u)"
+  known="$({ yq -N 'select(.kind == "Secret") | .metadata.name' "$OUT"/rendered/*.yaml
+    find "$ROOT/deploy" -path '*/secrets/*.enc.yaml' -exec yq '.metadata.name' {} \; ; } | sort -u)"
+  missing="$(comm -23 <(echo "$refs") <(echo "$known") | grep -v '^$' || true)"
+  [[ -z "$missing" ]] || fail "Secrets referenced but never created (render or deploy/**/secrets/*.enc.yaml):"$'\n'"$missing"
+  log "secrets: every referenced Secret is rendered or SOPS-managed"
 }
 
 usage() {
