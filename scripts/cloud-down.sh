@@ -230,7 +230,9 @@ main() {
   ssm_delete "$SSM_RESUME"
   schedule_delete
 
-  [ "$orphans" -eq 0 ] || die "orphan check exited $orphans: see the list above (tagged leftovers were deleted; untagged ones need a human)"
+  # Leftovers block completion: an UNTAGGED load balancer in the shopflow VPC has no project tag, so neither
+  # this script nor the reapers may delete it, and it keeps billing until a human does.
+  [ "$orphans" -eq 0 ] || die "orphan check exited $orphans: see the list above (tagged leftovers were deleted; UNKNOWN/UNTAGGED ones need a human)"
   if dry_run; then
     log "dry-run complete: nothing was changed"
   else

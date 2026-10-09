@@ -81,7 +81,10 @@ main() {
   status="$(cluster_status)"
   grace=$(($(contract .reaper.grace_hours) * 3600))
   if [ "$status" = ABSENT ] && [ -z "$(cluster_load_balancers)" ]; then
-    log "no session cluster and no load balancers: nothing to reap"
+    # Still look for leftovers every hour (e.g. an untagged load balancer cloud-down could not remove): a
+    # failing run is the alert.
+    log "no session cluster and no load balancers: nothing to reap; checking for orphans"
+    "$REPO_ROOT/scripts/aws-orphan-check.sh"
     return 0
   fi
 
