@@ -28,4 +28,8 @@ Connect and Trino are limited to those databases and the `iceberg/` prefix.
 - Positive: catalog survives sessions at ~$0; no extra restore step.
 - Negative: catalog behaviour differs between local and AWS (e.g. dbt `on_table_exists` must be `drop` on Glue, see
   Phase 5 spike); schemas must be added to the contract before use.
+- Negative: Trino has one service account, so on AWS `lake` and `lake_ro` share one IAM role with write access;
+  read-only for `lake_ro` then rests on the engine (`iceberg.security=READ_ONLY`) alone. Whether to restore a
+  storage-level layer is the [open question in ADR 0410](0410-trino-catalogs-per-identity.md#open-question-phase-6-aws),
+  to decide in Phase 6 with sf-data.
 - When to revisit: if Glue limits break a Phase 9–12 experiment (concurrent commits, maintenance procedures).
