@@ -169,14 +169,14 @@ Secret written by a Job, an operator or cert-manager never gets an ExternalSecre
 | `observability/grafana-admin` (`admin-user`, `admin-password`) | `/shopflow/aws/observability/grafana-admin` | sf-sre, kube-prometheus-stack | |
 | `observability/alertmanager-webhook` (`url`) | `/shopflow/aws/observability/alertmanager-webhook` | sf-sre, kube-prometheus-stack | seeded with `--prompt` |
 | `shop/shop-db-debezium`, `shop/shop-db-trino-pg` (basic-auth) | `/shopflow/aws/shop/<name>` | sf-platform, shop-db | role passwords must keep their first values (restored databases) |
-| `shop/shop-db-polaris` (basic-auth) | `/shopflow/aws/shop/shop-db-polaris` | sf-platform, shop-db | only while the aws overlay keeps the `polaris` role (no Polaris on AWS) |
 | `lakehouse/trino-internal` (`shared-secret`) | `/shopflow/aws/lakehouse/trino-internal` | sf-data, trino | |
 | `lakehouse/trino-dbt`, `lakehouse/trino-exporter` (`username`, `password`), `lakehouse/trino-password-db` (`password.db`) | `/shopflow/aws/lakehouse/<name>` | sf-data, trino | one seed group: the bcrypt file must match both passwords |
 
 Not ExternalSecrets, because another writer owns them: `kafka/cdc-epoch` (`scripts/cdc-epoch.sh`; cloud-up keeps
 the last epoch in SSM `/shopflow/aws/kafka/cdc-epoch`), KafkaUser Secrets (Strimzi), `lakehouse/trino-tls`
-(cert-manager), `lakehouse/trino-pg` (copy Job). `polaris-*`, `lake-s3-*` and `seaweedfs-*` do not exist on AWS
-(Glue and Pod Identity instead).
+(cert-manager), `lakehouse/trino-pg` (copy Job). `polaris-*`, `lake-s3-*`, `seaweedfs-*` and the `polaris` role
+with `shop/shop-db-polaris` do not exist on AWS (Glue and Pod Identity instead). sf-platform adds the shop-db roles
+of later phases (airflow, flink-serving, grafana-serving) to this table with their seeding.
 
 `scripts/cloud-manifests-check.sh` (`make cloud-manifests`) checks every ExternalSecret in `deploy/`: it must use
 the store of its namespace, read only `/shopflow/aws/<namespace>/*`, carry `SkipDryRunOnMissingResource=true` and
