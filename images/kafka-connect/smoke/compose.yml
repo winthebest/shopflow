@@ -1,0 +1,126 @@
+# Smoke test for the Kafka Connect image, on the production data path:
+#   Postgres -> Debezium -> Kafka -> Iceberg sink -> Polaris REST catalog + SeaweedFS (S3FileIO).
+# Run with run.sh: it generates every credential, the SeaweedFS identities and the work directory. No host ports
+# are published; ~3.6GB of memory limits in total. Plaintext Kafka and an in-memory Polaris keep it small; TLS/SCRAM
+# and the persistent catalog are exercised on the cluster.
+name: sf-data-connect-smoke
+
+services:
+  postgres:
+    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_wal_senders=4", "-c", "max_replication_slots=4"]
+    environment:
+      POSTGRES_DB: shop
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run via run.sh}
+      DEBEZIUM_PASSWORD: ${DEBEZIUM_PASSWORD:?run via run.sh}
+    volumes:
+      - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d shop"]
+      interval: 2s
+      retries: 30
+    mem_limit: 256m
+
+  kafka:
+    image: apache/kafka:4.3.1@sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Same as the cluster: every topic is declared up front.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_HEAP_OPTS: -Xms512m -Xmx512m
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null"]
+      interval: 5s
+      retries: 30
+    mem_limit: 1g
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    # Same flags as deploy/platform/seaweedfs.
+    command: ["mini", "-dir=/data", "-s3.config=/etc/seaweedfs/s3.json", "-bucket=lake", "-s3.port.iceberg=0",
+              "-webdav=false", "-admin.ui=false", "-master.telemetry=false"]
+    user: "1000:1000"
+    volumes:
+      - ${SMOKE_DIR:?run via run.sh}/seaweedfs:/etc/seaweedfs:ro
+    tmpfs:
+      - /data:uid=1000,gid=1000
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8333/healthz > /dev/null"]
+      interval: 3s
+      retries: 40
+    mem_limit: 384m
+
+  polaris:
+    image: apache/polaris:1.8.0@sha256:347615e736cab2c9be0d8c464552ac930be4755302bb0aeb745216bbae99ba5b
+    environment:
+      POLARIS_BOOTSTRAP_CREDENTIALS: POLARIS,root,${POLARIS_ROOT_SECRET:?run via run.sh}
+      polaris.realm-context.realms: POLARIS
+      # With stsUnavailable the server writes metadata through the AWS SDK default chain (same as the chart values).
+      AWS_ACCESS_KEY_ID: ${POLARIS_S3_ACCESS_KEY:?run via run.sh}
+      AWS_SECRET_ACCESS_KEY: ${POLARIS_S3_SECRET_KEY:?run via run.sh}
+      AWS_REGION: us-east-1
+      quarkus.otel.sdk.disabled: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8182/q/health > /dev/null"]
+      interval: 3s
+      retries: 40
+    mem_limit: 640m
+
+  connect:
+    image: ${CONNECT_IMAGE:-shopflow-kafka-connect:dev}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/opt/kafka/bin/connect-distributed.sh"]
+    command: ["/opt/smoke/connect-distributed.properties"]
+    environment:
+      KAFKA_HEAP_OPTS: -Xms640m -Xmx640m
+      KAFKA_LOG4J_OPTS: -Dlog4j2.configurationFile=/opt/kafka/config/connect-log4j2.yaml
+      # Read by the connectors through EnvVarConfigProvider, standing in for the cluster's Secret/ConfigMap providers.
+      CDC_EPOCH: ${CDC_EPOCH:?run via run.sh}
+      DEBEZIUM_PASSWORD: ${DEBEZIUM_PASSWORD:?run via run.sh}
+      SINK_S3_ACCESS_KEY: ${SINK_S3_ACCESS_KEY:?run via run.sh}
+      SINK_S3_SECRET_KEY: ${SINK_S3_SECRET_KEY:?run via run.sh}
+    volumes:
+      - ./connect-distributed.properties:/opt/smoke/connect-distributed.properties:ro
+      # Polaris credentials written by polaris-setup.py, read through FileConfigProvider.
+      - ${SMOKE_DIR}/secrets:/opt/smoke/secrets:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8083/connectors > /dev/null"]
+      interval: 5s
+      retries: 60
+    mem_limit: 1280m
+
+  # One-off helper (docker compose run --rm tools ...): Polaris setup, bronze tables, verification.
+  tools:
+    profiles: [tools]
+    image: python:3.12-slim@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f
+    working_dir: /smoke
+    environment:
+      POLARIS_URL: http://polaris:8181
+      POLARIS_ROOT_CLIENT_ID: root
+      POLARIS_ROOT_CLIENT_SECRET: ${POLARIS_ROOT_SECRET}
+      CATALOG_BASE_LOCATION: s3://lake/warehouse
+      S3_ENDPOINT: http://seaweedfs:8333
+      SECRET_OUTPUT_DIR: /work/secrets
+      READER_S3_ACCESS_KEY: ${READER_S3_ACCESS_KEY:-}
+      READER_S3_SECRET_KEY: ${READER_S3_SECRET_KEY:-}
+      CDC_EPOCH: ${CDC_EPOCH:-}
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    volumes:
+      - .:/smoke:ro
+      - ../../../deploy/platform/iceberg-catalog/base/polaris-setup.py:/smoke-deploy/polaris-setup.py:ro
+      - ../../../deploy/platform/trino/base/bronze-tables.sql:/smoke-deploy/bronze-tables.sql:ro
+      - ${SMOKE_DIR}:/work
