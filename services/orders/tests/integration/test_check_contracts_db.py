@@ -12,6 +12,12 @@ from orders.db import create_engine
 pytestmark = pytest.mark.integration
 
 
+@pytest.fixture(autouse=True)
+def plain_output(monkeypatch):
+    """Assert on the local output format, also when the suite itself runs in GitHub Actions."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
+
 def execute(url: str, sql: str) -> None:
     async def run() -> None:
         engine = create_engine(url)

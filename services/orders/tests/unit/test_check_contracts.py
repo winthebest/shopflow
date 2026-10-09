@@ -16,6 +16,7 @@ from check_contracts import (
     is_widening,
     load_contracts,
     parse_contract,
+    report,
 )
 
 ORDERS = Table(
@@ -144,3 +145,19 @@ def test_repository_contracts_cover_the_six_source_tables():
 def test_malformed_contract_is_rejected(raw):
     with pytest.raises(ContractError):
         parse_contract(raw, str(Path("data/contracts/orders.yaml")))
+
+
+@pytest.mark.parametrize(
+    ("in_actions", "expected"),
+    [
+        (False, "ERROR orders: column note dropped\n"),
+        (True, "::error file=data/contracts/orders.yaml,title=data contract orders::column note dropped\n"),
+    ],
+)
+def test_report_format(monkeypatch, capsys, in_actions, expected):
+    if in_actions:
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    else:
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    report([("orders", "column note dropped")])
+    assert capsys.readouterr().out == expected
