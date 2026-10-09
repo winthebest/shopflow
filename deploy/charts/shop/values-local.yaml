@@ -6,7 +6,7 @@ services:
   orders:
     replicas: 1
   payments:
-    replicas: 2
+    replicas: 1
 seed:
   enabled: true
 route:
