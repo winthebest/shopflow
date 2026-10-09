@@ -11,6 +11,9 @@ Runs the Alembic migrations on a real Postgres (DATABASE_URL), introspects it an
    bump. Breaking = column dropped or renamed, type not widened, nullable -> NOT NULL, primary key changed,
    contract removed. Adding a column, widening a type and NOT NULL -> nullable are not breaking.
 
+It applies the migrations of the current checkout to that database, so point it at a throwaway one (CI's, or a
+fresh `make dev-reset`), never at a database another branch's migrations must still run on.
+
     DATABASE_URL=postgresql://shop_app:shop_app@localhost:25432/shop uv run scripts/check_contracts.py
     uv run scripts/check_contracts.py --base-ref HEAD^1      # what CI runs (base of the PR / previous main)
 """
