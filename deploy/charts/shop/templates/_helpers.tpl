@@ -67,10 +67,11 @@ capabilities:
 {{- end }}
 {{- end }}
 
-{{/* Pod spec for the migration and seed Jobs: the orders image with a one-off command. */}}
+{{/* Pod spec for the migration and seed Jobs: the orders image with a one-off command. The `default`
+     ServiceAccount, because a PreSync hook runs before the chart's own ServiceAccount exists; no token is mounted. */}}
 {{- define "shop.jobPodSpec" -}}
 {{- $svc := index .root.Values.services .job.service -}}
-serviceAccountName: shop
+serviceAccountName: default
 automountServiceAccountToken: false
 restartPolicy: Never
 securityContext:
