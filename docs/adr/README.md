@@ -20,3 +20,6 @@ orchestrator adds rows when merging a PR that contains ADRs.
 |---|---|---|
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
 | [0100](0100-app-language-python-fastapi.md) | Shop services in Python 3.12 + FastAPI (uv workspace) | Accepted |
+| [0200](0200-k3d-over-kind.md) | Local Kubernetes on k3d (not kind or minikube) | Accepted |
+| [0201](0201-argocd-over-flux.md) | GitOps with Argo CD app-of-apps (not Flux) | Accepted |
+| [0204](0204-sops-ksops-local-secrets.md) | Local secrets with SOPS + age, decrypted by KSOPS in Argo CD | Accepted |
