@@ -8,6 +8,7 @@
 #   GIT_REVISION       branch, tag or commit SHA that Argo CD tracks (default main); must exist on origin
 #   WAIT_TIMEOUT       seconds to wait for every Application to be Synced + Healthy (default 900; 0 = no wait)
 #   SOPS_AGE_KEY_FILE  age private key (default ~/.config/sops/age/keys.txt); copied into the cluster, never printed
+#   PULL_CACHE         1 (default) = pull images through the shared caches (ADR 0207); 0 = straight from upstream
 set -euo pipefail
 
 # shellcheck source=scripts/k3d-lib.sh
@@ -16,6 +17,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/k3d-lib.sh"
 PROFILES="${PROFILES:-core}"
 GIT_REVISION="${GIT_REVISION:-main}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-900}"
+PULL_CACHE="${PULL_CACHE:-1}"
 export SOPS_AGE_KEY_FILE="${SOPS_AGE_KEY_FILE:-$HOME/.config/sops/age/keys.txt}"
 
 # k3s v1.35.5 (k3d v5.9 default), pinned by digest.
@@ -58,12 +60,42 @@ preflight() {
   fi
 }
 
+# Start the shared pull-through caches (one per upstream registry), creating them on first use. Their data lives
+# in named volumes, so images downloaded once per machine survive `make down`.
+ensure_caches() {
+  local entry name upstream port
+  for entry in "${REGISTRY_CACHES[@]}"; do
+    read -r name upstream port <<<"$entry"
+    if docker container inspect "k3d-$name" >/dev/null 2>&1; then
+      docker start "k3d-$name" >/dev/null
+    else
+      log "creating pull-through cache k3d-$name -> $upstream (127.0.0.1:$port)"
+      k3d registry create "$name" --image "$REGISTRY_CACHE_IMAGE" --port "127.0.0.1:$port" \
+        --proxy-remote-url "$upstream" --volume "$name:/var/lib/registry" --no-help >/dev/null
+    fi
+  done
+}
+
+# k3d flags that route node image pulls through the caches. Only takes effect when a cluster is created.
+cache_args() {
+  [[ "$PULL_CACHE" == "1" ]] || return 0
+  local entry name port
+  for entry in "${REGISTRY_CACHES[@]}"; do
+    read -r name _ port <<<"$entry"
+    printf '%s\n' --registry-use "k3d-$name:$port"
+  done
+  printf '%s\n' --registry-config "$ROOT_DIR/scripts/k3d-registries.yaml"
+}
+
 create_cluster() {
   if cluster_exists; then
     log "cluster exists; making sure it is running"
     k3d cluster start "$CLUSTER" >/dev/null
   else
-    log "creating cluster (API 127.0.0.1:$API_PORT, HTTPS 127.0.0.1:$HTTPS_PORT, registry 127.0.0.1:$REGISTRY_PORT)"
+    log "creating cluster (API 127.0.0.1:$API_PORT, HTTPS 127.0.0.1:$HTTPS_PORT, registry 127.0.0.1:$REGISTRY_PORT, pull cache: $PULL_CACHE)"
+    [[ "$PULL_CACHE" != "1" ]] || ensure_caches
+    local extra_args=()
+    while IFS= read -r arg; do extra_args+=("$arg"); done < <(cache_args)
     # 1 server + 1 agent to save RAM; Traefik off (Envoy Gateway is the edge); servicelb (klipper) stays on and
     # backs the Gateway's LoadBalancer Service, which the k3d load balancer exposes on HTTPS_PORT.
     k3d cluster create "$CLUSTER" \
@@ -74,6 +106,7 @@ create_cluster() {
       --k3s-arg "--disable=traefik@server:0" \
       --registry-create "$REGISTRY_NAME:127.0.0.1:$REGISTRY_PORT" \
       --kubeconfig-update-default=false \
+      ${extra_args[@]+"${extra_args[@]}"} \
       --wait --timeout 300s
   fi
   # Add the context to ~/.kube/config without switching the current context (other sessions use it).

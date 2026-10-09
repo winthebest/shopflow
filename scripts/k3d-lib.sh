@@ -42,3 +42,13 @@ REGISTRY_PORT="${REGISTRY_PORT:-$((API_PORT - 1500))}"
 REGISTRY_NAME="${CLUSTER}-registry"
 # Argo CD UI port-forward follows the API port too (6550 -> 18080, 6551 -> 18081, ...).
 ARGOCD_UI_PORT="${ARGOCD_UI_PORT:-$((API_PORT + 11530))}"
+
+# Pull-through image caches shared by every local cluster (docs/adr/0207-pull-through-image-cache.md):
+# "<name> <upstream URL> <host port>". Anonymous upstreams only: no credentials are ever configured.
+REGISTRY_CACHE_IMAGE="docker.io/library/registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e"
+REGISTRY_CACHES=(
+  "shopflow-cache-docker https://registry-1.docker.io 5060"
+  "shopflow-cache-quay https://quay.io 5061"
+  "shopflow-cache-ghcr https://ghcr.io 5062"
+  "shopflow-cache-k8s https://registry.k8s.io 5063"
+)

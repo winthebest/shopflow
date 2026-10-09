@@ -6,7 +6,7 @@ CLUSTER      ?= sf-main
 PROFILES     ?= core
 GIT_REVISION ?= main
 
-.PHONY: up down status platform-argocd-ui platform-argocd-password platform-validate
+.PHONY: up down status platform-argocd-ui platform-argocd-password platform-validate platform-cache-down
 
 up: ## Create the k3d cluster, install Argo CD, apply root apps (CLUSTER, PROFILES, GIT_REVISION)
 	@CLUSTER=$(CLUSTER) PROFILES=$(PROFILES) GIT_REVISION=$(GIT_REVISION) scripts/k3d-up.sh
@@ -25,3 +25,6 @@ platform-argocd-password: ## Copy the Argo CD admin password (user admin) from S
 
 platform-validate: ## Render deploy/ (Helm + Kustomize) and validate it like platform-ci does
 	@scripts/platform-validate.sh
+
+platform-cache-down: ## Delete the shared pull-through image caches and their data (they survive make down)
+	@scripts/k3d-cache-down.sh
