@@ -12,10 +12,10 @@ sre-render: ## Render all sre Argo apps (Helm + Kustomize) into out/sre/rendered
 sre-kubeconform: ## Schema-check rendered manifests, app dirs and profiles with kubeconform
 	$(SRE_CHECK) kubeconform
 
-sre-slo: ## Regenerate SLO rules from slo/checkout.yaml with Sloth (commit the result)
+sre-slo: ## Regenerate SLO rules from every slo/*.yaml with Sloth + the rules kustomization (commit the result)
 	$(SRE_CHECK) slo
 
-sre-slo-drift: ## Fail if the committed SLO rules are stale
+sre-slo-drift: ## Fail if generated SLO rules or the rules kustomization are stale
 	$(SRE_CHECK) slo-drift
 
 sre-rules: ## Runbook links + promtool check/test of the SLO rules
