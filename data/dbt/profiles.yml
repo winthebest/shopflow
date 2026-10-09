@@ -1,0 +1,17 @@
+# Trino over HTTPS with password login as `dbt` (Secret trino-dbt; catalog rules in deploy/platform/trino/base/values.yaml).
+# Everything comes from the environment; only the password has no default, so a missing Secret fails loudly.
+shopflow:
+  target: lake
+  outputs:
+    lake:
+      type: trino
+      method: ldap  # HTTP basic auth against Trino's password file (not an LDAP server)
+      host: "{{ env_var('TRINO_HOST', 'trino.lakehouse.svc') }}"
+      port: "{{ env_var('TRINO_PORT', '8443') | as_number }}"
+      http_scheme: https
+      cert: "{{ env_var('TRINO_CA_FILE', '/etc/trino-ca/ca.crt') }}"
+      user: "{{ env_var('DBT_TRINO_USER', 'dbt') }}"
+      password: "{{ env_var('DBT_TRINO_PASSWORD') }}"
+      database: lake
+      schema: silver
+      threads: 4

@@ -1,0 +1,21 @@
+# Lints the Jinja-rendered SQL without a database: dbt builtins (ref, source, config, var) are stubbed.
+[sqlfluff]
+dialect = trino
+templater = jinja
+max_line_length = 120
+
+[sqlfluff:templater:jinja]
+apply_dbt_builtins = True
+load_macros_from_path = macros
+
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.functions]
+extended_capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.literals]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.types]
+extended_capitalisation_policy = lower

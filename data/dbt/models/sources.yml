@@ -1,0 +1,43 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: >
+      Append-only CDC rows written by the Iceberg sink (deploy/platform/trino/base/bronze-tables.sql). Source columns
+      plus _op (c|u|d|r), _lsn, _source_ts_ms, _cdc_epoch, _ingested_at; every column is nullable because a delete
+      carries only the key.
+    database: lake
+    schema: bronze
+    config:
+      loaded_at_field: _ingested_at
+    tables:
+      - name: customers
+      - name: products
+      - name: orders
+      - name: order_items
+      - name: payments
+      - name: heartbeat
+        description: Updated every 10s by Debezium (heartbeat.action.query), so it keeps moving when the shop is idle.
+        config:
+          freshness:
+            warn_after: {count: 10, period: minute}
+            error_after: {count: 30, period: minute}
+
+  - name: pg_meta
+    description: CDC bookkeeping in Postgres (Alembic migration 0002), read through Trino catalog `pg`.
+    database: pg
+    schema: meta
+    tables:
+      - name: cdc_epochs
+        description: One row per CDC epoch; snapshot_completed_at is set by `scripts/cdc-epoch.sh wait`.
+
+  - name: pg_public
+    description: The shop tables in Postgres, read through Trino catalog `pg` for reconciliation only.
+    database: pg
+    schema: public
+    tables:
+      - name: customers
+      - name: products
+      - name: orders
+      - name: order_items
+      - name: payments
