@@ -1,0 +1,110 @@
+# Namespace envoy-gateway-system: the public edge. The Envoy proxy accepts HTTPS from anywhere (the load balancer
+# restricts sources: 127.0.0.1 locally, operatorCidr on AWS) and may only reach the shop gateway and its control
+# plane; the controller serves xDS to the proxies and talks to the API server.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: envoy-gateway-system
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: envoy-gateway-system
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: envoy-proxy
+  namespace: envoy-gateway-system
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: envoy}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # HTTPS listener (Gateway port 443 is container port 10443).
+    - ports:
+        - {protocol: TCP, port: 10443}
+    # Envoy metrics for Prometheus.
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: prometheus}
+      ports:
+        - {protocol: TCP, port: 19001}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: shop}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: gateway}
+      ports:
+        - {protocol: TCP, port: 8000}
+    - to:
+        - podSelector:
+            matchLabels: {control-plane: envoy-gateway}
+      ports:
+        - {protocol: TCP, port: 18000}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: envoy-gateway-controller
+  namespace: envoy-gateway-system
+spec:
+  podSelector:
+    matchLabels: {control-plane: envoy-gateway}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: envoy}
+      ports:
+        - {protocol: TCP, port: 18000}
+    # Topology-injector webhook, called by the API server (host network: no pod selector can match it).
+    - ports:
+        - {protocol: TCP, port: 9443}
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: prometheus}
+      ports:
+        - {protocol: TCP, port: 19001}
+  egress:
+    # API server (k3s: node IP:6443; EKS: 443).
+    - ports:
+        - {protocol: TCP, port: 6443}
+        - {protocol: TCP, port: 443}
+---
+# The chart's certgen Job (install hook) writes the controller's TLS Secret through the API server.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: certgen
+  namespace: envoy-gateway-system
+spec:
+  podSelector:
+    matchLabels: {app: certgen}
+  policyTypes: [Egress]
+  egress:
+    - ports:
+        - {protocol: TCP, port: 6443}
+        - {protocol: TCP, port: 443}
