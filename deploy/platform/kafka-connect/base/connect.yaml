@@ -12,7 +12,7 @@ metadata:
 spec:
   version: 4.3.1
   replicas: 1
-  # Published by connect-image.yml for 7a88771 (bump: tag + digest from that workflow's run summary).
+  # Published by data-images.yml (job kafka-connect) for 7a88771; bump tag + digest from that run's summary.
   image: ghcr.io/winthebest/shopflow-kafka-connect:sha-7a88771@sha256:107cd32357346f2e25bf0bb462ab1b218a14c385e09ee1599623178b333d763e
   bootstrapServers: shopflow-kafka-bootstrap:9093
   groupId: cdc-connect

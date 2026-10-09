@@ -24,7 +24,7 @@ binary of the Iceberg Kafka Connect runtime: it has to be compiled from source.
   so the arm64 image needs no emulation.
 
 `data-ci.yml` builds both platforms on pull requests that touch the image, with the Actions cache (the Iceberg
-stage only recompiles when its version/sha512 changes) and checks plugin discovery. `connect-image.yml` publishes
+stage only recompiles when its version/sha512 changes) and checks plugin discovery. `data-images.yml` (job `kafka-connect`) publishes
 `ghcr.io/<owner>/shopflow-kafka-connect:sha-<short>` on merge to main with a clean build (no Actions cache in a
 publishing workflow), actions pinned by SHA, no `id-token`. KafkaConnect uses `spec.image` pinned by digest.
 Signing and SBOM come with Phase 8, like the app images.

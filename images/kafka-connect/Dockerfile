@@ -1,5 +1,5 @@
 # Kafka Connect runtime for shopflow: Strimzi Kafka image + Debezium Postgres source + Iceberg sink.
-# Built and pushed by .github/workflows/connect-image.yml and used via KafkaConnect.spec.image (no spec.build,
+# Built and pushed by .github/workflows/data-images.yml and used via KafkaConnect.spec.image (no spec.build,
 # so the cluster never needs registry credentials). Versions are chosen in docs/adr/0400-*.md.
 #
 # Every downloaded artifact is checked against a sha512 pinned in this file, so a changed upstream file fails
