@@ -68,7 +68,7 @@ render() {
   fi
   if [[ -f "deploy/platform/$c/local/kustomization.yaml" ]]; then
     echo "---"
-    kubectl kustomize "deploy/platform/$c/local"
+    scripts/data-render-overlay.sh "deploy/platform/$c/local"
   fi
 }
 
@@ -145,7 +145,26 @@ check_cdc_contracts() { # rendered-kafka rendered-kafka-connect
   echo "CDC tables: data/contracts = Debezium = topics = sink = bronze DDL ($(echo "$contracts" | wc -l | tr -d ' ') tables, columns typed)"
 }
 
+# Secrets: every value in an sf-data *.enc.yaml is SOPS-encrypted (nothing in plaintext in git), and the in-cluster
+# copy script is identical in every component that ships it.
+check_secrets() {
+  local f plain
+  for f in $(find deploy/platform/{strimzi,kafka,kafka-connect,seaweedfs,iceberg-catalog,trino} -name '*.enc.yaml' 2> /dev/null); do
+    plain="$(yq '[(.stringData // {}), (.data // {})] | .[] | to_entries | .[] | select(.value | test("^ENC\\[") | not) | .key' "$f")"
+    if [[ -n "$plain" ]]; then
+      echo "FAIL $f: unencrypted keys: $plain" >&2
+      return 1
+    fi
+  done
+  if ! cmp -s deploy/platform/iceberg-catalog/base/copy-secret.py deploy/platform/trino/base/copy-secret.py; then
+    echo "FAIL copy-secret.py differs between iceberg-catalog and trino" >&2
+    return 1
+  fi
+  echo "secrets: all sf-data *.enc.yaml values encrypted; copy-secret.py identical"
+}
+
 generate_schemas
+check_secrets
 RENDER_DIR="$(mktemp -d)"
 trap 'rm -rf "$RENDER_DIR"' EXIT
 validated=0
