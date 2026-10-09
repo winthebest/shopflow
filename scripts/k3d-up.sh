@@ -34,8 +34,13 @@ preflight() {
   local profile
   IFS=',' read -ra PROFILE_LIST <<<"$PROFILES"
   for profile in "${PROFILE_LIST[@]}"; do
-    [[ -f "$ROOT_DIR/deploy/argocd/profiles/$profile/kustomization.yaml" ]] || die "unknown profile: $profile"
+    [[ "$profile" != _* && -f "$ROOT_DIR/deploy/argocd/profiles/$profile/kustomization.yaml" ]] \
+      || die "unknown profile: $profile"
   done
+  # obs and obs-lite both own the otel-gateway release (docs/contracts/gitops.md §4).
+  if [[ ",$PROFILES," == *",obs,"* && ",$PROFILES," == *",obs-lite,"* ]]; then
+    die "PROFILES cannot contain both obs and obs-lite; pick one"
+  fi
 
   # Argo CD reads Git from GitHub, not from this checkout, so the revision must be pushed.
   if [[ ! "$GIT_REVISION" =~ ^[0-9a-f]{40}$ ]]; then

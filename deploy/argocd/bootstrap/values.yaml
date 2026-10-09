@@ -81,6 +81,8 @@ repoServer:
       image: docker.io/viaductoss/ksops:v4.5.1@sha256:4def9fdd4e2f850265740ebe9592c5455d19b76891e88e602df8b52d74b95334
       command: ["/usr/local/bin/ksops", "install", "--with-kustomize", "/custom-tools"]
       securityContext:
+        # The image user is the non-numeric "nonroot"; use the Argo CD UID so runAsNonRoot can be verified.
+        runAsUser: 999
         runAsNonRoot: true
         readOnlyRootFilesystem: true
         allowPrivilegeEscalation: false

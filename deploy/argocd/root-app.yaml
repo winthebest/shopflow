@@ -3,7 +3,7 @@
 #   spec.source.path                -> deploy/argocd/profiles/<profile>
 #   spec.source.targetRevision      -> GIT_REVISION (main on sf-main, the lane branch on a lane cluster)
 #   the git-revision patch value    -> GIT_REVISION, copied into every child Application's Git sources
-#                                      by deploy/argocd/profiles/git-revision-replacement.yaml
+#                                      by the replacements block of each profile
 # The file is valid as-is (profile core, revision main), so CI validates it like any other manifest.
 apiVersion: argoproj.io/v1alpha1
 kind: Application

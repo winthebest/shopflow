@@ -1,0 +1,12 @@
+# Holds the Git revision that every child Application in a profile tracks. The root Application
+# (deploy/argocd/root-app.yaml) patches `data.revision`; each profile's replacements block copies it into
+# spec.sources.[repoURL=<this repo>].targetRevision of every Application.
+# local-config: used during the Kustomize build only, never applied to the cluster.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: git-revision
+  annotations:
+    config.kubernetes.io/local-config: "true"
+data:
+  revision: main
