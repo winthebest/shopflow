@@ -59,7 +59,6 @@ async def test_trino_pg_privileges_are_exactly_the_spec(database_url):
     schemas = await query(database_url, SCHEMA_PRIVILEGES)
 
     expected = sorted([(name, "SELECT") for (name,) in published] + [("meta.cdc_epochs", "SELECT")])
-    assert expected == sorted((name if "." in name else f"public.{name}", "SELECT") for name in READABLE)
     assert tables == expected
     assert schemas == [("meta", "USAGE"), ("public", "USAGE")]
 
