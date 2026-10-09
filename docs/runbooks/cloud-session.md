@@ -20,7 +20,7 @@ Each **approval** below is the user's, relayed by the orchestrator. Costs are es
 | 2 | GitHub: OIDC `sub` customization, variable `AWS_ACCOUNT_ID`, secret `ALERT_EMAIL` | user (repo admin) | 5 min | $0 | [GitHub settings](#github-settings-user-repository-admin) |
 | 3 | **Approval 1.** Layer 0 with the admin profile: local state → apply → migrate the state to S3. Confirm the SNS email. If the anomaly monitor already exists, reuse it | sf-cloud + user | ~15 min | ≈ $0.5/month from now on | [Bootstrap layer 0](#bootstrap-layer-0-first-time) |
 | 4 | **Approval 2.** Layer 1 with the operator profile | sf-cloud | ~3 min | $0 | same section |
-| 5 | Seed the secrets through pipes, never a file: `scripts/data-secrets.sh --aws-json \| make cloud-seed-params`; values only you know (the Discord webhook) with the silent prompt `make cloud-seed-params CLOUD_ARGS="--prompt observability/alertmanager-webhook --keys url"` | user | 10 min | $0 | [Bootstrap layer 0](#bootstrap-layer-0-first-time), end of section |
+| 5 | Seed the secrets through pipes, never a file: `scripts/platform-secrets.sh --aws-json \| make cloud-seed-params` and `scripts/data-secrets.sh --aws-json \| make cloud-seed-params`; values only you know (the Discord webhook, the Grafana login you choose) with the silent prompt | user | 10 min | $0 | [Bootstrap layer 0](#bootstrap-layer-0-first-time), end of section |
 | 6 | Arm the guards: uncomment the reaper cron (PR), run it once with `dry_run: true`, set `INFRA_PLAN_ENABLED=true` | sf-cloud + orchestrator | 10 min | $0 | [Kill switches](#kill-switches) |
 | 7 | `make cloud-up CLOUD_ARGS="--dry-run --profiles core,obs-lite"`: reads AWS, prints the plan, changes nothing | sf-cloud | 5 min | $0 | [Session lifecycle](#session-lifecycle) |
 | 8 | **Approval 3.** `make cloud-up CLOUD_ARGS="--profiles core,obs-lite"` (on AWS, `core` also runs External Secrets and the LB controller; `obs-lite` adds OpenCost), then the first-session checks | sf-cloud | 30–45 min to RTO | ≈ $0.30/h | [First-session checks](#first-session-checks) |
@@ -127,10 +127,12 @@ prompt: never a command line, and never a file (backups and sync tools such as T
 before it is deleted).
 
 ```sh
-# Generated values, with their groups (sf-data); the producer refuses to write to a terminal.
-scripts/data-secrets.sh --aws-json | make cloud-seed-params
-# A value only you know (e.g. the Discord webhook): asked without echo, one prompt per key.
+# Generated values; each producer refuses to write to a terminal.
+scripts/platform-secrets.sh --aws-json | make cloud-seed-params   # shop-db role passwords (sf-platform)
+scripts/data-secrets.sh --aws-json | make cloud-seed-params       # Trino secrets, with their group (sf-data)
+# Values only you know: asked without echo, one prompt per key.
 make cloud-seed-params CLOUD_ARGS="--prompt observability/alertmanager-webhook --keys url"
+make cloud-seed-params CLOUD_ARGS="--prompt observability/grafana-admin --keys admin-user,admin-password"
 # Replace existing values (and whole groups): add --rotate.
 scripts/data-secrets.sh --aws-json | make cloud-seed-params CLOUD_ARGS=--rotate
 ```
@@ -205,9 +207,9 @@ Secret written by a Job, an operator or cert-manager never gets an ExternalSecre
 
 | Secret | SSM parameter | Owner (aws overlay) | Notes |
 |---|---|---|---|
-| `observability/grafana-admin` (`admin-user`, `admin-password`) | `/shopflow/aws/observability/grafana-admin` | sf-sre, kube-prometheus-stack | |
+| `observability/grafana-admin` (`admin-user`, `admin-password`) | `/shopflow/aws/observability/grafana-admin` | sf-sre, kube-prometheus-stack | seeded with `--prompt` (the login you use) |
 | `observability/alertmanager-webhook` (`url`) | `/shopflow/aws/observability/alertmanager-webhook` | sf-sre, kube-prometheus-stack | seeded with `--prompt` |
-| `shop/shop-db-{debezium,trino-pg,airflow,flink-serving,grafana-serving}` (basic-auth; users `debezium`, `trino_pg`, `airflow`, `flink_serving`, `grafana_serving`) | `/shopflow/aws/shop/<name>` | sf-platform, shop-db chart | role passwords must keep their first values (the roles come back with every restored database); label `cnpg.io/reload` |
+| `shop/shop-db-{debezium,trino-pg,airflow,flink-serving,grafana-serving}` (basic-auth; users `debezium`, `trino_pg`, `airflow`, `flink_serving`, `grafana_serving`) | `/shopflow/aws/shop/<name>` | sf-platform, shop-db chart | `scripts/platform-secrets.sh`; role passwords must keep their first values (the roles come back with every restored database); label `cnpg.io/reload` |
 | `lakehouse/trino-internal` (`shared-secret`) | `/shopflow/aws/lakehouse/trino-internal` | sf-data, trino | |
 | `lakehouse/trino-dbt`, `lakehouse/trino-exporter` (`username`, `password`), `lakehouse/trino-password-db` (`password.db`) | `/shopflow/aws/lakehouse/<name>` | sf-data, trino | one seed group: the bcrypt file must match both passwords |
 
