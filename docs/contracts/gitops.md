@@ -110,9 +110,13 @@ Config that belongs to one controller may instead live inside that controller's 
   - Read in place when the consumer can: Strimzi reads `shop/shop-db-debezium` through
     `KubernetesSecretConfigProvider`; a Role in `shop` grants `get` on that one Secret (`resourceNames`) to the
     consumer's ServiceAccount. The Role/RoleBinding belong to the consumer component.
-  - Otherwise (env from a same-namespace Secret, e.g. Polaris, Trino) the consumer's owner derives its own SOPS file
-    from the origin in a pipe: `sops -d <origin> | yq '<new name/namespace/keys>' | sops -e --filename-override <dest>
-    /dev/stdin > <dest>`. Never displayed, never written in plaintext; re-derive when the origin rotates.
+  - Otherwise (env from a same-namespace Secret, e.g. Polaris, Trino) an in-cluster copy Job owned by the consumer
+    component reads the origin (Role in the origin namespace: `get` with `resourceNames`) and writes the copy in its
+    own namespace (Role: `create`, plus `get`/`update` with `resourceNames`), in a sync wave before the consumer and
+    re-run on every sync. No second copy in git, no drift on rotation.
+- Lanes never decrypt with the user's age private key (`sops -d`, KSOPS builds on a laptop). Encrypting new SOPS
+  files needs only the public recipient in `.sops.yaml`. The only decryption outside the cluster is the bootstrap in
+  `make up` (ADR 0204); anything else needs the user's approval through the orchestrator.
 - Generated values (passwords) are random at creation time. Values only the user knows (for example a chat
   webhook URL) start as a clearly marked placeholder; the user replaces them with `sops <file>` later.
 - Known secrets (name → keys):
