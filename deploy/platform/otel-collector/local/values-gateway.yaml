@@ -1,0 +1,2 @@
+# Local (k3d) overrides for the gateway release. Base values already fit a single-node lab.
+{}

@@ -1,0 +1,8 @@
+# Profile obs-lite: no Tempo. The gateway still receives every span (apps keep the same endpoint) so the
+# spanmetrics connector keeps producing the checkout SLIs; traces are dropped after metrics are derived.
+# (The unused otlp_grpc/tempo exporter stays defined; the Collector only builds components used by a pipeline.)
+config:
+  service:
+    pipelines:
+      traces:
+        exporters: [span_metrics]

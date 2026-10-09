@@ -1,0 +1,22 @@
+# Tempo 3 single binary (local filesystem backend). Receives OTLP gRPC from otel-gateway only.
+# Span metrics come from the Collector (span_metrics connector), so Tempo's metrics-generator stays off.
+# Chart: grafana-community/tempo (the OSS chart moved out of grafana/helm-charts in 2026; docs/adr/0302-*).
+fullnameOverride: tempo
+
+tempo:
+  # The chart has no digest field; the tag is used verbatim after "repo:", so tag@digest pins the image.
+  tag: "3.1.0@sha256:3076b8dcdfb32fd6bc5ccef85e7b7313e6199b9cb84366257fc17ecb696db5fd"
+  reportingEnabled: false
+  metricsGenerator:
+    enabled: false
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities: {drop: [ALL]}
+    seccompProfile: {type: RuntimeDefault}

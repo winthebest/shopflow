@@ -1,0 +1,171 @@
+# kube-prometheus-stack: Prometheus 3 (+ native OTLP receiver), Alertmanager, Grafana, node-exporter,
+# kube-state-metrics. Environment-neutral settings; sizing/retention live in the overlay values.
+# Images are pinned by digest (multi-arch index). Chart version is pinned in deploy/argocd/apps/.
+fullnameOverride: kps
+
+crds:
+  enabled: true
+
+# Control-plane components are not scrapeable on k3s (embedded) nor on EKS (managed).
+kubeEtcd: {enabled: false}
+kubeControllerManager: {enabled: false}
+kubeScheduler: {enabled: false}
+kubeProxy: {enabled: false}
+defaultRules:
+  rules:
+    etcd: false
+    kubeControllerManager: false
+    kubeSchedulerAlerting: false
+    kubeSchedulerRecording: false
+    kubeProxy: false
+    windows: false
+
+prometheusOperator:
+  image:
+    tag: v0.94.1
+    sha: 7c88d4e7bae63bd8d0f8da986054337c23b4472fa8d3c6817f5bc4b8407a2d6a
+  prometheusConfigReloader:
+    image:
+      tag: v0.94.1
+      sha: 06b52bd4dbe3ed6dd5905aadaf8b9987d9da4c31d37bb86deaadae68cee2d26b
+  # Only the operator's --thanos-default-base-image flag (no Thanos is deployed); pinned so no image ref is a tag.
+  thanosImage:
+    tag: v0.42.4
+    sha: b567818fe608067eb0f1d7c2c4fe361e7ad83c8a256234c97685f1d0bf670cc8
+  # No admission webhook (and no cert-gen hook Jobs): PrometheusRules are validated in CI with promtool
+  # (make sre-rules-check), and Argo CD would otherwise fight the webhook caBundle patched at runtime.
+  admissionWebhooks:
+    enabled: false
+
+prometheus:
+  prometheusSpec:
+    # aws overlay (Phase 6), not here: enableAdminAPI: true for TSDB snapshots by scripts/export-evidence.sh
+    # (sf-cloud). Local stays off; Prometheus is never exposed (port-forward / in-cluster Job only).
+    image:
+      tag: v3.15.0-distroless
+      sha: b2a413d5a03ea6a76782a508d1c7947440bba3b973931a25676e278431891b01
+    # The OTel gateway pushes metrics to /api/v1/otlp/v1/metrics (docs/adr/0301-otel-collector-single-pipeline.md).
+    enableOTLPReceiver: true
+    otlp:
+      # Pinned explicitly: SLO queries (slo/checkout.yaml) depend on these metric/label names,
+      # e.g. traces.span.metrics.duration (unit s) → traces_span_metrics_duration_seconds_bucket.
+      translationStrategy: UnderscoreEscapingWithSuffixes
+    # Exemplars carry trace_id from the spanmetrics histograms → Grafana "metric → trace".
+    enableFeatures: [exemplar-storage]
+    exemplars:
+      maxSize: 100000
+    tsdb:
+      # OTLP pushes can arrive slightly out of order (batching, retries).
+      outOfOrderTimeWindow: 30m
+    # Pick up PrometheusRule/ServiceMonitor/PodMonitor from every namespace, not only this Helm release.
+    ruleSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    scrapeConfigSelectorNilUsesHelmValues: false
+
+alertmanager:
+  alertmanagerSpec:
+    image:
+      tag: v0.34.1
+      sha: e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a
+    # Secret alertmanager-webhook (key url) is mounted at /etc/alertmanager/secrets/alertmanager-webhook/url.
+    # The URL never appears in values or in the rendered config (docs/contracts/gitops.md §5).
+    secrets: [alertmanager-webhook]
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      receiver: "null"
+      group_by: [alertname, sloth_slo, namespace]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 12h
+      routes:
+        - receiver: "null"
+          matchers: ['alertname = "Watchdog"']
+        # shopflow SLO alerts: page = act now, ticket = next working session.
+        - receiver: discord
+          matchers: ['severity = "page"']
+          repeat_interval: 1h
+        - receiver: discord
+          matchers: ['severity = "ticket"']
+          group_interval: 30m
+          repeat_interval: 24h
+        # Upstream kube-prometheus rules: only critical ones notify; warnings stay in Grafana/Alertmanager UI.
+        - receiver: discord
+          matchers: ['severity = "critical"']
+    inhibit_rules:
+      # A firing page silences the ticket of the same SLO.
+      - source_matchers: ['severity = "page"']
+        target_matchers: ['severity = "ticket"']
+        equal: [sloth_id]
+      - source_matchers: ['severity = "critical"']
+        target_matchers: ['severity =~ "warning|info"']
+        equal: [namespace, alertname]
+      - source_matchers: ['alertname = "InfoInhibitor"']
+        target_matchers: ['severity = "info"']
+        equal: [namespace]
+    receivers:
+      - name: "null"
+      - name: discord
+        discord_configs:
+          - webhook_url_file: /etc/alertmanager/secrets/alertmanager-webhook/url
+            send_resolved: true
+            title: '{{ template "shopflow.title" . }}'
+            message: '{{ template "shopflow.message" . }}'
+    templates:
+      - /etc/alertmanager/config/*.tmpl
+  templateFiles:
+    shopflow.tmpl: |-
+      {{ define "shopflow.title" }}[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }}){{ end }}
+      {{ define "shopflow.message" }}{{ range .Alerts }}• {{ or .Annotations.title .Annotations.summary .Annotations.description }}
+        runbook: {{ or .Annotations.runbook_url "n/a" }}
+      {{ end }}{{ end }}
+
+grafana:
+  image:
+    tag: 13.2.3-distroless
+    sha: 202e5d5b3f8499e70ccac7991eea6d7da72d2790eb2e0597e7987acf724e7180
+  # Admin credentials come from the SOPS-encrypted Secret grafana-admin (never the chart default).
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  testFramework:
+    enabled: false
+  grafana.ini:
+    analytics:
+      reporting_enabled: false
+      check_for_updates: false
+    users:
+      allow_sign_up: false
+    auth.anonymous:
+      enabled: false
+  sidecar:
+    image:
+      tag: 2.14.1
+      sha: 092dbe0c335fba9af414a27630ca68f34df6185784fa847d9954187e69dbfdd7
+    dashboards:
+      # Dashboards as code: ConfigMaps labelled grafana_dashboard=1 (deploy/platform/grafana-dashboards/).
+      folderAnnotation: grafana_folder
+      provider:
+        foldersFromFilesStructure: true
+    datasources:
+      # Prometheus datasource uid=prometheus (default). Loki/Tempo datasources ship with their own
+      # components (ConfigMaps labelled grafana_datasource=1), so obs-lite has no dangling datasources.
+      uid: prometheus
+      exemplarTraceIdDestinations:
+        datasourceUid: tempo
+        traceIdLabelName: trace_id
+        urlDisplayLabel: View trace
+
+kube-state-metrics:
+  image:
+    tag: v2.20.0
+    sha: sha256:42cfe3723a5f058171c627537fb57a3ea0f26e4380fa18555a95cb1a1b4cfc5b  # this subchart expects the sha256: prefix
+
+prometheus-node-exporter:
+  image:
+    tag: v1.12.1  # the chart appends -distroless
+    digest: sha256:8c9bac11973b94b59be88d6e11fee4429aa743c8846cdc75d65b18db33f6a106

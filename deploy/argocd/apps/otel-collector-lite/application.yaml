@@ -1,0 +1,36 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: otel-collector-lite
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: shopflow
+    shopflow.io/profile: obs-lite
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  sources:
+    - repoURL: https://open-telemetry.github.io/opentelemetry-helm-charts
+      chart: opentelemetry-collector
+      targetRevision: 0.175.1
+      helm:
+        releaseName: otel-gateway
+        valueFiles:
+          - $values/deploy/platform/otel-collector/base/values-gateway.yaml
+          - $values/deploy/platform/otel-collector/local/values-gateway.yaml
+          - $values/deploy/platform/otel-collector/base/values-gateway-lite.yaml
+    - repoURL: https://github.com/winthebest/shopflow.git
+      targetRevision: main
+      ref: values
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

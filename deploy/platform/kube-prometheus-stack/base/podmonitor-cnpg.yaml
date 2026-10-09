@@ -1,0 +1,20 @@
+# Scrapes the CloudNativePG instance exporter (port "metrics", 9187) of every CNPG cluster in namespace
+# shop (shop-db). Feeds the CNPG dashboard (deploy/platform/grafana-dashboards/). The NetworkPolicy flow
+# observability → shop:9187 is listed in docs/contracts/environment.md.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: cnpg-shop
+  namespace: observability
+  annotations:
+    # The PodMonitor CRD is installed by this same Application.
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  namespaceSelector:
+    matchNames: [shop]
+  selector:
+    matchExpressions:
+      - {key: cnpg.io/cluster, operator: Exists}
+      - {key: cnpg.io/podRole, operator: In, values: [instance]}
+  podMetricsEndpoints:
+    - port: metrics
