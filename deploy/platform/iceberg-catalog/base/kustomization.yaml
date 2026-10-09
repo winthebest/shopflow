@@ -3,6 +3,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
+  - secret-copy.yaml
   - setup-jobs.yaml
   - rbac.yaml
 configMapGenerator:
@@ -10,3 +11,10 @@ configMapGenerator:
     namespace: lakehouse
     files:
       - polaris-setup.py
+  - name: polaris-db-copy-script
+    namespace: lakehouse
+    files:
+      - copy-secret.py
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-2"
