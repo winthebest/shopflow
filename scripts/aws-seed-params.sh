@@ -7,6 +7,12 @@
 #    "lakehouse": {"trino-exporter": {"password": "..."}}}
 # A value is a string (stored as is) or an object of strings (one Kubernetes Secret with several keys, stored as
 # compact JSON; the ExternalSecret reads each key as a property). See deploy/platform/external-secrets/aws.
+#
+# Atomic groups: values that must match each other (a password and the bcrypt hash of it in another Secret) are
+# declared by the producer under "_groups", as lists of "<namespace>/<name>":
+#   {"_groups": [["lakehouse/trino-dbt", "lakehouse/trino-password-db"]], "lakehouse": {...}}
+# A group is written as a whole or not at all: if SSM already holds only part of a group and --rotate is not
+# given, the run stops before writing anything (a new hash would no longer match the kept password).
 # Idempotent: existing parameters are left alone unless --rotate, which overwrites the ones given.
 # Values are never printed and never passed on a command line.
 set -euo pipefail
@@ -43,18 +49,39 @@ main() {
   input="$(cat)"
   jq -e 'def value: (type == "string" and length > 0)
                      or (type == "object" and length > 0 and all(.[]; type == "string" and length > 0));
-         type == "object" and all(.[]; type == "object" and all(.[]; value))' <<<"$input" >/dev/null ||
-    die "stdin must be {\"<namespace>\": {\"<name>\": \"<value>\" or {\"<key>\": \"<value>\"}}} with non-empty strings"
-  local bad
+         type == "object" and ((._groups // []) | type == "array" and all(.[]; type == "array" and length > 1
+           and all(.[]; type == "string")))
+         and (del(._groups) | all(.[]; type == "object" and all(.[]; value)))' <<<"$input" >/dev/null ||
+    die "stdin must be {\"<namespace>\": {\"<name>\": \"<value>\" or {\"<key>\": \"<value>\"}}, \"_groups\": [[\"<ns>/<name>\", ...]]} with non-empty strings"
+  local entries bad
+  entries="$(jq -c 'del(._groups)' <<<"$input")"
   bad="$(jq -r --argjson allowed "$(jq -c .eso_namespaces "$CONTRACT")" \
-    'to_entries[] | .key as $ns | if ($allowed | any(. == $ns)) | not then "namespace \($ns) is not in eso_namespaces" else (.value | keys[] | select(test("^[A-Za-z0-9_.-]+$") | not) | "name \($ns)/\(.) has invalid characters") end' <<<"$input")"
+    'to_entries[] | .key as $ns | if ($allowed | any(. == $ns)) | not then "namespace \($ns) is not in eso_namespaces" else (.value | keys[] | select(test("^[A-Za-z0-9_.-]+$") | not) | "name \($ns)/\(.) has invalid characters") end' <<<"$entries")"
+  [ -z "$bad" ] || die "$bad"
+  bad="$(jq -r '[del(._groups) | to_entries[] | .key as $ns | .value | keys[] | "\($ns)/\(.)"] as $given
+    | (._groups // [])[][] | select(. as $m | $given | index($m) | not) | "group member \(.) is not in the input"' <<<"$input")"
   [ -z "$bad" ] || die "$bad"
 
   require_role "$OPERATOR_ROLE"
-  local ns name path created=0 rotated=0 kept=0
+
+  # Plan: which parameters exist already. Nothing is written until every group is known to be consistent.
+  local ns name existing=""
+  while IFS=$'\t' read -r ns name; do
+    if parameter_exists "$SSM_PREFIX/$ns/$name"; then existing="$existing$ns/$name"$'\n'; fi
+  done < <(jq -r 'to_entries[] | .key as $ns | .value | keys[] | [$ns, .] | @tsv' <<<"$entries")
+  local partial
+  partial="$(jq -r --argjson have "$(printf '%s' "$existing" | jq -R -s -c 'split("\n") | map(select(length > 0))')" \
+    '(._groups // [])[] | . as $group | [.[] | select(. as $m | $have | index($m))] as $present
+     | select(($present | length) > 0 and ($present | length) < ($group | length))
+     | "group [\($group | join(", "))]: only \($present | join(", ")) exist"' <<<"$input")"
+  if [ -n "$partial" ] && [ "$rotate" = 0 ]; then
+    die "partially seeded group(s), nothing was written. Re-run with --rotate to replace the whole group:"$'\n'"$partial"
+  fi
+
+  local path created=0 rotated=0 kept=0
   while IFS=$'\t' read -r ns name; do
     path="$SSM_PREFIX/$ns/$name"
-    if parameter_exists "$path"; then
+    if printf '%s' "$existing" | grep -qxF "$ns/$name"; then
       if [ "$rotate" = 0 ]; then
         log "keep    $path (exists; --rotate to overwrite)"
         kept=$((kept + 1))
@@ -63,7 +90,7 @@ main() {
       if dry_run; then log "DRY-RUN: would overwrite $path (SecureString)"; else
         jq -c --arg ns "$ns" --arg name "$name" --arg path "$path" \
           '{Name: $path, Value: (.[$ns][$name] | if type == "object" then tojson else . end), Type: "SecureString",
-            KeyId: "alias/aws/ssm", Overwrite: true}' <<<"$input" |
+            KeyId: "alias/aws/ssm", Overwrite: true}' <<<"$entries" |
           aws_ ssm put-parameter --cli-input-json file:///dev/stdin >/dev/null
       fi
       log "rotated $path"
@@ -72,13 +99,13 @@ main() {
       if dry_run; then log "DRY-RUN: would create $path (SecureString)"; else
         jq -c --arg ns "$ns" --arg name "$name" --arg path "$path" --arg project "$PROJECT" \
           '{Name: $path, Value: (.[$ns][$name] | if type == "object" then tojson else . end), Type: "SecureString",
-            KeyId: "alias/aws/ssm", Tags: [{Key: "project", Value: $project}]}' <<<"$input" |
+            KeyId: "alias/aws/ssm", Tags: [{Key: "project", Value: $project}]}' <<<"$entries" |
           aws_ ssm put-parameter --cli-input-json file:///dev/stdin >/dev/null
       fi
       log "created $path"
       created=$((created + 1))
     fi
-  done < <(jq -r 'to_entries[] | .key as $ns | .value | keys[] | [$ns, .] | @tsv' <<<"$input")
+  done < <(jq -r 'to_entries[] | .key as $ns | .value | keys[] | [$ns, .] | @tsv' <<<"$entries")
   log "done: $created created, $rotated rotated, $kept kept"
 }
 

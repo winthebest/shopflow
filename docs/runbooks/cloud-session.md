@@ -102,7 +102,13 @@ Secrets for External Secrets (SecureString, never on a command line):
 ```sh
 make cloud-seed-params < secrets.json                  # {"<namespace>": {"<name>": "<value>" or {"<key>": "<value>"}}}
 make cloud-seed-params CLOUD_ARGS=--rotate < new.json  # overwrite the ones given
+scripts/data-secrets.sh --aws-json | scripts/aws-seed-params.sh   # sf-data's secrets, with their groups
 ```
+
+Values that must match each other (a password and the bcrypt hash of it in another Secret) are declared by the
+producer as a group, `"_groups": [["lakehouse/trino-dbt", "lakehouse/trino-password-db"]]`. A group is written
+whole or not at all: if SSM holds only part of it and `--rotate` is not given, the script stops before writing any
+parameter.
 
 ## Session lifecycle
 
