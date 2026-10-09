@@ -14,7 +14,12 @@
 | `sf-data` | sf-data | 6553 | 8445 |
 | `sf-app` | sf-app | 6554 | 8446 |
 
-- `docker-compose.yml` (sf-app dev loop): Postgres on host port **25432** (15432 belongs to incident-lab).
+- Host ports for docker compose stacks (bind to `127.0.0.1` only). Lanes declare new host ports here before using them:
+
+| Port | Stack | Owner |
+|---|---|---|
+| 25432 | `docker-compose.yml` Postgres (15432 belongs to incident-lab) | sf-app |
+| 8000 | `docker-compose.yml` gateway | sf-app |
 - Cluster creation scripts take the cluster name and ports as parameters (default `sf-main`).
 
 ## Namespaces
@@ -62,3 +67,12 @@ are a hand-set constant of `7d`, never derived from policy files and never `0s`.
 - No plaintext secrets in git; gitleaks runs in pre-commit and CI.
 - AWS (Phase 6): SSM Parameter Store via External Secrets Operator. Only `sf-cloud` touches AWS, and only after the
   user approves each session through the orchestrator.
+
+## Make targets
+
+- Each lane defines targets only in its own `mk/<lane>.mk`.
+- Public targets named in the plan/README keep their short names and belong to one lane:
+  `dev`, `dev-down`, `dev-reset`, `dev-logs` (sf-app); `up`, `down`, `status` (sf-platform);
+  `cloud-up`, `cloud-down`, `cloud-pause`, `cloud-resume`, `cloud-extend` (sf-cloud); `duckdb` (sf-data).
+- Every other target is prefixed with the lane: `app-*`, `platform-*`, `sre-*`, `data-*`, `cloud-*`.
+- Each target has a `## description` comment so `make help` lists it.
