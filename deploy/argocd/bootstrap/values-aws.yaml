@@ -1,0 +1,13 @@
+# Argo CD on EKS: scripts/cloud-up.sh (sf-cloud) installs the chart with values.yaml and then this file.
+# There is no SOPS/age key on AWS: secrets come from SSM through External Secrets (ADR 0204, gitops.md §5), so the
+# KSOPS plugin, its init container, the age key mount and Kustomize exec plugins are all off. Helm replaces lists,
+# so the empty lists below remove the local entries.
+configs:
+  cm:
+    kustomize.buildOptions: ""
+
+repoServer:
+  initContainers: []
+  volumes: []
+  volumeMounts: []
+  env: []

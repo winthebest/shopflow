@@ -25,7 +25,7 @@ K3S_IMAGE="rancher/k3s:v1.35.5-k3s1@sha256:2074403abe1bded11ef3dde09d457e13be8e0
 ARGOCD_CHART_FILE="$ROOT_DIR/deploy/argocd/bootstrap/argocd-chart.yaml"
 ARGOCD_VALUES="$ROOT_DIR/deploy/argocd/bootstrap/values.yaml"
 ARGOCD_ADMIN_SECRET="$ROOT_DIR/deploy/secrets/local/argocd-admin.enc.yaml"
-ROOT_APP_TEMPLATE="$ROOT_DIR/deploy/argocd/root-app.yaml"
+ROOT_APPS="$ROOT_DIR/scripts/platform-root-apps.sh"
 
 has_profile() { [[ ",$PROFILES," == *",$1,"* ]]; }
 
@@ -35,20 +35,8 @@ preflight() {
   [[ -r "$SOPS_AGE_KEY_FILE" ]] || die "age key not found at $SOPS_AGE_KEY_FILE (docs/runbooks/local-platform.md)"
   sops -d "$ARGOCD_ADMIN_SECRET" >/dev/null 2>&1 || die "cannot decrypt $ARGOCD_ADMIN_SECRET with $SOPS_AGE_KEY_FILE"
 
-  local profile
-  IFS=',' read -ra PROFILE_LIST <<<"$PROFILES"
-  for profile in "${PROFILE_LIST[@]}"; do
-    [[ "$profile" != _* && -f "$ROOT_DIR/deploy/argocd/profiles/$profile/kustomization.yaml" ]] \
-      || die "unknown profile: $profile"
-  done
-  # obs and obs-lite both own the otel-gateway release; data's ServiceMonitors and rules need the CRDs that
-  # either of them installs (docs/contracts/gitops.md §4).
-  if has_profile obs && has_profile obs-lite; then
-    die "PROFILES cannot contain both obs and obs-lite; pick one"
-  fi
-  if has_profile data && ! has_profile obs && ! has_profile obs-lite; then
-    die "profile data needs obs or obs-lite in the same PROFILES (e.g. PROFILES=core,obs-lite,data)"
-  fi
+  # Profile rules (exclusive obs/obs-lite, data needs obs*) live in the shared root-app script.
+  "$ROOT_APPS" --check --overlay local --revision "$GIT_REVISION" --profiles "$PROFILES"
 
   # Argo CD reads Git from GitHub, not from this checkout, so the revision must be pushed. Resolve it to the
   # commit SHA that every Application must report before `make up` calls the cluster ready.
@@ -160,33 +148,6 @@ install_argocd() {
     --wait --timeout 10m >/dev/null
 }
 
-# Application names a profile deploys (from the local checkout of its kustomization).
-profile_apps() {
-  kubectl kustomize "$ROOT_DIR/deploy/argocd/profiles/$1" | yq -N 'select(.kind == "Application") | .metadata.name'
-}
-
-# obs and obs-lite are exclusive. When PROFILES asks for one and the cluster still runs the other, delete the old
-# root app first (non-cascading, so it cannot re-create anything), then the child apps only it had (their own
-# finalizers remove their resources). Apps both profiles share stay running and are adopted by the new root app.
-remove_excluded_profiles() {
-  local pair wanted excluded keep app
-  for pair in "obs obs-lite" "obs-lite obs"; do
-    read -r wanted excluded <<<"$pair"
-    has_profile "$wanted" || continue
-    kc -n argocd get applications.argoproj.io "root-$excluded" >/dev/null 2>&1 || continue
-    log "PROFILES has $wanted: removing root-$excluded and the apps only it deploys"
-    keep="$(for profile in "${PROFILE_LIST[@]}"; do profile_apps "$profile"; done)"
-    # Drop any resources finalizer first: deleting the root app must never cascade into the shared apps.
-    kc -n argocd patch applications.argoproj.io "root-$excluded" --type merge -p '{"metadata":{"finalizers":null}}' >/dev/null
-    kc -n argocd delete applications.argoproj.io "root-$excluded" --cascade=orphan --wait=true --timeout=120s >/dev/null
-    for app in $(profile_apps "$excluded"); do
-      grep -qxF "$app" <<<"$keep" && continue
-      log "  deleting app $app (only in $excluded)"
-      kc -n argocd delete applications.argoproj.io "$app" --ignore-not-found --wait=true --timeout=300s >/dev/null
-    done
-  done
-}
-
 # Profile data: start a new CDC epoch right after the root apps (sf-data's scripts/cdc-epoch.sh, ADR 0406). It waits
 # for the Strimzi CRDs itself and prints the epoch number.
 start_cdc_epoch() {
@@ -197,27 +158,9 @@ start_cdc_epoch() {
   log "CDC epoch $epoch started"
 }
 
+# One root app per profile, through the mechanism cloud-up uses too (scripts/platform-root-apps.sh, ADR 0206).
 apply_root_apps() {
-  local profile
-  remove_excluded_profiles
-  for profile in "${PROFILE_LIST[@]}"; do
-    log "root app: root-$profile -> deploy/argocd/profiles/$profile @ $GIT_REVISION"
-    PROFILE="$profile" REVISION="$GIT_REVISION" yq '
-      .metadata.name = "root-" + strenv(PROFILE) |
-      .metadata.labels."shopflow.io/profile" = strenv(PROFILE) |
-      .spec.source.path = "deploy/argocd/profiles/" + strenv(PROFILE) |
-      .spec.source.targetRevision = strenv(REVISION) |
-      .spec.source.kustomize.patches[0].patch =
-        "- op: replace\n  path: /data/revision\n  value: \"" + strenv(REVISION) + "\""
-    ' "$ROOT_APP_TEMPLATE" | kc apply -f - >/dev/null
-    # Reconcile now instead of at the next poll, so the new revision is picked up right away.
-    kc -n argocd annotate applications.argoproj.io "root-$profile" argocd.argoproj.io/refresh=normal --overwrite >/dev/null
-  done
-  # Root apps of profiles that are no longer requested keep running; say so instead of deleting them silently.
-  local extra
-  extra="$(kc -n argocd get applications.argoproj.io -o name | sed -n 's|.*/root-||p' \
-    | grep -vxF -f <(printf '%s\n' "${PROFILE_LIST[@]}") || true)"
-  [[ -z "$extra" ]] || log "warning: root apps for other profiles still exist: $(echo "$extra" | tr '\n' ' ')"
+  KUBE_CONTEXT="$KUBE_CONTEXT" "$ROOT_APPS" --overlay local --revision "$GIT_REVISION" --profiles "$PROFILES"
 }
 
 # name, sync, health, and whether the app has synced TARGET_SHA or a later commit (stale status from the

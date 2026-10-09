@@ -49,22 +49,39 @@ done < <(find "$WORK/deploy" -name kustomization.yaml)
 
 build() { kubectl kustomize "$1"; }
 
-# 1. Profiles: simulate the root app's patch and require every shopflow source to follow it.
-for profile_dir in "$WORK"/deploy/argocd/profiles/*/; do
+# 1. Profiles: simulate the root app's patches and require every shopflow source to follow the revision. aws
+#    profiles also get every declared session param (dummy values), so their replacements must resolve.
+PARAMS_FILE="$WORK/deploy/argocd/profiles/_common/platform-params.yaml"
+params_patch="$(yq -o=json '.data | keys | map({"op": "add", "path": "/data/" + ., "value": "validate-" + .})' "$PARAMS_FILE" | jq -c .)"
+for profile_dir in "$WORK"/deploy/argocd/profiles/*/ "$WORK"/deploy/argocd/profiles-aws/*/; do
+  [[ -d "$profile_dir" ]] || continue
   profile="$(basename "$profile_dir")"
   [[ "$profile" == _* ]] && continue
+  overlay=local
+  [[ "$profile_dir" == */profiles-aws/* ]] && overlay=aws
   REVISION="$CHECK_REVISION" yq -i '.patches += [{
     "target": {"kind": "ConfigMap", "name": "git-revision"},
     "patch": "- op: replace\n  path: /data/revision\n  value: " + strenv(REVISION)
   }]' "$profile_dir/kustomization.yaml"
-  build "$profile_dir" > "$OUT_DIR/profile-$profile.yaml" || fail "profile $profile does not build"
+  if [[ "$overlay" == aws ]]; then
+    PATCH="$params_patch" yq -i '.patches += [{"target": {"kind": "ConfigMap", "name": "platform-params"}, "patch": strenv(PATCH)}]' \
+      "$profile_dir/kustomization.yaml"
+  fi
+  # Every param a profile reads must be declared (a typo would otherwise copy nothing and keep a chart default).
+  for key in $(yq '.replacements[]? | select(.source.name == "platform-params") | .source.fieldPath' "$profile_dir/kustomization.yaml" \
+    | sed -n 's/^data\.\[\(.*\)\]$/\1/p'); do
+    KEY="$key" yq -e '.data | has(strenv(KEY))' "$PARAMS_FILE" >/dev/null 2>&1 \
+      || fail "profile $overlay/$profile reads undeclared param $key"
+  done
+  out="$OUT_DIR/profile-$overlay-$profile.yaml"
+  build "$profile_dir" > "$out" || fail "profile $overlay/$profile does not build"
   stale="$(REPO="$REPO_URL" REVISION="$CHECK_REVISION" yq -N '
     select(.kind == "Application")
     | select([.spec.sources[] | select((.repoURL == strenv(REPO)) and (.targetRevision != strenv(REVISION)))] | length > 0)
     | .metadata.name
-  ' "$OUT_DIR/profile-$profile.yaml")"
-  [[ -z "$stale" ]] || fail "profile $profile: these apps ignore the root revision: $stale"
-  echo "profile $profile: $(yq -N 'select(.kind == "Application") | .metadata.name' "$OUT_DIR/profile-$profile.yaml" | wc -l | tr -d ' ') apps follow the root revision"
+  ' "$out")"
+  [[ -z "$stale" ]] || fail "profile $overlay/$profile: these apps ignore the root revision: $stale"
+  echo "profile $overlay/$profile: $(yq -N 'select(.kind == "Application") | .metadata.name' "$out" | wc -l | tr -d ' ') apps follow the root revision"
 done
 
 # 2. Render each source of an Application the way Argo CD would.
@@ -104,28 +121,40 @@ render_path() { # app_file index name namespace
   fi
 }
 
-for app_dir in "$WORK"/deploy/argocd/apps/*/; do
-  build "$app_dir" > "$WORK/apps.yaml" || fail "$(basename "$app_dir"): app does not build"
-  count="$(yq -N 'select(.kind == "Application") | .metadata.name' "$WORK/apps.yaml" | wc -l | tr -d ' ')"
+# render_apps <file with Applications> <output prefix>: one output file per Application, its sources rendered.
+render_apps() {
+  local apps="$1" prefix="$2" count doc app name ns out sources i
+  count="$(yq -N 'select(.kind == "Application") | .metadata.name' "$apps" | wc -l | tr -d ' ')"
   for ((doc = 0; doc < count; doc++)); do
     app="$WORK/app-$doc.yaml"
-    DOC="$doc" yq ea -N '[select(.kind == "Application")] | .[env(DOC)]' "$WORK/apps.yaml" > "$app"
+    DOC="$doc" yq ea -N '[select(.kind == "Application")] | .[env(DOC)]' "$apps" > "$app"
     name="$(yq '.metadata.name' "$app")"
     ns="$(yq '.spec.destination.namespace // "default"' "$app")"
     [[ "$(yq '.spec | has("source")' "$app")" == "false" ]] || fail "$name: use spec.sources (a list), not spec.source"
-    out="$OUT_DIR/app-$name.yaml"
+    out="$OUT_DIR/$prefix$name.yaml"
+    [[ -f "$out" ]] && continue
     cp "$app" "$out"
     sources="$(yq '.spec.sources | length' "$app")"
     for ((i = 0; i < sources; i++)); do
       echo "---" >> "$out"
       if [[ "$(yq ".spec.sources[$i].chart // \"\"" "$app")" != "" ]]; then
-        render_chart "$app" "$i" "$name" "$ns" >> "$out" || fail "$name: chart source $i does not render"
+        render_chart "$app" "$i" "$name" "$ns" >> "$out" || fail "$prefix$name: chart source $i does not render"
       elif [[ "$(yq ".spec.sources[$i].path // \"\"" "$app")" != "" ]]; then
-        render_path "$app" "$i" "$name" "$ns" >> "$out" || fail "$name: path source $i does not render"
+        render_path "$app" "$i" "$name" "$ns" >> "$out" || fail "$prefix$name: path source $i does not render"
       fi
     done
-    echo "app $name: rendered $sources source(s)"
+    echo "app $prefix$name: rendered $sources source(s)"
   done
+}
+
+# Local apps straight from their directories (also those no profile lists yet).
+for app_dir in "$WORK"/deploy/argocd/apps/*/; do
+  build "$app_dir" > "$WORK/apps.yaml" || fail "$(basename "$app_dir"): app does not build"
+  render_apps "$WORK/apps.yaml" "app-"
+done
+# aws apps as their aws profiles produce them (variants from apps-aws/, session params filled in).
+for out in "$OUT_DIR"/profile-aws-*.yaml; do
+  [[ -f "$out" ]] && render_apps "$out" "app-aws-"
 done
 
 # Argo CD bootstrap chart (installed by k3d-up.sh) and the root app template.
@@ -134,8 +163,16 @@ helm template argocd "$(yq '.chart' "$ROOT_DIR/deploy/argocd/bootstrap/argocd-ch
   --version "$(yq '.version' "$ROOT_DIR/deploy/argocd/bootstrap/argocd-chart.yaml")" \
   --namespace argocd --kube-version "$KUBERNETES_VERSION" --include-crds \
   --values "$ROOT_DIR/deploy/argocd/bootstrap/values.yaml" > "$OUT_DIR/bootstrap-argocd.yaml"
+helm template argocd "$(yq '.chart' "$ROOT_DIR/deploy/argocd/bootstrap/argocd-chart.yaml")" \
+  --repo "$(yq '.repo' "$ROOT_DIR/deploy/argocd/bootstrap/argocd-chart.yaml")" \
+  --version "$(yq '.version' "$ROOT_DIR/deploy/argocd/bootstrap/argocd-chart.yaml")" \
+  --namespace argocd --kube-version "$KUBERNETES_VERSION" --include-crds \
+  --values "$ROOT_DIR/deploy/argocd/bootstrap/values.yaml" \
+  --values "$ROOT_DIR/deploy/argocd/bootstrap/values-aws.yaml" > "$OUT_DIR/bootstrap-argocd-aws.yaml"
+! grep -qE 'ksops|sops-age|enable-exec' "$OUT_DIR/bootstrap-argocd-aws.yaml" \
+  || fail "bootstrap values-aws.yaml: KSOPS, the age key mount or exec plugins are still enabled on AWS"
 cp "$ROOT_DIR/deploy/argocd/root-app.yaml" "$OUT_DIR/root-app.yaml"
-echo "bootstrap: Argo CD chart rendered"
+echo "bootstrap: Argo CD chart rendered (local and aws)"
 
 # 3. Schemas. CRs whose CRD is not in the catalog are reported as skipped in the summary.
 kubeconform -strict -summary -kubernetes-version "$KUBERNETES_VERSION" \
