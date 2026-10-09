@@ -21,6 +21,27 @@ component owner follows these conventions for its own component.
   experiment on the lane's own cluster (e.g. `PAYMENT_LATENCY_MS=600`, game days). They are never opened as PRs or
   merged; findings land through normal PRs by the file owner.
 
+## 1b. Overlays and session parameters (ADR 0206)
+
+- Local: `deploy/argocd/apps/<c>/` + `deploy/argocd/profiles/<p>/` (as above). AWS: sibling trees
+  `deploy/argocd/apps-aws/<c>/` (`resources: [../../apps/<c>]` + patches swapping `local` value files/paths for `aws`)
+  and `deploy/argocd/profiles-aws/<p>/` (lists `../../apps-aws/<c>`, or `../../apps/<c>` for apps that are identical
+  or AWS-only; same inline revision block). Owners: same as the local app/profile. Kustomize forbids an overlay
+  that includes its own parent directory, hence siblings.
+- `scripts/platform-root-apps.sh --overlay local|aws --revision R --profiles P --param k=v...` (sf-platform) is the
+  only way to create root apps; `make up` and `cloud-up` both call it. Unknown param keys are rejected; on `aws`,
+  missing required keys are rejected.
+- Session params live in `deploy/argocd/profiles/_common/platform-params.yaml` (local-config ConfigMap, keys with
+  dots) and reach components **only as Helm values** (`spec.sources.[chart=...].helm.valuesObject.<path>`, via
+  top-level replacements in the aws profile). A component that needs a param or param-driven logic is a Helm chart
+  (in-repo if needed, e.g. `deploy/charts/shop-db`).
+- On AWS, External Secrets and the AWS LB Controller run in `profiles-aws/core` at wave -1, Envoy Gateway at wave 0
+  with `loadBalancerClass: service.k8s.aws/nlb` (never a Classic ELB). OpenCost needs Prometheus, so it belongs to
+  `profiles-aws/obs` and `profiles-aws/obs-lite`.
+- On AWS, each component's `ExternalSecret`s live in that component's aws overlay (owner = component owner, like the
+  local SOPS files); sf-cloud's external-secrets app holds the controller and the per-namespace
+  ClusterSecretStores only. ExternalSecrets carry `SkipDryRunOnMissingResource=true`.
+
 ## 2. Helm-based components: multi-source Application
 
 No `--enable-helm` in Kustomize. Use an Argo CD multi-source Application:
