@@ -43,10 +43,25 @@ rate-limited.
   digest mismatch fails as before.
 - Negative / risks:
   - A cache that is down or stale makes containerd fall back to upstream: slower, but correct.
-  - Disk grows with the images used (core ≈ 1.5GB), with a default 7-day TTL in the proxy.
+  - Disk grows with the images used (core ≈ 0.9GB measured), with a default 7-day TTL in the proxy.
   - Existing clusters only use the caches after they are recreated.
   - Registries other than the four (e.g. ECR Public) bypass the cache.
-- Measured (core profile, same machine and network as the context): cold run with empty caches: _TBD_; warm
-  run after `make down`: _TBD_.
+  - k3d advertises only one registry in `kube-public/local-registry-hosting`; `make up` rewrites it to the dev
+    registry.
+- Measured on 2026-10-09, `core` profile, `make up` until every Application was Synced + Healthy (checkout 201 each
+  time). Network was faster than in the Context run, so compare cold with cold:
+
+  | Run | Time |
+  |---|---|
+  | No cache, cold (orchestrator Gate 1, same hour) | 356s |
+  | Caches empty, cold (fills the caches) | 383s |
+  | After `make down`, caches warm (2 runs) | 192s, 185s |
+
+  - Warm runs no longer depend on the network: what remains is Argo CD start-up, sync waves, CNPG initdb and the
+    migration/seed hooks.
+  - Cache content after one cold run: docker.io 320MB, quay.io 264MB, ghcr.io 294MB.
+  - Cache RAM: 19–63MiB per cache (~200MiB for all four).
+  - Fallback check: with the quay cache stopped, a node still pulled an uncached quay image by digest from upstream
+    (5s). With the cache running, the same pull filled the cache, and the repo digest matched the pin.
 - When to revisit: a profile pulls from another registry often enough to matter (add a cache and a port), or disk
   use becomes a problem (lower the TTL).

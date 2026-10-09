@@ -112,6 +112,16 @@ create_cluster() {
   # Add the context to ~/.kube/config without switching the current context (other sessions use it).
   k3d kubeconfig merge "$CLUSTER" --kubeconfig-merge-default --kubeconfig-switch-context=false >/dev/null
   kc wait --for=condition=Ready nodes --all --timeout=180s >/dev/null
+  advertise_dev_registry
+}
+
+# k3d writes only one registry into kube-public/local-registry-hosting (KEP-1755) and, with the caches attached,
+# picks the first cache. Point it back at this cluster's dev registry so tools push to the right place.
+advertise_dev_registry() {
+  kc -n kube-public create configmap local-registry-hosting \
+    --from-literal=localRegistryHosting.v1="$(printf 'host: "127.0.0.1:%s"\nhostFromClusterNetwork: "%s:5000"\nhostFromContainerRuntime: "%s:5000"\nhelp: "https://k3d.io/stable/usage/registries/#using-a-local-registry"\n' \
+      "$REGISTRY_PORT" "$REGISTRY_NAME" "$REGISTRY_NAME")" \
+    --dry-run=client -o yaml | kc apply -f - >/dev/null
 }
 
 # Helm values fragment with the bcrypt hash of the admin password from SOPS. Passed to Helm through process
