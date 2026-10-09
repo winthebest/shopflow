@@ -1,0 +1,48 @@
+# Session parameter, filled by the platform-params mechanism (sf-platform, ADR 0206): aws.accountId.
+# The placeholder renders for validation but cannot assume any role, so a missing parameter fails visibly.
+accountId: "000000000000"
+
+# Must match infra/cloud-contract.json (region, roles.eso_prefix, ssm.prefix, eso_namespaces);
+# scripts/cloud-manifests-check.sh fails on drift.
+region: ap-southeast-1
+rolePrefix: shopflow-eso-
+parameterPrefix: /shopflow/aws
+namespaces: [shop, kafka, lakehouse, airflow, bi, observability]
+
+refreshInterval: 1h
+
+# SSM layout (seeded by scripts/aws-seed-params.sh): /shopflow/aws/<namespace>/<name>
+#   multi-key secrets: one SecureString holding a JSON object, one property per key (`keys`);
+#   single values:     the parameter value itself (`scalarKey`), e.g. the CDC epoch cloud-up writes.
+secrets:
+  # Replaces the KSOPS secrets of kube-prometheus-stack (sf-sre).
+  - namespace: observability
+    name: grafana-admin
+    keys: [admin-user, admin-password]
+  - namespace: observability
+    name: alertmanager-webhook
+    keys: [url]
+  # CNPG managed role passwords (sf-platform shop-db). They must outlive clusters: the roles come back with the
+  # database restored from backup.
+  - namespace: shop
+    name: shop-db-debezium
+    type: kubernetes.io/basic-auth
+    keys: [username, password]
+  - namespace: shop
+    name: shop-db-trino-pg
+    type: kubernetes.io/basic-auth
+    keys: [username, password]
+  - namespace: shop
+    name: shop-db-polaris
+    type: kubernetes.io/basic-auth
+    keys: [username, password]
+  # CDC epoch (sf-data): Kafka Connect reads ${secrets:kafka/cdc-epoch:epoch}. cloud-up bumps the parameter
+  # before the sync, and a re-snapshot within a session must reach Connect quickly.
+  - namespace: kafka
+    name: cdc-epoch
+    scalarKey: epoch
+    refreshInterval: 1m
+  # Read-only Trino user for the freshness exporter and the cloud-up smoke query (sf-data).
+  - namespace: lakehouse
+    name: trino-exporter
+    keys: [password]

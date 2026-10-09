@@ -209,6 +209,7 @@ create_root_apps() {
     --param "pg.recoveryTargetTime=$PITR"
     --param "cdcEpoch=$CDC_EPOCH"
     --param "aws.region=$REGION"
+    --param "aws.accountId=$(account_id)"
     --param "aws.vpcId=$vpc_id"
     --param "aws.dataBucket=$(data_bucket)"
     --param "aws.clusterName=$CLUSTER"

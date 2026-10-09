@@ -1,0 +1,42 @@
+# OpenCost (AWS only, spike): cost per namespace from Prometheus (kube-prometheus-stack `kps`) and AWS public
+# on-demand prices. UI through port-forward only (ADR 0205). No AWS credentials and no session parameters.
+# Not part of any profile yet: the aws root apps wire it once ADR 0206 lands.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: opencost
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: shopflow
+    shopflow.io/profile: aws
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  sources:
+    - repoURL: https://opencost.github.io/opencost-helm-chart
+      chart: opencost
+      targetRevision: 2.5.32
+      helm:
+        releaseName: opencost
+        valueFiles:
+          - $values/deploy/platform/opencost/base/values.yaml
+          - $values/deploy/platform/opencost/aws/values.yaml
+    - repoURL: https://github.com/winthebest/shopflow.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: opencost
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

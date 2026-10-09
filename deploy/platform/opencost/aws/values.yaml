@@ -1,0 +1,7 @@
+# AWS: OpenCost recognises EKS nodes from their provider IDs and prices them from the AWS public price list
+# (no credentials). Spot nodes are priced at on-demand rates unless a spot data feed is configured, so use
+# OpenCost for the split between namespaces and Cost Explorer (credits excluded) for the absolute $/hour.
+opencost:
+  exporter:
+    extraEnv:
+      CLUSTER_ID: shopflow

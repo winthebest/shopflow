@@ -11,6 +11,12 @@ on:
   pull_request:
     paths:
       - infra/**
+      - deploy/argocd/apps/external-secrets/**
+      - deploy/argocd/apps/aws-lb-controller/**
+      - deploy/argocd/apps/opencost/**
+      - deploy/platform/external-secrets/**
+      - deploy/platform/aws-lb-controller/**
+      - deploy/platform/opencost/**
       - scripts/cloud-*.sh
       - scripts/aws-*.sh
       - scripts/export-evidence.sh
@@ -21,6 +27,12 @@ on:
     branches: [main]
     paths:
       - infra/**
+      - deploy/argocd/apps/external-secrets/**
+      - deploy/argocd/apps/aws-lb-controller/**
+      - deploy/argocd/apps/opencost/**
+      - deploy/platform/external-secrets/**
+      - deploy/platform/aws-lb-controller/**
+      - deploy/platform/opencost/**
       - scripts/cloud-*.sh
       - scripts/aws-*.sh
       - scripts/export-evidence.sh
@@ -38,6 +50,10 @@ env:
   TOFU_VERSION: "1.13.1"
   TFLINT_VERSION: "v0.64.0"
   UV_VERSION: "0.11.29"
+  # Same pins as platform-ci.yml.
+  HELM_VERSION: v4.3.0
+  KUBECONFORM_VERSION: v0.8.0
+  KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
 
 jobs:
   tofu:
@@ -101,6 +117,27 @@ jobs:
           version: ${{ env.UV_VERSION }}
           enable-cache: false
       - run: make cloud-shellcheck cloud-pytest
+
+  manifests:
+    name: AWS components (render, CRD schemas, contract)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+      - name: Install kubeconform (checksum-verified)
+        run: |
+          curl -fsSLo /tmp/kubeconform.tar.gz \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  /tmp/kubeconform.tar.gz" | sha256sum -c -
+          sudo tar -xzf /tmp/kubeconform.tar.gz -C /usr/local/bin kubeconform
+      - run: make cloud-manifests
 
   plan:
     name: tofu plan ${{ matrix.layer }} (read-only role)

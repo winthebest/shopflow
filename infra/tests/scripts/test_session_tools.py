@@ -99,7 +99,11 @@ def test_resume_restores_recorded_size(fake):
 
 # ---- aws-seed-params ------------------------------------------------------------------------------
 
-SECRETS = {"shop": {"db-app-password": "S3CRET-shop"}, "kafka": {"connect-scram": "S3CRET-kafka"}}
+SECRETS = {
+    "shop": {"db-app-password": "S3CRET-shop"},
+    "kafka": {"connect-scram": "S3CRET-kafka"},
+    "observability": {"grafana-admin": {"admin-user": "admin", "admin-password": "S3CRET-grafana"}},
+}
 
 
 def seed_world(h: Harness) -> Harness:
@@ -115,13 +119,14 @@ def test_seed_creates_missing_keeps_existing_and_never_exposes_values(fake):
     result = fake.run("aws-seed-params.sh", stdin=json.dumps(SECRETS))
 
     assert result.returncode == 0, result.stderr
-    puts = [c for c in fake.calls("aws") if "put-parameter" in c.argv]
-    assert len(puts) == 1
-    payload = json.loads(puts[0].stdin)
-    assert (
-        payload["Name"] == "/shopflow/aws/kafka/connect-scram" and payload["Type"] == "SecureString" and payload["KeyId"] == "alias/aws/ssm"
-    )
+    payloads = {p["Name"]: p for p in (json.loads(c.stdin) for c in fake.calls("aws") if "put-parameter" in c.argv)}
+    assert set(payloads) == {"/shopflow/aws/kafka/connect-scram", "/shopflow/aws/observability/grafana-admin"}
+    payload = payloads["/shopflow/aws/kafka/connect-scram"]
+    assert payload["Type"] == "SecureString" and payload["KeyId"] == "alias/aws/ssm"
     assert payload["Value"] == "S3CRET-kafka" and "Overwrite" not in payload
+    # A multi-key Secret is one parameter holding a JSON object; the ExternalSecret reads each key as a property.
+    grafana = json.loads(payloads["/shopflow/aws/observability/grafana-admin"]["Value"])
+    assert grafana == {"admin-user": "admin", "admin-password": "S3CRET-grafana"}
     assert all("S3CRET" not in arg for c in fake.calls() for arg in c.argv), "secrets must never be on a command line"
     assert "S3CRET" not in result.stderr + result.stdout
 

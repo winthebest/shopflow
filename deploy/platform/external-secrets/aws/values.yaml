@@ -1,0 +1,6 @@
+# AWS: the controller's service account is the one EKS Pod Identity maps to role shopflow-pod-external-secrets
+# (infra/cloud-contract.json pod_identities). That role can only assume shopflow-eso-<namespace> roles, which the
+# ClusterSecretStores in ./secret-stores name.
+serviceAccount:
+  create: true
+  name: external-secrets

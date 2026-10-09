@@ -1,0 +1,55 @@
+# External Secrets Operator (AWS only; locally secrets come from SOPS + KSOPS, ADR 0204/0508):
+#   source 1  upstream chart: controller, webhook, cert controller, CRDs
+#   source 3  ./secret-stores chart: one SSM ClusterSecretStore per namespace (role shopflow-eso-<namespace>,
+#             assumed through Pod Identity) and the ExternalSecrets that replace the KSOPS Secrets
+# Session parameters needed from the platform-params mechanism (sf-platform, ADR 0206):
+#   aws.accountId -> source 3 Helm value `accountId`
+# Not part of any profile yet: the aws root apps wire it once ADR 0206 lands.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: external-secrets
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: shopflow
+    shopflow.io/profile: aws
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  project: default
+  sources:
+    - repoURL: https://charts.external-secrets.io
+      chart: external-secrets
+      targetRevision: 2.11.0
+      helm:
+        releaseName: external-secrets
+        valueFiles:
+          - $values/deploy/platform/external-secrets/base/values.yaml
+          - $values/deploy/platform/external-secrets/aws/values.yaml
+    - repoURL: https://github.com/winthebest/shopflow.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://github.com/winthebest/shopflow.git
+      targetRevision: main
+      path: deploy/platform/external-secrets/aws/secret-stores
+      helm:
+        releaseName: shopflow-secret-stores
+        valueFiles:
+          - values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: external-secrets
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    # ExternalSecrets go to namespaces other apps create; retry until they exist.
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
