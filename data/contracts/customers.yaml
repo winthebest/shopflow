@@ -1,0 +1,23 @@
+# Data contract: CDC source table public.customers (publication shop_cdc).
+# Consumers: Debezium -> Kafka -> Iceberg bronze/silver (sf-data). Must match the schema Alembic builds;
+# scripts/check_contracts.py enforces it in CI. Breaking change (column dropped or renamed, type narrowed,
+# nullable -> NOT NULL, primary key changed) => bump `version`. Adding a column or widening a type is not.
+table: customers
+version: 1
+primary_key: [id]
+columns:
+  - name: id
+    type: bigint
+    nullable: false
+  - name: email
+    type: text
+    nullable: false
+  - name: name
+    type: text
+    nullable: false
+  - name: created_at
+    type: timestamp with time zone
+    nullable: false
+  - name: updated_at
+    type: timestamp with time zone
+    nullable: false

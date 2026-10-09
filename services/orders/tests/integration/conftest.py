@@ -27,6 +27,8 @@ POSTGRES_IMAGE = "postgres:17.11@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fa
 
 APP_ROLE = "shop_app"
 APP_PASSWORD = "test-only"
+CDC_ROLE = "debezium"
+CDC_PASSWORD = "test-only"
 
 
 def psql(pg: PostgresContainer, sql: str) -> None:
@@ -41,7 +43,12 @@ def postgres() -> Iterator[PostgresContainer]:
     ).with_command("postgres -c wal_level=logical")
     with container as pg:
         psql(pg, f"CREATE ROLE {APP_ROLE} LOGIN PASSWORD '{APP_PASSWORD}'")
+        psql(pg, f"CREATE ROLE {CDC_ROLE} LOGIN REPLICATION PASSWORD '{CDC_PASSWORD}'")
         yield pg
+
+
+def connection_url(pg: PostgresContainer, user: str, password: str, dbname: str) -> str:
+    return f"postgresql://{user}:{password}@{pg.get_container_host_ip()}:{pg.get_exposed_port(5432)}/{dbname}"
 
 
 @pytest.fixture(scope="session")
@@ -50,8 +57,7 @@ def app_database(postgres: PostgresContainer) -> Callable[[str], str]:
 
     def create(name: str) -> str:
         psql(postgres, f"CREATE DATABASE {name} OWNER {APP_ROLE}")
-        host, port = postgres.get_container_host_ip(), postgres.get_exposed_port(5432)
-        return f"postgresql://{APP_ROLE}:{APP_PASSWORD}@{host}:{port}/{name}"
+        return connection_url(postgres, APP_ROLE, APP_PASSWORD, name)
 
     return create
 
@@ -61,6 +67,18 @@ def database_url(app_database: Callable[[str], str]) -> str:
     url = app_database("shop")
     upgrade(url)
     return url
+
+
+@pytest.fixture(scope="session")
+def superuser_sql(postgres: PostgresContainer) -> Callable[[str], None]:
+    """Run one SQL statement as the `postgres` superuser (role setup that the app role may not do)."""
+    return lambda sql: psql(postgres, sql)
+
+
+@pytest.fixture(scope="session")
+def cdc_url(postgres: PostgresContainer, database_url: str) -> str:
+    """The migrated `shop` database, connected as the CDC role."""
+    return connection_url(postgres, CDC_ROLE, CDC_PASSWORD, "shop")
 
 
 @pytest.fixture

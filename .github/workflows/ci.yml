@@ -54,6 +54,31 @@ jobs:
       - name: pytest (unit + integration on real Postgres via testcontainers)
         run: uv run pytest
 
+  contracts:
+    name: data contracts (Alembic on real Postgres)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # the baseline contracts are read from the base commit
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - name: Install workspace (locked)
+        run: uv sync --all-packages --locked
+      - name: Postgres from docker-compose.yml (same image, init roles shop_app + debezium)
+        run: docker compose up --detach --wait postgres
+      - name: Contracts vs migrated schema, publication shop_cdc and the base commit
+        env:
+          DATABASE_URL: postgresql://shop_app:shop_app@localhost:25432/shop
+          BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+        run: uv run scripts/check_contracts.py --base-ref "$BASE_REF"
+
   gitleaks:
     name: secret scan (gitleaks)
     runs-on: ubuntu-24.04
@@ -142,7 +167,7 @@ jobs:
   publish:
     name: publish ${{ matrix.service }} (GHCR, multi-arch)
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [lint-test, gitleaks, zizmor, image]
+    needs: [lint-test, contracts, gitleaks, zizmor, image]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:

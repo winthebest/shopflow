@@ -14,6 +14,7 @@ required-version = ">=0.11"
 dev = [
     "pytest>=8.4",
     "pytest-asyncio>=1.2",
+    "pyyaml>=6.0",
     "ruff>=0.14",
     "testcontainers[postgres]>=4.13",
 ]
@@ -34,6 +35,7 @@ known-first-party = ["shopflow_common", "gateway", "orders", "payments"]
 
 [tool.pytest.ini_options]
 testpaths = ["services"]
+pythonpath = ["scripts"]  # tests import scripts/check_contracts.py as `check_contracts`
 addopts = ["--import-mode=importlib", "-ra", "--strict-markers"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

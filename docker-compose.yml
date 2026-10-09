@@ -108,7 +108,10 @@ volumes:
   pgdata:
 
 configs:
+  # Runs only on an empty volume: after changing it, `make dev-reset`.
   init-shop-db:
     content: |
       CREATE ROLE shop_app LOGIN PASSWORD 'shop_app';
       CREATE DATABASE shop OWNER shop_app;
+      -- CDC reader (Phase 4): replication, no superuser, owns nothing; grants come from Alembic 0002.
+      CREATE ROLE debezium LOGIN REPLICATION PASSWORD 'debezium';
