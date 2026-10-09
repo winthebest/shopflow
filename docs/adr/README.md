@@ -48,6 +48,7 @@ orchestrator adds rows when merging a PR that contains ADRs.
 | [0412](0412-dbt-core-over-sqlmesh.md) | dbt Core with dbt-trino for bronze → silver → gold | Accepted |
 | [0413](0413-silver-latest-epoch-full-rebuild.md) | Silver = current state of the latest completed CDC epoch, rebuilt in full | Accepted |
 | [0414](0414-airflow3-local-executor-cosmos.md) | Airflow 3 with LocalExecutor, dbt through Cosmos, DAGs baked into one image | Accepted |
+| [0415](0415-flink-sql-realtime-kpis.md) | Realtime KPIs with Flink SQL on the Flink Kubernetes Operator, job baked into one image | Accepted |
 | [0412](0412-dbt-core-over-sqlmesh.md) | dbt Core with dbt-trino for bronze → silver → gold | Accepted |
 | [0413](0413-silver-latest-epoch-full-rebuild.md) | Silver = current state of the latest completed CDC epoch, rebuilt in full | Accepted |
 | [0500](0500-opentofu-over-terraform.md) | OpenTofu instead of Terraform for the AWS layers | Accepted |
