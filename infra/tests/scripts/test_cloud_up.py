@@ -2,17 +2,20 @@
 
 import base64
 import json
+import shutil
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from script_harness import Harness, operator
+from script_harness import REPO_ROOT, Harness, operator
 
 POINTER = {"serverName": "shop-db-20261001t080000z", "backupId": "20261001T110000"}
 NODES = {"items": [{"status": {"conditions": [{"type": "Ready", "status": "True"}]}}]}
 APPS = {"items": [{"status": {"sync": {"status": "Synced"}, "health": {"status": "Healthy"}}}]}
 CNPG = {"status": {"conditions": [{"type": "Ready", "status": "True"}]}}
 TRINO_PASSWORD = "trino-smoke-password-value"
+ARGOCD_PASSWORD = "argocd-admin-password-value"
+ARGOCD_HASH = "$2y$10$abcdefghijklmnopqrstuvFakeBcryptHashForTheTestsOnly0123"
 GATEWAY_SVC = {"items": [{"status": {"loadBalancer": {"ingress": [{"hostname": "k8s-shop-abc.elb.ap-southeast-1.amazonaws.com"}]}}}]}
 
 
@@ -31,6 +34,7 @@ def preflight(h: Harness, *, lease=None, pointer=None, marker=None, epoch=None, 
     else:
         h.on("aws", r"eks describe-cluster --name", f"{cluster}\n")
     h.on("curl", r"checkip.amazonaws.com", "203.0.113.10\n")
+    h.on("aws", r"ec2 describe-vpcs", "vpc-0123456789abcdef0\n")
     return h
 
 
@@ -107,7 +111,7 @@ def test_extended_support_version_is_rejected(fake, hooks):
 
 
 def test_dry_run_plans_a_recovery_without_changing_anything(fake, hooks):
-    env, _ = hooks
+    env, record = hooks
     preflight(fake, pointer=json.dumps(POINTER), marker="20261001t080000z", epoch="7")
 
     result = fake.run("cloud-up.sh", "--dry-run", env=env)
@@ -116,13 +120,16 @@ def test_dry_run_plans_a_recovery_without_changing_anything(fake, hooks):
     assert fake.mutations() == []
     plan = next(c for c in fake.calls("tofu") if "plan" in c.argv)
     assert "operator_cidr=203.0.113.10/32" in plan.argv
-    root_apps = next(line for line in result.stderr.splitlines() if "platform-root-apps.sh" in line and "DRY-RUN" in line)
+    calls = record.read_text().splitlines()
+    assert [c.split()[-1] for c in calls if c.startswith("platform-root-apps.sh")] == ["--check", "--print"]
+    root_apps = next(c for c in calls if c.endswith("--print"))
     for expected in (
         "--overlay aws",
         "pg.recoveryFrom=shop-db-20261001t080000z",
         "cdcEpoch=8",
         "operatorCidr=203.0.113.10/32",
         "aws.accountId=123456789012",
+        "aws.vpcId=vpc-0123456789abcdef0",
     ):
         assert expected in root_apps
 
@@ -130,7 +137,6 @@ def test_dry_run_plans_a_recovery_without_changing_anything(fake, hooks):
 def full_session(h: Harness) -> Harness:
     preflight(h)
     h.on("kubectl", r"get nodes -o json", json_out=NODES)
-    h.on("tofu", r"output -raw vpc_id", "vpc-0123456789abcdef0")
     h.on("kubectl", r"-n argocd get applications.argoproj.io -o json", json_out=APPS)
     h.on("kubectl", r"clusters.postgresql.cnpg.io shop-db -o json", json_out=CNPG)
     h.on("kubectl", r"backups.postgresql.cnpg.io shop-db-\S+-initial -o jsonpath", ["", "completed"])
@@ -151,6 +157,19 @@ def full_session(h: Harness) -> Harness:
         "kubectl", r"exec -i deploy/trino-coordinator .*--user .*exporter .*lake_ro .*bronze.orders WHERE id = 42 AND _cdc_epoch = 1", "1\n"
     )
     h.not_found("aws", r"scheduler get-schedule", "ResourceNotFoundException", "GetSchedule")
+    # Argo CD admin password: absent, generated into SSM, then read back only to hash it.
+    h.on("aws", r"ssm describe-parameters .*argocd/admin-password", "0\n")
+    h.on("openssl", r"rand", ARGOCD_PASSWORD)
+    h.rules.insert(
+        0,
+        {
+            "tool": "aws",
+            "match": r"ssm get-parameter --name /shopflow/aws/argocd/admin-password --with-decryption",
+            "stdout": ARGOCD_PASSWORD,
+            "exit": 0,
+        },
+    )
+    h.on("htpasswd", r"-niBC 10 admin", f"admin:{ARGOCD_HASH}\n")
     return h
 
 
@@ -182,9 +201,25 @@ def test_first_session_initdb_end_to_end(fake, hooks):
 
     hook_calls = record.read_text()
     kubeconfig = str(fake.home / ".kube" / "shopflow-aws")
-    assert f"platform-root-apps.sh KUBECONFIG={kubeconfig} --overlay aws --revision main" in hook_calls
+    assert hook_calls.index("--check") < hook_calls.index(f"platform-root-apps.sh KUBECONFIG={kubeconfig} --overlay aws --revision main")
     assert "pg.recoveryFrom= " in hook_calls and "aws.vpcId=vpc-0123456789abcdef0" in hook_calls
     assert f"cdc-epoch.sh KUBECONFIG={kubeconfig} wait --epoch 1" in hook_calls
+
+    # Argo CD admin: generated into SSM through stdin; only the bcrypt hash reaches Helm, through /dev/fd.
+    admin = next(c for c in fake.calls("aws") if "put-parameter" in c.argv and "argocd/admin-password" in c.stdin)
+    assert json.loads(admin.stdin) == {
+        "Name": "/shopflow/aws/argocd/admin-password",
+        "Value": ARGOCD_PASSWORD,
+        "Type": "SecureString",
+        "KeyId": "alias/aws/ssm",
+        "Tags": [{"Key": "project", "Value": "shopflow"}],
+    }
+    assert next(c for c in fake.calls("htpasswd")).stdin == ARGOCD_PASSWORD
+    helm = next(c for c in fake.calls("helm") if "upgrade" in c.argv)
+    assert helm.argv[-1].startswith("/dev/fd/"), "admin values come through process substitution"
+    assert all(ARGOCD_PASSWORD not in arg and ARGOCD_HASH not in arg for c in fake.calls() for arg in c.argv)
+    assert ARGOCD_PASSWORD not in result.stderr + result.stdout
+    assert fake.index_of(r"ssm put-parameter --cli-input-json") < fake.index_of(r"helm upgrade --install argocd")
 
     smoke = next(c for c in fake.calls("kubectl") if "deploy/trino-coordinator" in c.argv)
     assert smoke.stdin.strip() == TRINO_PASSWORD, "the Trino password reaches the CLI through stdin"
@@ -206,7 +241,7 @@ def test_first_session_initdb_end_to_end(fake, hooks):
     assert "RTO-infra (apply -> node Ready)" in result.stderr
 
 
-def test_missing_root_app_hook_fails_clearly(fake, hooks):
+def test_missing_root_app_hook_fails_before_anything_bills(fake, hooks):
     env, _ = hooks
     full_session(fake)
 
@@ -214,4 +249,66 @@ def test_missing_root_app_hook_fails_clearly(fake, hooks):
 
     assert result.returncode != 0
     assert "missing /nonexistent/platform-root-apps.sh (sf-platform root app mechanism)" in result.stderr
-    assert "cloud-up.sh --resume" in result.stderr
+    assert not any("apply" in c.argv for c in fake.calls("tofu")), "checked in preflight, before layer 2"
+
+
+# ---- with the real sf-platform hook (scripts/platform-root-apps.sh) in a copy of the repo ----------------------
+
+
+@pytest.fixture
+def repo_copy(tmp_path):
+    """The scripts, contract and Argo CD root-app files, plus minimal aws profiles (they land with sf-platform)."""
+    root = tmp_path / "repo"
+    for rel in (
+        "scripts",
+        "infra/cloud-contract.json",
+        "deploy/argocd/root-app.yaml",
+        "deploy/argocd/profiles/_common",
+    ):
+        src, dst = REPO_ROOT / rel, root / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(src, dst) if src.is_dir() else shutil.copy2(src, dst)
+    for profile in ("core", "obs-lite"):
+        prof = root / "deploy/argocd/profiles-aws" / profile
+        prof.mkdir(parents=True)
+        (prof / "kustomization.yaml").write_text("apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n")
+    chart = tmp_path / "argocd-chart.yaml"
+    chart.write_text("repo: https://argoproj.github.io/argo-helm\nchart: argo-cd\nversion: 10.9.6\n")
+    values = tmp_path / "values.yaml"
+    values.write_text("{}\n")
+    env = {"ARGOCD_CHART_FILE": str(chart), "ARGOCD_VALUES": str(values), "ARGOCD_AWS_VALUES": str(values)}
+    return root, env
+
+
+def test_dry_run_end_to_end_with_the_real_root_app_hook(fake, repo_copy):
+    root, env = repo_copy
+    preflight(fake, pointer=json.dumps(POINTER), marker="20261001t080000z", epoch="7")
+
+    result = fake.run_at(root, "cloud-up.sh", "--dry-run", "--profiles", "core,obs-lite", env=env)
+
+    assert result.returncode == 0, result.stderr
+    assert fake.mutations() == []
+    assert "root apps: profiles core,obs-lite and session parameters accepted" in result.stderr
+    printed = result.stderr[result.stderr.index("root Applications that would be applied") :]
+    for expected in (
+        "name: root-core",
+        "name: root-obs-lite",
+        "path: deploy/argocd/profiles-aws/core",
+        "shopflow.io/overlay: aws",
+        "/data/aws.accountId",
+        "/data/aws.vpcId",
+        "vpc-0123456789abcdef0",
+        "shop-db-20261001t080000z",
+    ):
+        assert expected in printed, expected
+
+
+def test_unknown_aws_profile_stops_in_preflight(fake, repo_copy):
+    root, env = repo_copy
+    preflight(fake)
+
+    result = fake.run_at(root, "cloud-up.sh", "--profiles", "core,nope", env=env)
+
+    assert result.returncode != 0
+    assert "unknown profile for overlay aws: nope" in result.stderr
+    assert not any("apply" in c.argv for c in fake.calls("tofu"))

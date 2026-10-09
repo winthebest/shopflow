@@ -15,7 +15,7 @@ CLOUD_TRIVY_IMAGE := aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595
 CLOUD_SHELLCHECK_IMAGE := koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
 CLOUD_ZIZMOR_VERSION := 1.30.1
 
-.PHONY: cloud-up cloud-down cloud-pause cloud-resume cloud-extend cloud-orphan-check cloud-seed-params cloud-evidence \
+.PHONY: cloud-up cloud-down cloud-pause cloud-resume cloud-extend cloud-argocd-ui cloud-argocd-password cloud-orphan-check cloud-seed-params cloud-evidence \
 	cloud-check cloud-fmt cloud-validate cloud-test cloud-lint cloud-trivy cloud-shellcheck cloud-pytest cloud-zizmor \
 	cloud-manifests
 
@@ -33,6 +33,12 @@ cloud-resume: ## Scale the node group back after cloud-pause
 
 cloud-extend: ## Extend the session lease by HOURS (default 2)
 	scripts/cloud-extend.sh --hours $(HOURS) $(CLOUD_ARGS)
+
+cloud-argocd-ui: ## Port-forward the AWS session's Argo CD UI to https://localhost:18090 (user admin)
+	scripts/cloud-argocd.sh ui
+
+cloud-argocd-password: ## Copy the AWS Argo CD admin password from SSM to the clipboard (never printed)
+	scripts/cloud-argocd.sh password
 
 cloud-orphan-check: ## List billable leftovers in every region (CLOUD_ARGS="--delete-tagged")
 	scripts/aws-orphan-check.sh $(CLOUD_ARGS)

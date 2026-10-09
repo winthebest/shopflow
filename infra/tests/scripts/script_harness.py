@@ -12,7 +12,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FAKE_CLI = Path(__file__).with_name("fake_cli.py")
-FAKED_TOOLS = ("aws", "tofu", "kubectl", "helm", "gh", "curl", "uv")
+FAKED_TOOLS = ("aws", "tofu", "kubectl", "helm", "gh", "curl", "uv", "openssl", "htpasswd")
 ACCOUNT = "123456789012"
 OPERATOR_ARN = f"arn:aws:sts::{ACCOUNT}:assumed-role/shopflow-operator/me"
 REAPER_ARN = f"arn:aws:sts::{ACCOUNT}:assumed-role/shopflow-reaper/GitHubActions"
@@ -95,6 +95,12 @@ class Harness:
         return self.on(tool, match, exit=254 if tool == "aws" else 1, stderr=NOT_FOUND.format(code=code, op=op))
 
     def run(self, script: str, *args: str, stdin: str | None = None, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+        return self.run_at(REPO_ROOT, script, *args, stdin=stdin, env=env)
+
+    def run_at(
+        self, root: Path, script: str, *args: str, stdin: str | None = None, env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess:
+        """Run scripts/<script> of the checkout at `root` (a copy of the repo for tests that change files)."""
         self.scenario.write_text(json.dumps(self.rules))
         full_env = {
             "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}",
@@ -107,7 +113,7 @@ class Harness:
             **(env or {}),
         }
         return subprocess.run(
-            [str(REPO_ROOT / "scripts" / script), *args],
+            [str(root / "scripts" / script), *args],
             input=stdin,
             capture_output=True,
             text=True,
