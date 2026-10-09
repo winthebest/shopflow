@@ -15,6 +15,7 @@ APPS = {"items": [{"status": {"sync": {"status": "Synced"}, "health": {"status":
 CNPG = {"status": {"conditions": [{"type": "Ready", "status": "True"}]}}
 TRINO_PASSWORD = "trino-smoke-password-value"
 ARGOCD_PASSWORD = "argocd-admin-password-value"
+PROBE_BLOCKED = '{"dns": "ok", "postgres": "timeout", "internet": "timeout"}\n'
 ARGOCD_HASH = "$2y$10$abcdefghijklmnopqrstuvFakeBcryptHashForTheTestsOnly0123"
 GATEWAY_SVC = {"items": [{"status": {"loadBalancer": {"ingress": [{"hostname": "k8s-shop-abc.elb.ap-southeast-1.amazonaws.com"}]}}}]}
 
@@ -170,6 +171,9 @@ def full_session(h: Harness) -> Harness:
         },
     )
     h.on("htpasswd", r"-niBC 10 admin", f"admin:{ARGOCD_HASH}\n")
+    # Network policy probe: DNS answers, Postgres and the internet time out.
+    h.on("kubectl", r"-n shop get pod netpol-probe-\S+ -o json", json_out={"status": {"phase": "Succeeded"}})
+    h.on("kubectl", r"-n shop logs netpol-probe-", PROBE_BLOCKED)
     return h
 
 
@@ -190,6 +194,7 @@ def test_first_session_initdb_end_to_end(fake, hooks):
         r"kubectl .*apply -f .*shop-db-\S+-initial",
         r"ssm put-parameter --name /shopflow/aws/control/pg-backup-pointer",
         r"curl .*-X POST",
+        r"kubectl .*-n shop logs netpol-probe-",
         r"scheduler create-schedule",
         r"gh workflow enable cloud-reaper.yml",
     ]
@@ -236,9 +241,37 @@ def test_first_session_initdb_end_to_end(fake, hooks):
     schedule = next(c for c in fake.calls("aws") if "create-schedule" in c.argv)
     assert datetime.fromisoformat(schedule.argv[schedule.argv.index("--start-date") + 1]) == final + timedelta(hours=1)
 
+    # The probe pod runs under Pod Security restricted with a label no allow rule selects, then is removed.
+    probe = json.loads(next(c for c in fake.calls("kubectl") if "apply" in c.argv and "netpol-probe" in c.stdin).stdin)
+    assert probe["metadata"]["namespace"] == "shop" and probe["metadata"]["labels"]["app.kubernetes.io/name"] == "netpol-probe"
+    assert probe["spec"]["securityContext"]["runAsNonRoot"] and probe["spec"]["containers"][0]["image"].count("@sha256:") == 1
+    assert fake.index_of(r"-n shop logs netpol-probe-") < fake.index_of(r"-n shop delete pod netpol-probe-\S+ --wait=false")
+    evidence = json.loads(next((fake.tmp / "out").glob("*/netpol-probe.json")).read_text())
+    assert evidence == {"dns": "ok", "postgres": "timeout", "internet": "timeout"}
+
     timings = json.loads(next((fake.tmp / "out").glob("*/timings.json")).read_text())
     assert {"rto_infra_seconds", "rto_service_seconds"} <= timings.keys() and timings["postgres"] == "initdb"
     assert "RTO-infra (apply -> node Ready)" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("probe", "message"),
+    [
+        ('{"dns": "ok", "postgres": "ConnectionRefusedError", "internet": "timeout"}', "(layer 2: vpc-cni enableNetworkPolicy)"),
+        ('{"dns": "ok", "postgres": "timeout", "internet": "open"}', "(layer 2: vpc-cni enableNetworkPolicy)"),
+        ('{"dns": "failed", "postgres": "gaierror", "internet": "timeout"}', "probe inconclusive (DNS failed)"),
+    ],
+)
+def test_network_policy_probe_fails_the_session_when_a_denied_flow_gets_through(fake, hooks, probe, message):
+    env, _ = hooks
+    full_session(fake)
+    fake.rules.insert(0, {"tool": "kubectl", "match": r"-n shop logs netpol-probe-", "stdout": probe + "\n", "exit": 0})
+
+    result = fake.run("cloud-up.sh", "--hours", "3", env=env)
+
+    assert result.returncode != 0
+    assert message in result.stderr
+    assert not any("create-schedule" in c.argv for c in fake.calls("aws")), "a session that fails the probe is not handed over"
 
 
 def test_missing_root_app_hook_fails_before_anything_bills(fake, hooks):

@@ -354,7 +354,73 @@ smoke_test() {
     die "order $order did not reach bronze within 2 minutes"
 }
 
-# ---- step 9–10: lease, kill switches ---------------------------------------------------------------
+# ---- step 8: network policies ----------------------------------------------------------------------
+
+# The smoke test proves the allowed flows; this proves a denied one is dropped (ADR 0208). EKS accepts
+# NetworkPolicies without the VPC CNI network policy agent (layer 2: vpc-cni enableNetworkPolicy) and then
+# enforces nothing. A pod in shop that no allow rule selects must resolve shop-db (DNS is allowed) and time out
+# on Postgres and on the internet: "refused" or "open" means the packet got through.
+NETPOL_PROBE_IMAGE="python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4"
+NETPOL_PROBE_CODE='
+import json, socket
+result = {}
+try:
+    socket.getaddrinfo("shop-db-rw.shop.svc.cluster.local", 5432)
+    result["dns"] = "ok"
+except OSError:
+    result["dns"] = "failed"
+for name, host, port in (("postgres", "shop-db-rw.shop.svc.cluster.local", 5432), ("internet", "1.1.1.1", 443)):
+    try:
+        socket.create_connection((host, port), timeout=5).close()
+        result[name] = "open"
+    except TimeoutError:
+        result[name] = "timeout"
+    except OSError as error:
+        result[name] = type(error).__name__
+print(json.dumps(result))
+'
+
+# Pod Security restricted (the shop namespace enforces it); a label no allow rule selects.
+netpol_probe_pod() {
+  jq -n --arg name "$1" --arg image "$NETPOL_PROBE_IMAGE" --arg code "$NETPOL_PROBE_CODE" '{
+    apiVersion: "v1", kind: "Pod",
+    metadata: {name: $name, namespace: "shop",
+      labels: {"app.kubernetes.io/name": "netpol-probe", "app.kubernetes.io/part-of": "shopflow"}},
+    spec: {
+      restartPolicy: "Never", activeDeadlineSeconds: 120, automountServiceAccountToken: false,
+      securityContext: {runAsNonRoot: true, runAsUser: 65534, runAsGroup: 65534, seccompProfile: {type: "RuntimeDefault"}},
+      containers: [{
+        name: "probe", image: $image, command: ["python", "-c", $code],
+        securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}},
+        resources: {requests: {cpu: "10m", memory: "32Mi"}, limits: {memory: "64Mi"}}
+      }]
+    }
+  }'
+}
+
+probe_finished() {
+  kube -n shop get pod "$1" -o json 2>/dev/null | jq -e '.status.phase == "Succeeded" or .status.phase == "Failed"' >/dev/null
+}
+
+network_policy_probe() {
+  local pod="netpol-probe-$SESSION_ID" result
+  if dry_run; then
+    log "dry-run: would run pod $pod in shop and expect DNS to work and Postgres and the internet to time out"
+    return 0
+  fi
+  kube -n shop delete pod "$pod" --ignore-not-found >/dev/null # left by an interrupted run (--resume)
+  netpol_probe_pod "$pod" | kube apply -f - >/dev/null
+  wait_until 180 "network policy probe $pod" probe_finished "$pod" || die "probe pod $pod did not finish"
+  result="$(kube -n shop logs "$pod" | tail -n 1)"
+  kube -n shop delete pod "$pod" --wait=false >/dev/null
+  printf '%s\n' "$result" >"$OUT_DIR/$SESSION_ID/netpol-probe.json"
+  jq -e '.dns == "ok"' <<<"$result" >/dev/null 2>&1 || die "network policy probe inconclusive (DNS failed): $result"
+  jq -e '.postgres == "timeout" and .internet == "timeout"' <<<"$result" >/dev/null ||
+    die "NetworkPolicy is not enforced in shop: $result. Is the VPC CNI network policy agent on (layer 2: vpc-cni enableNetworkPolicy)?"
+  log "network policies enforced: a pod outside the allow-list reaches DNS but not Postgres or the internet"
+}
+
+# ---- step 9–10: RTO, lease, kill switches ----------------------------------------------------------
 
 arm_kill_switches() {
   write_lease
@@ -418,13 +484,16 @@ main() {
   smoke_test
   t_smoke="$(now_epoch)"
 
-  step 8 "RTO"
+  step 8 "network policies: a pod outside the allow-list is blocked"
+  network_policy_probe
+
+  step 9 "RTO"
   local rto_infra=$((t_nodes - t_apply)) rto_service=$((t_smoke - t_nodes))
   jq -n --arg session "$SESSION_ID" --argjson infra "$rto_infra" --argjson service "$rto_service" --arg pg "$PG_MODE" \
     '{session: $session, rto_infra_seconds: $infra, rto_service_seconds: $service, postgres: $pg}' >"$OUT_DIR/$SESSION_ID/timings.json"
   log "RTO-infra (apply -> node Ready): ${rto_infra}s; RTO-service (node Ready -> smoke pass): ${rto_service}s"
 
-  step 9 "lease and kill switches"
+  step 10 "lease and kill switches"
   arm_kill_switches
   log "session $SESSION_ID is up until $LEASE_ISO. Extend: make cloud-extend; stop: make cloud-down"
 }
