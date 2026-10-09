@@ -46,5 +46,8 @@ distribution. Prometheus 3 has a native OTLP receiver. The SDK's default HTTP hi
   any future sampling must sit after `span_metrics`. Gateway-side SLI is blind when all gateway pods are down
   (`CheckoutSLIMissing` guards this). The collector chart renamed components (`otlp` → `otlp_grpc`,
   `otlphttp` → `otlp_http`, `k8sattributes` → `k8s_attributes`, `filelog` → `file_log`); we use the new names.
+- Measured (lane cluster, 2026-10-09): while Tempo was crash-looping, span metrics kept reporting the k6 rate
+  (9.6–10.3 vs 10 checkouts/s). The exporter queue absorbed Tempo's failures, so the SLI was unaffected and only
+  traces were lost.
 - When to revisit: Collector CPU/RAM above budget in the Phase 3 measurements, or OTLP ingestion problems in
   Prometheus (→ remote write).

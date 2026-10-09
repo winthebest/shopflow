@@ -90,6 +90,7 @@ Detection times, from the promtool unit tests in [`slo/tests/checkout.test.yaml`
 | Scenario | Expected | Unit test |
 |---|---|---|
 | every checkout slower than 300ms (payments at 600ms) | page after 0.144 × 60 = 8.6 min | silent at +8m, page by +10m |
+| same, but only 60 min of healthy history | the 6h window holds only that hour, so 6× over 6h + 30m fires first | silent at +3m, page by +5m |
 | every checkout returns 503 | page after 0.072 × 60 = 4.3 min | silent at +3m, page by +5m |
 | 15-minute slowdown, then fixed | page resolves after the 5m window clears | page at +15m, nothing at +22m |
 | 4% of checkouts slow (4× burn), sustained | ticket after 0.03/0.04 × 24h = 18h, never a page | silent at +17h, ticket at +19h |
@@ -131,5 +132,46 @@ Budget = what is left of the 28-day budget (dashboard: *Error budget left, 28-da
 
 ## Measured results
 
-To be filled in on the cluster (wave 2): time from `PAYMENT_LATENCY_MS=600` to the page (Phase 3 step 7),
-2-hour k6 soak at constant load with dashboard screenshots (step 8). Only measured numbers go here.
+Lane cluster `sf-sre` (k3d on an M4 Pro, Docker VM 16GB, profiles `core,obs`), 2026-10-09/10. Only measured
+numbers; the source of each is named.
+
+**Pipeline checks (passed).**
+- Metric names after Prometheus' OTLP translation match the SLO queries exactly: `traces_span_metrics_calls_total`,
+  `traces_span_metrics_duration_seconds_bucket` with `le="0.3"`, labels `service_name`, `span_kind="SPAN_KIND_SERVER"`,
+  `http_route`, `http_response_status_code`.
+- One checkout trace covers gateway → orders → payments (50ms) → Postgres (asyncpg spans). Loki returns the log
+  lines of all three services by its `trace_id`. Prometheus stores trace exemplars, and Grafana has the
+  exemplar → Tempo, log → trace and trace → log/metric links provisioned.
+- Alert routing: real tickets reached Alertmanager's `discord` receiver. Delivery fails while the webhook is the
+  placeholder; `AlertmanagerClusterFailedToSendAlerts` (critical) then fires as well, which is expected until the
+  real URL is set.
+- While Tempo was crash-looping, the SLI kept reporting 9.6–10.3 checkouts/s for a 10/s k6 load (no loss, no
+  double counting). Only traces were lost ([ADR 0301](../adr/0301-otel-collector-single-pipeline.md)).
+
+**Soak, k6 at 10 checkouts/s (+10 browse/s).** Reported honestly: no 2-hour window was clean.
+
+| Window | Checkouts | Errors | Latency | Source |
+|---|---|---|---|---|
+| Full run 22:01 → 00:01 (2h; includes the noisy-neighbour incident) | 71,985 | 0.44% | p50 67ms, p95 116ms, p99 374ms, max 2.06s | k6 summary (client side, through Envoy TLS) |
+| Clean window 22:55 → 00:32 (97 min; ended by laptop sleep) | 58,186 | 1 × 504 | under 300ms: ~100%; p50 75ms, p95 98ms, p99 ≈ 100ms; worst 5m latency SLI 1.55% | Prometheus span metrics (server side, gateway) |
+
+The incident (22:04–22:38, both SLO tickets fired on a real burn) is written up in the
+[postmortem](../postmortems/2026-10-09-checkout-slow-noisy-neighbor.md). Lessons for live measurements:
+run nothing heavy on the Docker VM, and keep the laptop awake (lid open, `caffeinate -dims`), because
+*Clamshell Sleep* at 00:32 froze the cluster.
+
+**Page timing (`PAYMENT_LATENCY_MS=600`).** Reference numbers come from the promtool tests above: 9–10 minutes with
+long history; with short history the 6h pair fires first (15 min → +1m, 60 min → +4m, 121 min → +8m, 141 min →
++10m through the 1h pair). For the 14.4×/1h pair to fire first, the live test needs at least ~136 minutes of healthy
+traffic beforehand. **Cluster: not measured yet**; moved to Phase 7 game day 1 (payments slowdown), together
+with budget burn before/after.
+
+**Memory (pod working sets, 96 one-minute samples in the clean window).**
+
+| Profile | Average | Peak | Notes |
+|---|---|---|---|
+| core | 1.84 GiB | 1.95 GiB | argocd ~0.9 GiB, shop ~0.33 GiB |
+| obs | 2.24 GiB | 2.92 GiB | peaks: Tempo 956Mi (compaction), Prometheus 746Mi, Grafana 546Mi, Loki 280Mi, otel-gateway 225Mi |
+| obs-lite | ~1.54 GiB | ~1.70 GiB | estimate from the obs pods minus Loki, Tempo and the log agent |
+
+Docker (k3d node containers, which include k3s overhead) for `core,obs` mid-soak: 5.2 GiB.

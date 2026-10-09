@@ -86,3 +86,13 @@ lab limitation documented in [docs/slo/checkout.md](../slo/checkout.md).
 | Set the real Discord webhook (`sops …/alertmanager-webhook.enc.yaml`) | project owner | open |
 | Alert on restarts of observability components (e.g. > 2 restarts in 30m), with a runbook | sf-sre | open |
 | Silence `NodeClockNotSynchronising` on k3d (node clocks come from the Docker VM) | sf-sre | done (local values) |
+| Tempo: Go soft memory limit (`GOMEMLIMIT=800MiB`) after more OOMs at 1Gi; confirm over a long run at Gate 2 | sf-sre | done, to confirm |
+| Long measurements need the laptop awake (lid open, `caffeinate -dims`); see the follow-up below | sf-sre | done (docs/slo/checkout.md) |
+
+## Follow-up: the soak was cut short by laptop sleep
+
+At 00:32:26 macOS entered *Clamshell Sleep* (lid closed). From then on it only woke for about a minute every
+16 minutes, so the k3d cluster, k6 and the operator's timers were all frozen. The clean soak window therefore
+ended after **97 minutes** (22:55 → 00:32), not 2 hours, and the page-timing experiment planned right after it
+could not run. Slots longer than an hour need the machine kept awake, with the lid open and power assertions on,
+and someone checking that `pmset -g log` shows no `Sleep` entries in the measurement window.

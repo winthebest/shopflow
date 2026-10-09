@@ -8,9 +8,16 @@ tempo:
   tag: "3.1.0@sha256:3076b8dcdfb32fd6bc5ccef85e7b7313e6199b9cb84366257fc17ecb696db5fd"
   reportingEnabled: false
   retention: 48h   # lab sessions; local and aws alike
+  # Measured on the sf-sre lane cluster (soak, ~10 checkouts/s × ~35 spans): baseline ~200Mi, compaction and WAL
+  # completion spike to 400–970Mi. OOMKilled at 512Mi (6×) and at 1Gi alone (3× in 70 min); the Go soft limit at
+  # ~80% of the cgroup limit makes the GC work harder instead of crossing it (0 restarts afterwards, to be
+  # confirmed over a longer run).
   resources:
-    requests: {cpu: 50m, memory: 192Mi}
-    limits: {memory: 512Mi}
+    requests: {cpu: 50m, memory: 384Mi}
+    limits: {memory: 1Gi}
+  extraEnv:
+    - name: GOMEMLIMIT
+      value: 800MiB
   metricsGenerator:
     enabled: false
   receivers:
