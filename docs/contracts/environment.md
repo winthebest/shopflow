@@ -36,6 +36,7 @@ All bind `127.0.0.1`. The registry is created with the cluster and removed by `k
 | `envoy-gateway-system`, `cert-manager`, `cnpg-system` | platform controllers |
 | `observability` | OTel Collector, Prometheus, Loki, Tempo, Grafana (Phase 3) |
 | `kafka`, `lakehouse`, `airflow`, `bi` | data platform (Phases 4–5) |
+| `external-secrets`, `opencost` (+ AWS LB Controller in `kube-system`) | AWS only (Phase 6, sf-cloud) |
 
 ## Network flows (NetworkPolicy allow-list, Phase 6 security baseline; local too)
 
@@ -59,6 +60,10 @@ Default-deny per namespace; these flows must be allowed. Owners add rows when th
 | `lakehouse` trino-bronze-tables Job | `lakehouse` trino | 8443 | create bronze tables | sf-data |
 | `observability` Prometheus | `lakehouse` freshness-exporter; `kafka` cdc-connect | 8080; 9404 | scrape freshness + Connect/Debezium JMX metrics | sf-data |
 | `lakehouse` freshness-exporter | `lakehouse` trino | 8443 | freshness probe queries (`lake_ro`, user `exporter`) | sf-data |
+| `external-secrets` controller | AWS STS/SSM; Pod Identity agent | 443; 169.254.170.23:80 | SSM → Secrets (AWS only) | sf-cloud |
+| `kube-system` aws-load-balancer-controller | AWS APIs; kube-apiserver → controller webhook | 443; 9443 | NLB for the Gateway (AWS only) | sf-cloud |
+| `opencost` | `observability` kps-prometheus; AWS pricing | 9090; 443 | cost allocation (AWS only) | sf-cloud |
+| `observability` Prometheus | `opencost` | metrics port | scrape OpenCost (AWS only) | sf-cloud |
 | `lakehouse` polaris-db-copy, trino-pg-copy Jobs | kube-apiserver | 443/6443 | copy `shop/shop-db-{polaris,trino-pg}` into `lakehouse` (gitops.md §5) | sf-data |
 
 ## Trino catalogs and identities (Phase 4 onwards)
