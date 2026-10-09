@@ -1,25 +1,40 @@
 # Smoke test for the Kafka Connect image, on the production data path:
-#   Postgres -> Debezium -> Kafka -> Iceberg sink -> Polaris REST catalog + SeaweedFS (S3FileIO).
-# Run with run.sh: it generates every credential, the SeaweedFS identities and the work directory. No host ports
-# are published; ~3.6GB of memory limits in total. Plaintext Kafka and an in-memory Polaris keep it small; TLS/SCRAM
-# and the persistent catalog are exercised on the cluster.
+#   shop schema (Alembic) -> Debezium -> Kafka -> Iceberg sink -> Polaris REST catalog + SeaweedFS (S3FileIO).
+# Run with run.sh: it takes the Postgres image and role SQL from the shop dev compose (docker-compose.yml),
+# generates every credential, and renders the connector configs from deploy/platform/kafka-connect.
+# No host ports are published; ~3.6GB of memory limits in total. Plaintext Kafka and an in-memory Polaris keep it
+# small; TLS/SCRAM and the persistent catalog are exercised on the cluster.
 name: sf-data-connect-smoke
+
+x-orders: &orders
+  image: ${ORDERS_IMAGE:?run via run.sh}
+  read_only: true
+  tmpfs: [/tmp]
+  profiles: [setup]
+  environment:
+    DATABASE_URL: postgresql://shop_app:${SHOP_APP_PASSWORD:?run via run.sh}@postgres:5432/shop
 
 services:
   postgres:
-    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
-    command: ["postgres", "-c", "wal_level=logical", "-c", "max_wal_senders=4", "-c", "max_replication_slots=4"]
+    image: ${POSTGRES_IMAGE:?run via run.sh}
+    command: ["postgres", "-c", "wal_level=logical"]
     environment:
-      POSTGRES_DB: shop
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run via run.sh}
-      DEBEZIUM_PASSWORD: ${DEBEZIUM_PASSWORD:?run via run.sh}
     volumes:
-      - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
+      - ${SMOKE_DIR:?run via run.sh}/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d shop"]
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]
       interval: 2s
       retries: 30
     mem_limit: 256m
+
+  # Same entrypoints as `make dev`: Alembic (tables, heartbeat row, publication shop_cdc, grants) and demo data.
+  migrate:
+    <<: *orders
+    command: ["migrate"]
+  seed:
+    <<: *orders
+    command: ["seed"]
 
   kafka:
     image: apache/kafka:4.3.1@sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837
@@ -51,7 +66,7 @@ services:
               "-webdav=false", "-admin.ui=false", "-master.telemetry=false"]
     user: "1000:1000"
     volumes:
-      - ${SMOKE_DIR:?run via run.sh}/seaweedfs:/etc/seaweedfs:ro
+      - ${SMOKE_DIR}/seaweedfs:/etc/seaweedfs:ro
     tmpfs:
       - /data:uid=1000,gid=1000
     healthcheck:
@@ -88,7 +103,7 @@ services:
     environment:
       KAFKA_HEAP_OPTS: -Xms640m -Xmx640m
       KAFKA_LOG4J_OPTS: -Dlog4j2.configurationFile=/opt/kafka/config/connect-log4j2.yaml
-      # Read by the connectors through EnvVarConfigProvider, standing in for the cluster's Secret/ConfigMap providers.
+      # Read by the connectors through EnvVarConfigProvider, standing in for the cluster's Secret provider.
       CDC_EPOCH: ${CDC_EPOCH:?run via run.sh}
       DEBEZIUM_PASSWORD: ${DEBEZIUM_PASSWORD:?run via run.sh}
       SINK_S3_ACCESS_KEY: ${SINK_S3_ACCESS_KEY:?run via run.sh}

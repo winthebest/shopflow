@@ -1,0 +1,47 @@
+# Local (k3d): one worker; Iceberg sink -> Polaris REST catalog `lake` + SeaweedFS (namespace lakehouse).
+# The aws overlay points the sink at Glue + S3 instead.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base
+patches:
+  - target:
+      kind: KafkaConnect
+      name: cdc
+    patch: |-
+      - op: add
+        path: /spec/jvmOptions
+        value:
+          "-Xms": 768m
+          "-Xmx": 768m
+      - op: add
+        path: /spec/resources
+        value:
+          requests:
+            cpu: 250m
+            memory: 1536Mi
+          limits:
+            memory: 1536Mi
+  - target:
+      kind: KafkaConnector
+      name: iceberg-sink
+    patch: |-
+      apiVersion: kafka.strimzi.io/v1
+      kind: KafkaConnector
+      metadata:
+        name: iceberg-sink
+      spec:
+        config:
+          iceberg.catalog.type: rest
+          iceberg.catalog.uri: http://polaris.lakehouse.svc:8181/api/catalog
+          iceberg.catalog.warehouse: lake
+          # <client_id>:<client_secret> of the Polaris principal iceberg_sink (write access to namespace bronze).
+          iceberg.catalog.credential: ${secrets:kafka/polaris-iceberg-sink:credential}
+          iceberg.catalog.scope: PRINCIPAL_ROLE:ALL
+          # SeaweedFS has no STS, so the catalog vends no credentials: the sink uses its own S3 keys.
+          iceberg.catalog.io-impl: org.apache.iceberg.aws.s3.S3FileIO
+          iceberg.catalog.s3.endpoint: http://seaweedfs.lakehouse.svc:8333
+          iceberg.catalog.s3.path-style-access: true
+          iceberg.catalog.s3.access-key-id: ${secrets:kafka/lake-s3-iceberg-sink:access-key-id}
+          iceberg.catalog.s3.secret-access-key: ${secrets:kafka/lake-s3-iceberg-sink:secret-access-key}
+          iceberg.catalog.client.region: us-east-1

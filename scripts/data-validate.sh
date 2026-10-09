@@ -4,7 +4,9 @@
 #      from deploy/argocd/apps/<c>/application.yaml; plain manifests through kustomize);
 #   2. kubeconform -strict against Kubernetes schemas plus JSON schemas generated from pinned CRDs
 #      (Strimzi v1, Argo CD Application, cert-manager Certificate);
-#   3. check invariants that must never drift (retention floors on the writable lake catalogs).
+#   3. check invariants that must never drift: retention floors on the writable lake catalogs, and the CDC table
+#      list (data/contracts = Debezium include list = Kafka topics = sink topics/tables/routes = bronze DDL, with
+#      every contract column present in bronze with a compatible type: the sink silently drops unknown columns).
 # Profile/targetRevision checks belong to scripts/platform-validate.sh (sf-platform) and are not repeated here.
 # Components without an app directory are skipped, so the script works while components land in separate PRs.
 # Needs: helm, kubectl, kubeconform, yq (mikefarah v4), jq, curl.
@@ -91,15 +93,72 @@ check_retention_floors() {
   echo "retention floors: lake, lake_ro = 7d"
 }
 
+# Fail unless the two newline-separated lists are equal (both sorted by the caller).
+same_tables() { # label expected actual
+  if [[ "$2" != "$3" ]]; then
+    echo "FAIL $1 does not match data/contracts:" >&2
+    diff <(echo "$2") <(echo "$3") >&2 || true
+    return 1
+  fi
+}
+
+# Bronze column type for a Postgres contract type (Iceberg has no smallint; timestamps keep microseconds).
+bronze_type() {
+  case "$1" in
+    bigint | integer | boolean | date) echo "$1" ;;
+    smallint) echo integer ;;
+    text) echo varchar ;;
+    "timestamp with time zone") echo "timestamp(6) with time zone" ;;
+    numeric\(*) sed -E 's/numeric\(([0-9]+), *([0-9]+)\)/decimal(\1, \2)/' <<< "$1" ;;
+    *) echo "unmapped:$1" ;;
+  esac
+}
+
+check_cdc_contracts() { # rendered-kafka rendered-kafka-connect
+  local ddl=deploy/platform/trino/base/bronze-tables.sql contracts connector f table name type want got
+  contracts="$(for f in data/contracts/*.yaml; do yq '.table' "$f"; done | sort)"
+  same_tables "Debezium table.include.list" "$contracts" "$(yq 'select(.kind == "KafkaConnector" and .metadata.name == "shop-postgres")
+    | .spec.config["table.include.list"]' <<< "$2" | tr ',' '\n' | sed 's/^public\.//' | sort)"
+  connector='select(.kind == "KafkaConnector" and .metadata.name == "iceberg-sink") | .spec.config'
+  same_tables "sink topics" "$contracts" "$(yq "$connector | .topics" <<< "$2" | tr ',' '\n' | sed 's/^shop\.public\.//' | sort)"
+  same_tables "sink iceberg.tables" "$contracts" \
+    "$(yq "$connector | .[\"iceberg.tables\"]" <<< "$2" | tr ',' '\n' | sed 's/^bronze\.//' | sort)"
+  same_tables "sink route-regex" "$contracts" "$(yq "$connector | keys | .[]" <<< "$2" \
+    | sed -nE 's/^iceberg\.table\.bronze\.([a-z_]+)\.route-regex$/\1/p' | sort)"
+  same_tables "KafkaTopics shop.public.*" "$contracts" "$(yq 'select(.kind == "KafkaTopic") | .spec.topicName' <<< "$1" \
+    | sed -nE 's/^shop\.public\.//p' | sort)"
+  same_tables "bronze DDL" "$contracts" "$(sed -nE 's/^CREATE TABLE IF NOT EXISTS lake\.bronze\.([a-z_]+) \($/\1/p' "$ddl" | sort)"
+  for f in data/contracts/*.yaml; do
+    table="$(yq '.table' "$f")"
+    while IFS=$'\t' read -r name type; do
+      want="$(bronze_type "$type")"
+      got="$(awk -v t="$table" -v c="$name" '
+        $0 == "CREATE TABLE IF NOT EXISTS lake.bronze." t " (" { inside = 1; next }
+        inside && /^\)/ { exit }
+        inside && $1 == c { $1 = ""; sub(/^ +/, ""); sub(/,$/, ""); print; exit }' "$ddl")"
+      if [[ "$got" != "$want" ]]; then
+        echo "FAIL bronze.$table.$name: contract type '$type' needs '$want' in $ddl, found '${got:-missing}'" >&2
+        return 1
+      fi
+    done < <(yq '.columns[] | [.name, .type] | @tsv' "$f")
+  done
+  echo "CDC tables: data/contracts = Debezium = topics = sink = bronze DDL ($(echo "$contracts" | wc -l | tr -d ' ') tables, columns typed)"
+}
+
 generate_schemas
+RENDER_DIR="$(mktemp -d)"
+trap 'rm -rf "$RENDER_DIR"' EXIT
 validated=0
 for c in "${COMPONENTS[@]}"; do
   [[ -d "deploy/argocd/apps/$c" ]] || continue
   echo "== $c"
   kubectl kustomize "deploy/argocd/apps/$c" | kubeconform_strict
-  rendered="$(render "$c")"
-  kubeconform_strict <<< "$rendered"
-  [[ "$c" == trino ]] && check_retention_floors "$rendered"
+  render "$c" > "$RENDER_DIR/$c.yaml"
+  kubeconform_strict < "$RENDER_DIR/$c.yaml"
+  [[ "$c" == trino ]] && check_retention_floors "$(cat "$RENDER_DIR/trino.yaml")"
   validated=$((validated + 1))
 done
+if [[ -f "$RENDER_DIR/kafka.yaml" && -f "$RENDER_DIR/kafka-connect.yaml" ]]; then
+  check_cdc_contracts "$(cat "$RENDER_DIR/kafka.yaml")" "$(cat "$RENDER_DIR/kafka-connect.yaml")"
+fi
 echo "validated $validated data component(s)"

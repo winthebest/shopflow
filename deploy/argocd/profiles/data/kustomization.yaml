@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   - ../../apps/strimzi
   - ../../apps/kafka
+  - ../../apps/kafka-connect
   - ../../apps/seaweedfs
   - ../../apps/iceberg-catalog
   - ../../apps/trino

@@ -13,10 +13,25 @@ import time
 from pyiceberg.catalog.rest import RestCatalog
 from pyiceberg.exceptions import ForbiddenError
 
-# Change events run.sh produces, per table: (primary key, _op). Snapshot rows arrive as 'r'.
-EXPECTED = {
-    "customers": {(1, "r"), (2, "r"), (3, "c")},
-    "orders": {(1, "r"), (2, "c"), (2, "u"), (1, "d")},
+# Operations run.sh produces per table: the seeded rows arrive through the snapshot ('r'), then one checkout is
+# created, paid and removed. The heartbeat row is in the snapshot and then updated by heartbeat.action.query.
+EXPECTED_OPS = {
+    "customers": {"r", "c"},
+    "products": {"r"},
+    "orders": {"c", "u", "d"},
+    "order_items": {"c", "d"},
+    "payments": {"c", "d"},
+    "heartbeat": {"r", "u"},
+}
+# Number of rows in Postgres when the connector started: each must arrive exactly once as a snapshot read.
+SNAPSHOT_ROWS = {"customers": "SNAPSHOT_CUSTOMERS", "products": "SNAPSHOT_PRODUCTS"}
+# Typed columns that must be converted from Debezium's string encodings (decimal, timestamptz) on non-delete rows.
+TYPED_COLUMNS = {
+    "products": ("price", "updated_at"),
+    "orders": ("total", "updated_at"),
+    "order_items": ("unit_price", "updated_at"),
+    "payments": ("amount", "updated_at"),
+    "heartbeat": ("beat_at",),
 }
 METADATA_COLUMNS = ("_op", "_lsn", "_source_ts_ms", "_cdc_epoch", "_ingested_at")
 
@@ -52,20 +67,22 @@ def rows(cat: RestCatalog, table: str) -> list[dict]:
 
 def check(cat: RestCatalog, epoch: int) -> list[str]:
     problems = []
-    for table, expected in EXPECTED.items():
+    for table, expected in EXPECTED_OPS.items():
         data = rows(cat, table)
-        events = {(row["id"], row["_op"]) for row in data}
-        if missing := expected - events:
-            problems.append(f"bronze.{table}: missing events {sorted(missing)}; have {sorted(events)}")
+        if missing := expected - {row["_op"] for row in data}:
+            problems.append(f"bronze.{table}: missing operations {sorted(missing)}")
+        if table in SNAPSHOT_ROWS:
+            reads = [row["id"] for row in data if row["_op"] == "r"]
+            want = int(os.environ[SNAPSHOT_ROWS[table]])
+            if len(reads) != want or len(set(reads)) != want:
+                problems.append(f"bronze.{table}: {len(reads)} snapshot rows ({len(set(reads))} distinct), want {want}")
         for row in data:
             if row["_cdc_epoch"] != epoch:
                 problems.append(f"bronze.{table}: _cdc_epoch {row['_cdc_epoch']!r} != {epoch}")
             if absent := [c for c in METADATA_COLUMNS if row.get(c) is None]:
                 problems.append(f"bronze.{table} id={row['id']}: null metadata columns {absent}")
-            if row["_op"] != "d" and table == "orders" and row.get("total") is None:
-                problems.append(f"bronze.orders id={row['id']}: decimal column total not converted")
-    if not rows(cat, "heartbeat"):
-        problems.append("bronze.heartbeat: no rows (heartbeat.action.query did not produce events)")
+            if row["_op"] != "d" and (unset := [c for c in TYPED_COLUMNS.get(table, ()) if row.get(c) is None]):
+                problems.append(f"bronze.{table} id={row['id']}: typed columns not converted {unset}")
     return problems
 
 
@@ -78,12 +95,12 @@ def main() -> int:
         if not problems or time.monotonic() >= deadline:
             break
         time.sleep(5)
-    for table in (*EXPECTED, "heartbeat"):
+    for table in EXPECTED_OPS:
         data = rows(cat, table)
         snapshots = len(cat.load_table(f"bronze.{table}").metadata.snapshots)
         print(f"bronze.{table}: {len(data)} rows, ops={sorted({r['_op'] for r in data})}, snapshots={snapshots}")
-    orders = sorted(rows(cat, "orders"), key=lambda r: (r["id"], r["_lsn"]))
-    print("bronze.orders sample:", [(r["id"], r["_op"], r["status"], str(r["total"])) for r in orders])
+    orders = sorted(rows(cat, "orders"), key=lambda r: r["_lsn"])
+    print("bronze.orders:", [(r["id"], r["_op"], r["status"], str(r["total"])) for r in orders])
 
     try:
         cat.create_namespace("smoke_should_fail")

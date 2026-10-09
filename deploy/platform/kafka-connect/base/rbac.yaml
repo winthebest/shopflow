@@ -1,0 +1,57 @@
+# Read access for the Connect config providers, limited to the named objects the connectors reference.
+# ServiceAccount cdc-connect is created by Strimzi for KafkaConnect/cdc.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cdc-connect-config-providers
+  namespace: kafka
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames:
+      - iceberg-sink              # KafkaUser secret (sasl.jaas.config), created by the User Operator
+      - shopflow-cluster-ca-cert  # Kafka cluster CA (ca.crt), created by the Cluster Operator
+      - polaris-iceberg-sink      # Iceberg REST catalog credential (local overlay)
+      - lake-s3-iceberg-sink      # object storage keys (local overlay)
+      - cdc-epoch                 # current CDC epoch: epoch tooling locally, ESO from SSM on AWS
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cdc-connect-config-providers
+  namespace: kafka
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cdc-connect-config-providers
+subjects:
+  - kind: ServiceAccount
+    name: cdc-connect
+    namespace: kafka
+---
+# The Debezium login lives next to the CNPG cluster (managed role password secret), in namespace shop.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cdc-connect-debezium-db
+  namespace: shop
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [shop-db-debezium]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cdc-connect-debezium-db
+  namespace: shop
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cdc-connect-debezium-db
+subjects:
+  - kind: ServiceAccount
+    name: cdc-connect
+    namespace: kafka
