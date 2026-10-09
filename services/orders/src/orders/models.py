@@ -67,7 +67,6 @@ class Customer(StandardColumns, Base):
     __tablename__ = "customers"
 
     email: Mapped[str] = mapped_column(Text, unique=True)
-    name: Mapped[str] = mapped_column(Text)
 
 
 class Order(StandardColumns, Base):

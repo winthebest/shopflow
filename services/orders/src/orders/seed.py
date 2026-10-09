@@ -57,9 +57,7 @@ async def _insert_missing(conn: AsyncConnection, model: type[Product | Customer]
 
 async def seed(database_url: str) -> None:
     products = [{"sku": sku, "name": name, "price": Decimal(price)} for sku, name, price in PRODUCTS]
-    customers = [
-        {"email": f"customer{n:03d}@example.com", "name": f"Customer {n:03d}"} for n in range(1, CUSTOMER_COUNT + 1)
-    ]
+    customers = [{"email": f"customer{n:03d}@example.com"} for n in range(1, CUSTOMER_COUNT + 1)]
     engine = create_engine(database_url)
     try:
         async with engine.begin() as conn:
