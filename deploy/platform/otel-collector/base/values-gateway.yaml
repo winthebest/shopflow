@@ -1,0 +1,75 @@
+# OTLP gateway (Deployment). Apps send traces to otel-gateway.observability.svc:4317 (docs/contracts/services.md).
+# Traces go to Tempo; the spanmetrics connector turns server spans into RED/SLI metrics (with trace exemplars),
+# which go to Prometheus through its native OTLP receiver. See docs/adr/0301-otel-collector-single-pipeline.md.
+mode: deployment
+fullnameOverride: otel-gateway
+replicaCount: 1
+
+image:
+  repository: otel/opentelemetry-collector-k8s
+  tag: "0.161.0"
+  digest: sha256:2fed8ff024bdb42473890724fa0833bd31e16197aa4790d8e0be3829f87f0de1
+command:
+  name: otelcol-k8s
+
+presets:
+  # Adds k8s.namespace.name / k8s.pod.name / k8s.deployment.name to spans (pod IP association).
+  kubernetesAttributes:
+    enabled: true
+
+ports:
+  jaeger-compact: {enabled: false}
+  jaeger-thrift: {enabled: false}
+  jaeger-grpc: {enabled: false}
+  zipkin: {enabled: false}
+
+resources:
+  requests: {cpu: 50m, memory: 128Mi}
+  limits: {memory: 256Mi}
+
+securityContext:
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: {drop: [ALL]}
+  seccompProfile: {type: RuntimeDefault}
+
+config:
+  receivers:
+    jaeger: null
+    zipkin: null
+    prometheus: null
+  connectors:
+    span_metrics:
+      namespace: traces.span.metrics
+      histogram:
+        unit: s
+        explicit:
+          # 300ms = checkout latency SLO threshold; 800ms/1s = orders→payments / gateway→orders timeouts.
+          buckets: [5ms, 10ms, 25ms, 50ms, 100ms, 200ms, 300ms, 500ms, 800ms, 1s, 2s, 5s]
+      dimensions:
+        - name: http.request.method
+        - name: http.route
+        - name: http.response.status_code
+      exemplars:
+        enabled: true
+      metrics_flush_interval: 15s
+  exporters:
+    otlp_grpc/tempo:
+      endpoint: tempo.observability.svc:4317
+      tls: {insecure: true}
+    otlp_http/prometheus:
+      # The exporter appends /v1/metrics → Prometheus 3 endpoint /api/v1/otlp/v1/metrics.
+      endpoint: http://kps-prometheus.observability.svc:9090/api/v1/otlp
+      tls: {insecure: true}
+  service:
+    pipelines:
+      logs: null
+      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, k8s_attributes, batch]
+        exporters: [otlp_grpc/tempo, span_metrics]
+      metrics:
+        receivers: [otlp, span_metrics]
+        processors: [memory_limiter, k8s_attributes, batch]
+        exporters: [otlp_http/prometheus]

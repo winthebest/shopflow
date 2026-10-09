@@ -1,0 +1,47 @@
+# Loki 3 monolithic (single process, filesystem storage). Logs arrive from the otel-agent DaemonSet over
+# Loki's native OTLP endpoint (/otlp); trace_id/span_id become structured metadata (log → trace in Grafana).
+# Chart: grafana-community/loki (the OSS chart moved out of grafana/helm-charts in 2026; docs/adr/0302-*).
+deploymentMode: Monolithic
+fullnameOverride: loki
+
+loki:
+  image:
+    tag: 3.7.8
+    digest: sha256:1107dd5274e0ada47e42472b7a7e71f3b2a2fe878878108f3e2f9e51528f0193
+  auth_enabled: false
+  commonConfig:
+    replication_factor: 1
+  storage:
+    type: filesystem
+  schemaConfig:
+    configs:
+      - from: "2026-01-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: index_
+          period: 24h
+  limits_config:
+    allow_structured_metadata: true
+    volume_enabled: true
+  compactor:
+    retention_enabled: true
+    delete_request_store: filesystem
+  analytics:
+    reporting_enabled: false
+
+singleBinary:
+  replicas: 1
+write: {replicas: 0}
+read: {replicas: 0}
+backend: {replicas: 0}
+
+# Single-process lab install: no nginx gateway, no memcached caches, no canary/test pods, no rules sidecar.
+gateway: {enabled: false}
+chunksCache: {enabled: false}
+resultsCache: {enabled: false}
+lokiCanary: {enabled: false}
+test: {enabled: false}
+sidecar:
+  rules: {enabled: false}

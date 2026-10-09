@@ -1,0 +1,39 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: shopflow
+    shopflow.io/profile: obs-lite
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: kube-prometheus-stack
+      targetRevision: 92.2.0
+      helm:
+        releaseName: kps
+        valueFiles:
+          - $values/deploy/platform/kube-prometheus-stack/base/values.yaml
+          - $values/deploy/platform/kube-prometheus-stack/local/values.yaml
+    - repoURL: https://github.com/winthebest/shopflow.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://github.com/winthebest/shopflow.git
+      targetRevision: main
+      path: deploy/platform/kube-prometheus-stack/local
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

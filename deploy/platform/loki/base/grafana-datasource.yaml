@@ -1,0 +1,29 @@
+# Grafana Loki datasource, picked up by the Grafana sidecar (label grafana_datasource=1). It ships with
+# Loki so profile obs-lite (no Loki) has no dangling datasource.
+# log → trace: Loki stores the OTLP trace_id as structured metadata; the derived field turns it into a
+# link to Tempo ("$$" escapes "$" from Grafana's env-var expansion in provisioning files).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasource-loki
+  namespace: observability
+  labels:
+    grafana_datasource: "1"
+data:
+  loki.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Loki
+        uid: loki
+        type: loki
+        access: proxy
+        url: http://loki.observability.svc:3100
+        jsonData:
+          maxLines: 1000
+          derivedFields:
+            - name: TraceID
+              matcherType: label
+              matcherRegex: trace_id
+              datasourceUid: tempo
+              url: "$${__value.raw}"
+              urlDisplayLabel: View trace

@@ -1,0 +1,23 @@
+# Dashboards as code: one ConfigMap per JSON file, picked up by the Grafana sidecar (label grafana_dashboard=1)
+# into the "Shopflow" folder (annotation grafana_folder).
+#   shopflow-*.json   written for this repo (RED, USE, SLO)
+#   cnpg-cluster.json vendored from github.com/cloudnative-pg/grafana-dashboards (Apache-2.0),
+#                     charts/cluster/grafana-dashboard.json @ 47e4c51219fdbb3c7ef2c4d91a2d8855e9ca1880
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: observability
+generatorOptions:
+  disableNameSuffixHash: true
+  labels:
+    grafana_dashboard: "1"
+  annotations:
+    grafana_folder: Shopflow
+configMapGenerator:
+  - name: dashboard-shopflow-red
+    files: [dashboards/shopflow-red.json]
+  - name: dashboard-shopflow-use-node
+    files: [dashboards/shopflow-use-node.json]
+  - name: dashboard-shopflow-slo-checkout
+    files: [dashboards/shopflow-slo-checkout.json]
+  - name: dashboard-cnpg-cluster
+    files: [dashboards/cnpg-cluster.json]

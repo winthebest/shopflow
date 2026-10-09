@@ -1,0 +1,25 @@
+# Guards the checkout SLOs against a false green: burn-rate alerts stay silent when the SLI has no data
+# (Collector down, span_metrics broken, gateway not instrumented). The span_metrics connector keeps
+# exporting every series it has seen (no expiration), so the series only disappears when the pipeline
+# breaks or no checkout request has reached the gateway since the Collector started.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: checkout-sli-guard
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: shopflow
+spec:
+  groups:
+    - name: shopflow-checkout-sli-guard
+      rules:
+        - alert: CheckoutSLIMissing
+          expr: |
+            absent(traces_span_metrics_calls_total{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/checkout"})
+          for: 15m
+          labels:
+            severity: ticket
+            team: sf-sre
+          annotations:
+            summary: "No checkout SLI data for 15m: SLO burn-rate alerts cannot fire."
+            runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/checkout-sli-missing.md

@@ -1,0 +1,44 @@
+# Grafana Tempo datasource, picked up by the Grafana sidecar (label grafana_datasource=1).
+# trace → logs: Loki query on the span's service + the trace_id structured metadata.
+# trace → metrics: RED queries on the span_metrics series of the same service.
+# ("$$" escapes "$" from Grafana's env-var expansion in provisioning files.)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasource-tempo
+  namespace: observability
+  labels:
+    grafana_datasource: "1"
+data:
+  tempo.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Tempo
+        uid: tempo
+        type: tempo
+        access: proxy
+        url: http://tempo.observability.svc:3200
+        jsonData:
+          tracesToLogsV2:
+            datasourceUid: loki
+            spanStartTimeShift: -5m
+            spanEndTimeShift: 5m
+            tags:
+              - {key: service.name, value: service_name}
+            customQuery: true
+            query: '{$${__tags}} | trace_id="$${__trace.traceId}"'
+          tracesToMetrics:
+            datasourceUid: prometheus
+            spanStartTimeShift: -5m
+            spanEndTimeShift: 5m
+            tags:
+              - {key: service.name, value: service_name}
+            queries:
+              - name: Request rate
+                query: 'sum(rate(traces_span_metrics_calls_total{$$__tags, span_kind="SPAN_KIND_SERVER"}[5m]))'
+              - name: p99 latency
+                query: 'histogram_quantile(0.99, sum by (le) (rate(traces_span_metrics_duration_seconds_bucket{$$__tags, span_kind="SPAN_KIND_SERVER"}[5m])))'
+          lokiSearch:
+            datasourceUid: loki
+          nodeGraph:
+            enabled: false

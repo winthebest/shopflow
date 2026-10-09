@@ -1,0 +1,506 @@
+{
+  "uid": "shopflow-slo-checkout",
+  "title": "Shopflow / SLO – checkout",
+  "description": "Checkout availability and latency SLOs (slo/checkout.yaml, docs/slo/checkout.md): budget over 28 days and a 1-day lab view.",
+  "tags": [
+    "shopflow",
+    "slo"
+  ],
+  "timezone": "browser",
+  "editable": false,
+  "graphTooltip": 1,
+  "schemaVersion": 41,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "slo",
+        "label": "SLO",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(slo:objective:ratio{sloth_service=\"checkout\"}, sloth_slo)",
+          "refId": "v"
+        },
+        "definition": "label_values(slo:objective:ratio{sloth_service=\"checkout\"}, sloth_slo)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": [],
+  "panels": [
+    {
+      "type": "row",
+      "title": "SLO: $slo",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [],
+      "repeat": "slo",
+      "id": 1
+    },
+    {
+      "type": "stat",
+      "title": "Objective",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "slo:objective:ratio{sloth_service=\"checkout\", sloth_slo=\"$slo\"}",
+          "instant": true
+        }
+      ],
+      "id": 2
+    },
+    {
+      "type": "stat",
+      "title": "SLI, 28-day window",
+      "description": "Mean of 5m SLI ratios over 28 days (Sloth optimisation). Local Prometheus keeps 3 days, so locally this is at most the last 3 days.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 1,
+        "w": 5,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 3
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "1 - slo:sli_error:ratio_rate4w{sloth_service=\"checkout\", sloth_slo=\"$slo\"}",
+          "instant": true
+        }
+      ],
+      "id": 3
+    },
+    {
+      "type": "stat",
+      "title": "Error budget left, 28-day window",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 9,
+        "y": 1,
+        "w": 5,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.25
+              },
+              {
+                "color": "green",
+                "value": 0.5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "slo:period_error_budget_remaining:ratio{sloth_service=\"checkout\", sloth_slo=\"$slo\"}",
+          "instant": true
+        }
+      ],
+      "id": 4
+    },
+    {
+      "type": "stat",
+      "title": "Error budget left, 1-day view (lab)",
+      "description": "Same budget maths over the last 24h: the window a lab session can actually observe.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 14,
+        "y": 1,
+        "w": 5,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.25
+              },
+              {
+                "color": "green",
+                "value": 0.5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "1 - slo:sli_error:ratio_rate1d{sloth_service=\"checkout\", sloth_slo=\"$slo\"} / on(sloth_id, sloth_slo, sloth_service) group_left slo:error_budget:ratio{sloth_service=\"checkout\", sloth_slo=\"$slo\"}",
+          "instant": true
+        }
+      ],
+      "id": 5
+    },
+    {
+      "type": "stat",
+      "title": "Burn rate now (5m)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 19,
+        "y": 1,
+        "w": 5,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 14.4
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "slo:current_burn_rate:ratio{sloth_service=\"checkout\", sloth_slo=\"$slo\"}",
+          "instant": true
+        }
+      ],
+      "id": 6
+    },
+    {
+      "type": "timeseries",
+      "title": "Burn rate by window (page: 14.4× 1h & 5m, 6× 6h & 30m; ticket: 3× 1d & 2h, 1× 3d & 6h)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 16,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "stacking": {
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "orange",
+                "value": 6
+              },
+              {
+                "color": "red",
+                "value": 14.4
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "slo:sli_error:ratio_rate5m{sloth_service=\"checkout\", sloth_slo=\"$slo\"} / on(sloth_id, sloth_slo, sloth_service) group_left slo:error_budget:ratio{sloth_service=\"checkout\", sloth_slo=\"$slo\"}",
+          "legendFormat": "5m"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "B",
+          "expr": "slo:sli_error:ratio_rate30m{sloth_service=\"checkout\", sloth_slo=\"$slo\"} / on(sloth_id, sloth_slo, sloth_service) group_left slo:error_budget:ratio{sloth_service=\"checkout\", sloth_slo=\"$slo\"}",
+          "legendFormat": "30m"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "C",
+          "expr": "slo:sli_error:ratio_rate1h{sloth_service=\"checkout\", sloth_slo=\"$slo\"} / on(sloth_id, sloth_slo, sloth_service) group_left slo:error_budget:ratio{sloth_service=\"checkout\", sloth_slo=\"$slo\"}",
+          "legendFormat": "1h"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "D",
+          "expr": "slo:sli_error:ratio_rate2h{sloth_service=\"checkout\", sloth_slo=\"$slo\"} / on(sloth_id, sloth_slo, sloth_service) group_left slo:error_budget:ratio{sloth_service=\"checkout\", sloth_slo=\"$slo\"}",
+          "legendFormat": "2h"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "E",
+          "expr": "slo:sli_error:ratio_rate6h{sloth_service=\"checkout\", sloth_slo=\"$slo\"} / on(sloth_id, sloth_slo, sloth_service) group_left slo:error_budget:ratio{sloth_service=\"checkout\", sloth_slo=\"$slo\"}",
+          "legendFormat": "6h"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "F",
+          "expr": "slo:sli_error:ratio_rate1d{sloth_service=\"checkout\", sloth_slo=\"$slo\"} / on(sloth_id, sloth_slo, sloth_service) group_left slo:error_budget:ratio{sloth_service=\"checkout\", sloth_slo=\"$slo\"}",
+          "legendFormat": "1d"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "G",
+          "expr": "slo:sli_error:ratio_rate3d{sloth_service=\"checkout\", sloth_slo=\"$slo\"} / on(sloth_id, sloth_slo, sloth_service) group_left slo:error_budget:ratio{sloth_service=\"checkout\", sloth_slo=\"$slo\"}",
+          "legendFormat": "3d"
+        }
+      ],
+      "id": 7
+    },
+    {
+      "type": "table",
+      "title": "Firing / pending SLO alerts",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 5,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "ALERTS{sloth_service=\"checkout\", sloth_slo=\"$slo\"}",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "includeByName": {
+              "alertname": true,
+              "alertstate": true,
+              "severity": true
+            }
+          }
+        }
+      ],
+      "id": 8
+    }
+  ]
+}

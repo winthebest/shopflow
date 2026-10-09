@@ -1,0 +1,19 @@
+# Profile obs: full telemetry (metrics, logs, traces, SLOs). Mutually exclusive with profile obs-lite
+# (same otel-gateway release).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../apps/kube-prometheus-stack
+  - ../../apps/slo
+  - ../../apps/grafana-dashboards
+  - ../../apps/loki
+  - ../../apps/tempo
+  - ../../apps/otel-collector
+components:
+  - ../_common
+replacements:
+  - source: {kind: ConfigMap, name: git-revision, fieldPath: data.revision}
+    targets:
+      - select: {kind: Application}
+        fieldPaths:
+          - spec.sources.[repoURL=https://github.com/winthebest/shopflow.git].targetRevision

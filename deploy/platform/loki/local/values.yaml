@@ -1,0 +1,10 @@
+# Local (k3d) overlay: 2-day retention, small PVC, laptop-sized requests.
+loki:
+  limits_config:
+    retention_period: 48h
+singleBinary:
+  persistence:
+    size: 5Gi
+  resources:
+    requests: {cpu: 50m, memory: 192Mi}
+    limits: {memory: 512Mi}

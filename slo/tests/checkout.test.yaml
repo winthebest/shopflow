@@ -1,0 +1,146 @@
+# promtool unit tests for the checkout SLO rules (run by `make sre-rules-test`).
+# The rule files are the `.spec` of the PrometheusRules in deploy/platform/slo/base/, extracted next to
+# this file at test time. Traffic is 100 req/s (6000/min). Every scenario starts with >3 days of healthy
+# history so the 1d/3d windows behave as in a long-running system; the incident starts at minute 6000.
+rule_files:
+  - checkout-slo.rules.yaml
+  - checkout-sli-guard.rules.yaml
+evaluation_interval: 1m
+
+tests:
+  # Phase 3 step 7: payments slowed to 600ms → every checkout is slow. Theory: the 1h window passes
+  # 14.4 × 1% = 14.4% slow after 0.144 × 60 = 8.6 min; the alert reads the recording rules, so it can lag by
+  # one evaluation interval (promtool does not order rule groups). Silent at +8m, firing by +10m.
+  - name: latency page fires 9-10 minutes after all checkouts turn slow
+    interval: 1m
+    input_series:
+      - series: 'traces_span_metrics_duration_seconds_count{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/checkout"}'
+        values: '0+6000x6100'
+      - series: 'traces_span_metrics_duration_seconds_bucket{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/checkout",le="0.3"}'
+        values: '0+6000x6000 36000000+0x100'
+      - series: 'traces_span_metrics_calls_total{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/checkout",http_response_status_code="200"}'
+        values: '0+6000x6100'
+    alert_rule_test:
+      - eval_time: 6008m
+        alertname: CheckoutLatencyBurn
+        exp_alerts: []
+      - eval_time: 6010m
+        alertname: CheckoutLatencyBurn
+        exp_alerts:
+          - exp_labels: {severity: page, sloth_id: checkout-latency, sloth_service: checkout, sloth_severity: page, sloth_slo: latency, team: sf-sre}
+            exp_annotations:
+              summary: "Checkout requests are slower than 300ms faster than the 99% SLO allows."
+              title: "(page) checkout latency SLO error budget burn rate is too fast."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/checkout-latency.md
+      - eval_time: 6010m
+        alertname: CheckoutAvailabilityBurn
+        exp_alerts: []
+
+  # Every checkout returns 503 (the 5xx series appears with the first error). Theory: 14.4 × 0.5% = 7.2%
+  # of the 1h window → 4.3 min (rate() extrapolation at the series start makes it a bit earlier), plus up to
+  # one evaluation interval of lag (promtool does not order rule groups). Silent at +3m, firing by +5m.
+  - name: availability page fires 4-5 minutes after all checkouts fail
+    interval: 1m
+    input_series:
+      - series: 'traces_span_metrics_calls_total{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/checkout",http_response_status_code="200"}'
+        values: '0+6000x6000 36000000+0x100'
+      - series: 'traces_span_metrics_calls_total{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/checkout",http_response_status_code="503"}'
+        values: '_x6000 6000+6000x99'
+    alert_rule_test:
+      - eval_time: 6003m
+        alertname: CheckoutAvailabilityBurn
+        exp_alerts: []
+      - eval_time: 6005m
+        alertname: CheckoutAvailabilityBurn
+        exp_alerts:
+          - exp_labels: {severity: page, sloth_id: checkout-availability, sloth_service: checkout, sloth_severity: page, sloth_slo: availability, team: sf-sre}
+            exp_annotations:
+              summary: "Checkout is returning 5xx faster than the 99.5% SLO allows."
+              title: "(page) checkout availability SLO error budget burn rate is too fast."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/checkout-availability.md
+
+  # 15 minutes of slow checkouts, then the fault is removed: the page resolves once the 5m short window
+  # clears, and the short incident is not big enough to open a ticket (1d/3d windows stay under 3×/1×).
+  # (A full 20-minute outage would also trip the 6×/6h page: 6% of 6h is 21.6 minutes.)
+  - name: latency page resolves after the fault is removed
+    interval: 1m
+    input_series:
+      - series: 'traces_span_metrics_duration_seconds_count{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/checkout"}'
+        values: '0+6000x6100'
+      - series: 'traces_span_metrics_duration_seconds_bucket{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/checkout",le="0.3"}'
+        values: '0+6000x6000 36000000+0x15 36000000+6000x85'
+    alert_rule_test:
+      - eval_time: 6015m
+        alertname: CheckoutLatencyBurn
+        exp_alerts:
+          - exp_labels: {severity: page, sloth_id: checkout-latency, sloth_service: checkout, sloth_severity: page, sloth_slo: latency, team: sf-sre}
+            exp_annotations:
+              summary: "Checkout requests are slower than 300ms faster than the 99% SLO allows."
+              title: "(page) checkout latency SLO error budget burn rate is too fast."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/checkout-latency.md
+      - eval_time: 6022m
+        alertname: CheckoutLatencyBurn
+        exp_alerts: []
+
+  # Slow burn: 4% of checkouts are slow (4× budget). Too slow to page (needs 6× over 6h), but the
+  # ticket (3× over 1d and 2h) fires once the 1d window passes 3%: 0.03/0.04 × 24h = 18h.
+  - name: slow burn opens a ticket after ~18h and never pages
+    interval: 1m
+    input_series:
+      - series: 'traces_span_metrics_duration_seconds_count{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/checkout"}'
+        values: '0+100x7200'
+      - series: 'traces_span_metrics_duration_seconds_bucket{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/checkout",le="0.3"}'
+        values: '0+100x6000 600000+96x1200'
+    alert_rule_test:
+      - eval_time: 7020m   # +17h
+        alertname: CheckoutLatencyBurn
+        exp_alerts: []
+      - eval_time: 7140m   # +19h
+        alertname: CheckoutLatencyBurn
+        exp_alerts:
+          - exp_labels: {severity: ticket, sloth_id: checkout-latency, sloth_service: checkout, sloth_severity: ticket, sloth_slo: latency, team: sf-sre}
+            exp_annotations:
+              summary: "Checkout requests are slower than 300ms faster than the 99% SLO allows."
+              title: "(ticket) checkout latency SLO error budget burn rate is too fast."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/checkout-latency.md
+
+  # Lab clusters sit idle between load tests. An idle window must yield no SLI sample (not NaN), so the
+  # 28-day ratio stays a number and the remaining error budget stays visible.
+  - name: idle periods do not poison the 28-day SLI with NaN
+    interval: 1m
+    input_series:
+      - series: 'traces_span_metrics_calls_total{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/checkout",http_response_status_code="200"}'
+        values: '0+6000x60 360000+0x60'
+      - series: 'traces_span_metrics_duration_seconds_count{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/checkout"}'
+        values: '0+6000x60 360000+0x60'
+      - series: 'traces_span_metrics_duration_seconds_bucket{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/checkout",le="0.3"}'
+        values: '0+6000x60 360000+0x60'
+    promql_expr_test:
+      - expr: slo:sli_error:ratio_rate5m{sloth_service="checkout"}
+        eval_time: 110m
+        exp_samples: []
+      - expr: slo:period_error_budget_remaining:ratio{sloth_service="checkout"}
+        eval_time: 110m
+        exp_samples:
+          - labels: 'slo:period_error_budget_remaining:ratio{sloth_id="checkout-availability", sloth_service="checkout", sloth_slo="availability", sloth_window="4w", team="sf-sre"}'
+            value: 1
+          - labels: 'slo:period_error_budget_remaining:ratio{sloth_id="checkout-latency", sloth_service="checkout", sloth_slo="latency", sloth_window="4w", team="sf-sre"}'
+            value: 1
+
+  # No checkout series at all (Collector down / never received a checkout): the guard fires after 15m.
+  - name: missing SLI data raises a ticket
+    interval: 1m
+    input_series:
+      - series: 'traces_span_metrics_calls_total{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/products",http_response_status_code="200"}'
+        values: '0+60x30'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: CheckoutSLIMissing
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: CheckoutSLIMissing
+        exp_alerts:
+          - exp_labels: {severity: ticket, team: sf-sre, service_name: gateway, span_kind: SPAN_KIND_SERVER, http_route: /checkout}
+            exp_annotations:
+              summary: "No checkout SLI data for 15m: SLO burn-rate alerts cannot fire."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/checkout-sli-missing.md

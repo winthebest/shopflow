@@ -1,0 +1,16 @@
+# 28-day SLO period with the burn-rate factors fixed by the plan (phase-03):
+#   page   14.4× over 1h (short 5m)  or  6× over 6h (short 30m)
+#   ticket  3× over 1d (short 2h)    or  1× over 3d (short 6h)
+# Sloth expresses windows as "% of the period's error budget consumed in the long window":
+#   factor = errorBudgetPercent/100 × period/longWindow  →  percent = factor × longWindow/672h × 100
+# (Sloth's built-in google-28d keeps the 30-day *percentages* instead, which gives 13.44/5.6/2.8/0.93.)
+apiVersion: sloth.slok.dev/v1
+kind: AlertWindows
+spec:
+  sloPeriod: 28d
+  page:
+    quick: {errorBudgetPercent: 2.142857142857143, shortWindow: 5m, longWindow: 1h}
+    slow: {errorBudgetPercent: 5.357142857142857, shortWindow: 30m, longWindow: 6h}
+  ticket:
+    quick: {errorBudgetPercent: 10.714285714285714, shortWindow: 2h, longWindow: 1d}
+    slow: {errorBudgetPercent: 10.714285714285714, shortWindow: 6h, longWindow: 3d}
