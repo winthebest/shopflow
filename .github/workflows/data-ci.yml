@@ -1,6 +1,6 @@
-# sf-data checks that need no cluster: GitOps components (render + kubeconform), freshness-exporter tests, and the
-# image builds (each only when its sources change: Kafka Connect cached, freshness-exporter + Trivy). Nothing here
-# publishes, so builds may use the Actions cache; publishing is data-images.yml.
+# sf-data checks that need no cluster: GitOps components (render + kubeconform), freshness-exporter tests, dbt (parse
+# + sqlfluff), and the image builds (each only when its sources change: Kafka Connect cached, freshness-exporter +
+# Trivy). Nothing here publishes, so builds may use the Actions cache; publishing is data-images.yml.
 # Actions are pinned by commit SHA (tag in the comment). Read-only token, no id-token.
 name: data-ci
 
@@ -17,6 +17,7 @@ on:
       - deploy/argocd/apps/**
       - deploy/argocd/profiles/data/**
       - data/contracts/**  # the CDC table list and bronze columns are checked against them
+      - data/dbt/**
       - images/kafka-connect/**
       - services/freshness-exporter/**
       - scripts/data-*.sh
@@ -83,6 +84,24 @@ jobs:
 
       - name: Lint and unit tests
         run: make data-exporter-test
+
+  dbt:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.12"
+          enable-cache: false
+
+      - name: dbt parse + sqlfluff
+        run: make data-dbt-check
 
   changes:
     runs-on: ubuntu-24.04

@@ -1,0 +1,35 @@
+# Bronze (append-only CDC, docs/adr/0406) -> silver (current state of the latest completed CDC epoch) -> gold marts.
+# Models live in Trino catalog `lake`; Postgres is read through catalog `pg` (CDC epochs, reconciliation).
+name: shopflow
+version: "0.1.0"
+config-version: 2
+profile: shopflow
+
+model-paths: [models]
+macro-paths: [macros]
+test-paths: [tests]
+clean-targets: [target, dbt_packages, logs]
+
+flags:
+  send_anonymous_usage_stats: false
+  require_certificate_validation: true  # profiles.yml points `cert` at the internal CA
+
+vars:
+  # Reconciliation skips rows changed in the last N minutes (CDC lag allowance). Pass 0 at a quiet point (k6
+  # stopped, lag ~ 0): silver must then equal Postgres exactly.
+  reconcile_lag_minutes: 15
+
+models:
+  shopflow:
+    staging:
+      +materialized: ephemeral
+    silver:
+      +schema: silver
+      +materialized: table
+      # Full rebuild every run (demo-sized data, docs/adr/0413). `replace` (CREATE OR REPLACE) keeps one Iceberg
+      # table whose snapshots accumulate; the adapter default `rename` would create a new table each run.
+      +on_table_exists: replace
+    gold:
+      +schema: gold
+      +materialized: table
+      +on_table_exists: replace

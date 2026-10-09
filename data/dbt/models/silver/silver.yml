@@ -1,0 +1,83 @@
+version: 2
+
+# Current state of each shop table in the latest completed CDC epoch (macros/cdc.sql), rebuilt in full on every run.
+# Tests tagged `reconciliation` compare with Postgres (tests/generic/reconciles_with_postgres.sql): the hourly run
+# excludes them, the daily reconciliation DAG runs them.
+
+models:
+  - name: customers
+    columns:
+      - name: id
+        data_tests: [unique, not_null]
+      - name: email
+        data_tests: [not_null]
+    data_tests:
+      - reconciles_with_postgres:
+          arguments: {source_table: customers, compare: [email, name]}
+          config: {tags: [reconciliation]}
+
+  - name: products
+    columns:
+      - name: id
+        data_tests: [unique, not_null]
+      - name: sku
+        data_tests: [unique, not_null]
+    data_tests:
+      - reconciles_with_postgres:
+          arguments: {source_table: products, compare: [sku, name, price]}
+          config: {tags: [reconciliation]}
+
+  - name: orders
+    columns:
+      - name: id
+        data_tests: [unique, not_null]
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('customers'), field: id}
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments: {values: [pending, paid, failed]}
+    data_tests:
+      - reconciles_with_postgres:
+          arguments: {source_table: orders, compare: [customer_id, status, total]}
+          config: {tags: [reconciliation]}
+
+  - name: order_items
+    columns:
+      - name: id
+        data_tests: [unique, not_null]
+      - name: order_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('orders'), field: id}
+      - name: product_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('products'), field: id}
+    data_tests:
+      - reconciles_with_postgres:
+          arguments: {source_table: order_items, compare: [order_id, product_id, quantity, unit_price]}
+          config: {tags: [reconciliation]}
+
+  - name: payments
+    columns:
+      - name: id
+        data_tests: [unique, not_null]
+      - name: order_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('orders'), field: id}
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments: {values: [succeeded, declined, error]}
+    data_tests:
+      - reconciles_with_postgres:
+          arguments: {source_table: payments, compare: [order_id, amount, status]}
+          config: {tags: [reconciliation]}
