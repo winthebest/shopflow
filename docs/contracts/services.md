@@ -13,9 +13,26 @@ Owner: orchestrator. Changes go through a PR reviewed by the orchestrator, becau
 
 Timeouts: gateway → orders 1s, orders → payments 800ms.
 
+### `POST /checkout` responses (gateway)
+
+A payment decline is a business outcome, not a server error: it must never be a 5xx (the availability SLO counts
+every gateway 5xx as bad).
+
+| Case | Status | Body |
+|---|---|---|
+| Paid | `201` | order, `status: "paid"` |
+| Declined by payments | `201` | order, `status: "failed"` |
+| Invalid input, unknown customer/product, total too large | `422` | `detail` |
+| Payments timed out (order settled `failed`) | `504` | `detail`, `order_id`, `status` |
+| Payments unreachable / bad answer (order settled `failed`) | `502` | `detail`, `order_id`, `status` |
+| Orders timed out / unreachable / 5xx (incl. DB errors) | `504` / `502` | `detail` |
+
 ## Common runtime contract
 
-- **Health**: `GET /healthz` (liveness, no dependencies) and `GET /readyz` (readiness, checks downstream/DB).
+- **Health**: `GET /healthz` (liveness, no dependencies) and `GET /readyz` (readiness). Readiness checks only a
+  service's own hard dependency: `orders` checks the DB (≤1s); `gateway` and `payments` have none. Gateway must
+  stay Ready when orders is down so it answers 502/504 itself (and emits server spans) instead of Envoy's
+  `503 no healthy upstream`.
 - **Shutdown**: handle SIGTERM, stop accepting requests, drain in-flight requests within 20s.
 - **Logs**: JSON lines on stdout, one object per line, with these keys (exact names):
   `timestamp` (RFC 3339, UTC), `level` (`DEBUG|INFO|WARNING|ERROR`), `message`, `service`, `trace_id`,
@@ -36,7 +53,7 @@ Timeouts: gateway → orders 1s, orders → payments 800ms.
 | Service | Variable | Example / default |
 |---|---|---|
 | gateway | `ORDERS_URL` | `http://orders.shop.svc:8001` |
-| orders | `DATABASE_URL` | from Secret `shop-db-app` key `uri` (CNPG managed role `shop_app`) |
+| orders | `DATABASE_URL` | from Secret `shop-db-app` key `uri` (CNPG creates it for the `bootstrap.initdb` owner `shop_app`) |
 | orders | `PAYMENTS_URL` | `http://payments.shop.svc:8002` |
 | payments | `PAYMENT_LATENCY_MS` | `50` |
 | payments | `PAYMENT_FAILURE_RATE` | `0.02` (0–1) |
@@ -44,7 +61,9 @@ Timeouts: gateway → orders 1s, orders → payments 800ms.
 
 ## Database
 
-- CNPG `Cluster` name `shop-db`, namespace `shop`, database `shop`, owner role `shop_app`.
+- CNPG `Cluster` name `shop-db`, namespace `shop`, `bootstrap.initdb` database `shop`, owner `shop_app`
+  (non-superuser; CNPG creates Secret `shop-db-app` for this owner).
+- `updated_at` is the writing transaction's `now()`, not commit order: time-based cutoffs on it need a lookback window.
 - Schema is owned by Alembic in `services/orders/migrations/` (only owner of the schema).
 - Migration runs as a Kubernetes Job before the services roll out: image = orders image, command `["migrate"]` (wraps `alembic upgrade head`).
 - `wal_level=logical` from day 1 (CDC in Phase 4).
@@ -63,3 +82,5 @@ Timeouts: gateway → orders 1s, orders → payments 800ms.
 - Pods carry `app.kubernetes.io/name: <service>` and `app.kubernetes.io/part-of: shopflow` (the log pipeline maps
   `app.kubernetes.io/name` to `service.name`).
 - Only `gateway` gets an `HTTPRoute`. Local host: `shop.127.0.0.1.sslip.io`.
+- Pod lifecycle: `preStop` sleep ~5s (endpoints are removed before uvicorn closes its socket),
+  `terminationGracePeriodSeconds: 30` (5s + 20s drain + margin); readiness probe `timeoutSeconds: 2`.
