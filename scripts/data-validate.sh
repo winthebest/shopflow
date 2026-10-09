@@ -25,6 +25,7 @@ STRIMZI_VERSION="$(yq '.spec.sources[0].targetRevision' deploy/argocd/apps/strim
 # Objects with declared properties are closed (additionalProperties: false) unless the CRD keeps unknown fields:
 # the API server would silently prune a misspelled field, so CI has to reject it.
 crds_to_schemas() {
+  # shellcheck disable=SC2016 # $s is a yq variable, not a shell expansion
   yq -o=json -I=0 'select(.kind == "CustomResourceDefinition") | .spec as $s | .spec.versions[]
     | {"path": ($s.group + "/" + ($s.names.kind | downcase) + "_" + .name + ".json"), "schema": .schema.openAPIV3Schema}' \
     | while IFS= read -r line; do
@@ -149,13 +150,13 @@ check_cdc_contracts() { # rendered-kafka rendered-kafka-connect
 # copy script is identical in every component that ships it.
 check_secrets() {
   local f plain
-  for f in $(find deploy/platform/{strimzi,kafka,kafka-connect,seaweedfs,iceberg-catalog,trino} -name '*.enc.yaml' 2> /dev/null); do
+  while IFS= read -r f; do
     plain="$(yq '[(.stringData // {}), (.data // {})] | .[] | to_entries | .[] | select(.value | test("^ENC\\[") | not) | .key' "$f")"
     if [[ -n "$plain" ]]; then
       echo "FAIL $f: unencrypted keys: $plain" >&2
       return 1
     fi
-  done
+  done < <(find deploy/platform/{strimzi,kafka,kafka-connect,seaweedfs,iceberg-catalog,trino} -name '*.enc.yaml' 2> /dev/null)
   if ! cmp -s deploy/platform/iceberg-catalog/base/copy-secret.py deploy/platform/trino/base/copy-secret.py; then
     echo "FAIL copy-secret.py differs between iceberg-catalog and trino" >&2
     return 1
@@ -163,8 +164,33 @@ check_secrets() {
   echo "secrets: all sf-data *.enc.yaml values encrypted; copy-secret.py identical"
 }
 
+# `cdc-epoch.sh new` against a fake kubectl: it must select the context from CLUSTER and apply a Namespace, the
+# cdc-epoch Secret and the per-epoch KafkaTopic that pass kubeconform -strict (no cluster in CI).
+check_cdc_epoch_new() {
+  local fake
+  fake="$(mktemp -d)"
+  cat > "$fake/kubectl" << 'SH'
+#!/usr/bin/env bash
+echo "$*" >> "$FAKE_DIR/calls.log"
+case "$*" in
+  *"create namespace"*) printf 'apiVersion: v1\nkind: Namespace\nmetadata:\n  name: kafka\n' ;;
+  *"apply -f -"*) { cat; echo "---"; } >> "$FAKE_DIR/applied.yaml" ;;
+esac
+SH
+  chmod +x "$fake/kubectl"
+  FAKE_DIR="$fake" PATH="$fake:$PATH" CLUSTER=sf-ci scripts/cdc-epoch.sh new --epoch 1234567890 --timeout 5 > "$fake/out"
+  [[ "$(cat "$fake/out")" == 1234567890 ]] || { echo "FAIL cdc-epoch.sh new did not print the epoch" >&2; return 1; }
+  grep -q -- '--context k3d-sf-ci apply' "$fake/calls.log" || { echo "FAIL cdc-epoch.sh new ignored CLUSTER" >&2; return 1; }
+  [[ "$(yq -N 'select(.kind == "KafkaTopic") | .spec.topicName' "$fake/applied.yaml")" == iceberg-control-1234567890 ]] \
+    || { echo "FAIL cdc-epoch.sh new: no KafkaTopic iceberg-control-<epoch>" >&2; return 1; }
+  kubeconform_strict < "$fake/applied.yaml"
+  rm -rf "$fake"
+  echo "cdc-epoch.sh new: Secret + KafkaTopic valid (fake kubectl)"
+}
+
 generate_schemas
 check_secrets
+check_cdc_epoch_new
 RENDER_DIR="$(mktemp -d)"
 trap 'rm -rf "$RENDER_DIR"' EXIT
 validated=0

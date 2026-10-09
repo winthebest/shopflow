@@ -52,6 +52,7 @@ secret() {
   while (($#)); do
     # Literal block scalar: safe for any value (JSON, bcrypt hashes).
     printf '  %s: |-\n' "$1"
+    # shellcheck disable=SC2001 # indents every line of a multi-line value
     sed 's/^/    /' <<< "$2"
     shift 2
   done
