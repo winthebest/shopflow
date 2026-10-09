@@ -1,0 +1,33 @@
+# Postgres for the shop (CNPG Cluster shop-db). A stateful backend at wave 0, so it is ready before the shop
+# app's PreSync migration hook runs (a hook cannot wait for a Cluster created in its own app).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shop-db
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: shopflow
+    shopflow.io/profile: core
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  sources:
+    - repoURL: https://github.com/winthebest/shopflow.git
+      targetRevision: main
+      path: deploy/platform/shop-db/local
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: shop
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

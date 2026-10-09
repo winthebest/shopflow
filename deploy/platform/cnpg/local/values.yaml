@@ -1,0 +1,2 @@
+# Local overrides for the CNPG operator (none yet; the aws overlay adds the barman-cloud plugin).
+{}

@@ -1,0 +1,89 @@
+# Shop chart defaults (environment-neutral). Runtime contract: docs/contracts/services.md.
+# Overlays: values-local.yaml (k3d); an aws file is added in Phase 6.
+
+# deployment.environment resource attribute for telemetry.
+environment: ""
+logLevel: INFO
+
+# OpenTelemetry stays off until Phase 3 provides the collector (contract: OTEL_SDK_DISABLED=true until then).
+otel:
+  enabled: false
+  endpoint: http://otel-gateway.observability.svc:4317
+
+# Images from ghcr.io/winthebest (multi-arch index digests). The tag is for humans; the digest is what runs.
+services:
+  gateway:
+    image:
+      repository: ghcr.io/winthebest/shopflow-gateway
+      tag: sha-255cdbf
+      digest: sha256:8ef56d32535f72149cdade2dc235b6895ff0ebca59ef3ac9dc5aa126874817bb
+    port: 8000
+    replicas: 2
+    env:
+      ORDERS_URL: http://orders.shop.svc:8001
+    resources:
+      requests: {cpu: 50m, memory: 96Mi}
+      limits: {memory: 256Mi}
+  orders:
+    image:
+      repository: ghcr.io/winthebest/shopflow-orders
+      tag: sha-255cdbf
+      digest: sha256:3169cc8bd32592cd3138c566daed55a8794f79dfb7b030a24cf2985812b47ef6
+    port: 8001
+    replicas: 2
+    env:
+      PAYMENTS_URL: http://payments.shop.svc:8002
+    # DATABASE_URL comes from the Secret CNPG creates for the bootstrap owner `shop_app`.
+    databaseSecret:
+      name: shop-db-app
+      key: uri
+    resources:
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {memory: 320Mi}
+  payments:
+    image:
+      repository: ghcr.io/winthebest/shopflow-payments
+      tag: sha-255cdbf
+      digest: sha256:be669357ca83ca74a38c10d729b4ba0f0099dfdf915f8dd8a09cd340ef2fdf5b
+    port: 8002
+    replicas: 2
+    env:
+      PAYMENT_LATENCY_MS: "50"
+      PAYMENT_FAILURE_RATE: "0.02"
+    resources:
+      requests: {cpu: 50m, memory: 96Mi}
+      limits: {memory: 256Mi}
+
+# Schema migration: Argo CD PreSync hook, so it finishes before any pod of the new release rolls out.
+migration:
+  enabled: true
+  service: orders          # image + DATABASE_URL source
+  command: ["migrate"]
+  activeDeadlineSeconds: 300
+
+# Demo data (idempotent `seed` entrypoint): PostSync hook, after the services are up.
+seed:
+  enabled: false
+  service: orders
+  command: ["seed"]
+  activeDeadlineSeconds: 300
+
+# The only public route (docs/adr/0205-admin-ui-port-forward-only.md). Hostname is set per environment.
+route:
+  enabled: true
+  service: gateway
+  hostname: ""
+  parentRef:
+    name: shopflow
+    namespace: envoy-gateway-system
+    sectionName: https
+
+# Probes and lifecycle from the runtime contract: preStop sleep so endpoints drop before uvicorn closes its socket,
+# 20s drain + margin within the grace period, readiness timeout 2s.
+lifecycle:
+  preStopSleepSeconds: 5
+  terminationGracePeriodSeconds: 30
+probes:
+  readiness: {periodSeconds: 5, timeoutSeconds: 2, failureThreshold: 3}
+  liveness: {periodSeconds: 10, timeoutSeconds: 2, failureThreshold: 3}
+  startup: {periodSeconds: 2, timeoutSeconds: 2, failureThreshold: 30}

@@ -71,7 +71,8 @@ metadata:
       exec:
         path: ksops
 files:
-  - ./<name>.enc.yaml
+  # relative to the overlay directory (where kustomize runs), not to this generator file
+  - ./secrets/<name>.enc.yaml
 ```
 
 and `generators: [secrets/ksops-generator.yaml]` in the overlay's `kustomization.yaml`. For a random password
