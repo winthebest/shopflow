@@ -1,0 +1,203 @@
+# promtool unit tests for the CDC SLI, SLO burn alerts and cause alerts (sf-data).
+# The rule files are the `.spec` of cdc-slo / cdc-sli in deploy/platform/slo/base/, extracted next to this file.
+# The exporter "started" at t=0 (process_start_time_seconds 0) unless a test says otherwise; long healthy histories
+# (6000 minutes, > 4 days) make the 1d/3d windows behave as in a long-running system.
+rule_files:
+  - cdc-slo.rules.yaml
+  - cdc-sli.rules.yaml
+evaluation_interval: 1m
+
+tests:
+  # The per-minute SLI in every state that matters.
+  - name: SLI is 0 when bronze is fresh, 1 when stale or blind, absent while starting or without the data profile
+    interval: 1m
+    input_series:
+      - series: 'kube_namespace_status_phase{namespace="lakehouse",phase="Active"}'
+        values: '1x120'
+      - series: 'process_start_time_seconds{job="freshness-exporter"}'
+        values: '0x120'
+      # 0-39m fresh (60s), 40-59m stale (400s), 60-79m probe failing (no freshness sample), 80-120m exporter gone.
+      - series: 'data_freshness_seconds{job="freshness-exporter",table="bronze.heartbeat"}'
+        values: '60x39 400x19'
+      - series: 'freshness_probe_success{job="freshness-exporter",table="bronze.heartbeat"}'
+        values: '1x59 0x19'
+    promql_expr_test:
+      - expr: cdc:bronze_heartbeat_stale:minute
+        eval_time: 10m
+        exp_samples: []  # first 15 minutes after the exporter started: not counted
+      - expr: cdc:bronze_heartbeat_stale:minute
+        eval_time: 30m
+        exp_samples: [{labels: 'cdc:bronze_heartbeat_stale:minute', value: 0}]
+      - expr: cdc:bronze_heartbeat_stale:minute
+        eval_time: 50m
+        exp_samples: [{labels: 'cdc:bronze_heartbeat_stale:minute', value: 1}]
+      - expr: cdc:bronze_heartbeat_stale:minute
+        eval_time: 70m
+        exp_samples: [{labels: 'cdc:bronze_heartbeat_stale:minute', value: 1}]
+      - expr: cdc:bronze_heartbeat_stale:minute
+        eval_time: 100m
+        exp_samples: [{labels: 'cdc:bronze_heartbeat_stale:minute', value: 1}]
+
+  - name: no SLI samples and no alerts on a cluster without the data profile
+    interval: 1m
+    input_series:
+      - series: 'kube_namespace_status_phase{namespace="shop",phase="Active"}'
+        values: '1x120'
+    promql_expr_test:
+      - expr: cdc:bronze_heartbeat_stale:minute
+        eval_time: 100m
+        exp_samples: []
+    alert_rule_test:
+      - {eval_time: 100m, alertname: CdcFreshnessProbeDown, exp_alerts: []}
+      - {eval_time: 100m, alertname: CdcConnectorFailed, exp_alerts: []}
+      - {eval_time: 100m, alertname: CdcLagBurn, exp_alerts: []}
+      - {eval_time: 100m, alertname: KafkaBrokerDown, exp_alerts: []}
+
+  # Idle lab: no shop traffic, but the heartbeat keeps bronze.heartbeat about one sink commit (60s) old.
+  - name: idle lab stays green for days
+    interval: 1m
+    input_series:
+      - series: 'kube_namespace_status_phase{namespace="lakehouse",phase="Active"}'
+        values: '1x6100'
+      - series: 'process_start_time_seconds{job="freshness-exporter"}'
+        values: '0x6100'
+      - series: 'data_freshness_seconds{job="freshness-exporter",table="bronze.heartbeat"}'
+        values: '70x6100'
+      - series: 'freshness_probe_success{job="freshness-exporter",table="bronze.heartbeat"}'
+        values: '1x6100'
+    alert_rule_test:
+      - {eval_time: 6100m, alertname: CdcLagBurn, exp_alerts: []}
+      - {eval_time: 6100m, alertname: CdcFreshnessProbeDown, exp_alerts: []}
+
+  # Connector stopped at 6000m: bronze ages 60s per minute and crosses 5 minutes at 6004m. Theory: the 1h window
+  # passes 14.4 × 1% = 14.4% bad after 9 bad minutes (6012m), plus up to two evaluation intervals for the chained
+  # recording rules. Silent at +10m, page by +15m.
+  - name: cdc-lag page fires 13-15 minutes after changes stop reaching bronze
+    interval: 1m
+    input_series:
+      - series: 'kube_namespace_status_phase{namespace="lakehouse",phase="Active"}'
+        values: '1x6100'
+      - series: 'process_start_time_seconds{job="freshness-exporter"}'
+        values: '0x6100'
+      - series: 'data_freshness_seconds{job="freshness-exporter",table="bronze.heartbeat"}'
+        values: '60x6000 120+60x100'
+      - series: 'freshness_probe_success{job="freshness-exporter",table="bronze.heartbeat"}'
+        values: '1x6100'
+    alert_rule_test:
+      - {eval_time: 6010m, alertname: CdcLagBurn, exp_alerts: []}
+      - eval_time: 6015m
+        alertname: CdcLagBurn
+        exp_alerts:
+          - exp_labels: {severity: page, sloth_id: cdc-lag, sloth_service: cdc, sloth_severity: page, sloth_slo: lag, team: sf-data}
+            exp_annotations:
+              summary: "Bronze is falling behind Postgres faster than the 99% cdc-lag SLO allows."
+              title: "(page) cdc lag SLO error budget burn rate is too fast."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/cdc-lag.md
+
+  # Trino (or Polaris, or the exporter's credentials) breaks at 6000m: the probe fails, freshness disappears.
+  - name: probe failure alerts after 10 minutes and burns the SLO
+    interval: 1m
+    input_series:
+      - series: 'kube_namespace_status_phase{namespace="lakehouse",phase="Active"}'
+        values: '1x6100'
+      - series: 'process_start_time_seconds{job="freshness-exporter"}'
+        values: '0x6100'
+      - series: 'data_freshness_seconds{job="freshness-exporter",table="bronze.heartbeat"}'
+        values: '60x5999'
+      - series: 'freshness_probe_success{job="freshness-exporter",table="bronze.heartbeat"}'
+        values: '1x5999 0x101'
+    alert_rule_test:
+      - {eval_time: 6005m, alertname: CdcFreshnessProbeDown, exp_alerts: []}
+      - eval_time: 6012m
+        alertname: CdcFreshnessProbeDown
+        exp_alerts:
+          - exp_labels: {severity: ticket, team: sf-data}
+            exp_annotations:
+              summary: "No bronze freshness measurement for 10m: the cdc-lag SLO counts these minutes as bad."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/freshness-probe-down.md
+      - eval_time: 6015m
+        alertname: CdcLagBurn
+        exp_alerts:
+          - exp_labels: {severity: page, sloth_id: cdc-lag, sloth_service: cdc, sloth_severity: page, sloth_slo: lag, team: sf-data}
+            exp_annotations:
+              summary: "Bronze is falling behind Postgres faster than the 99% cdc-lag SLO allows."
+              title: "(page) cdc lag SLO error budget burn rate is too fast."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/cdc-lag.md
+
+  # The exporter disappears entirely (deleted, crash-looping, not scraped): absent series must not look green.
+  - name: absent exporter alerts after 10 minutes
+    interval: 1m
+    input_series:
+      - series: 'kube_namespace_status_phase{namespace="lakehouse",phase="Active"}'
+        values: '1x120'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: CdcFreshnessProbeDown
+        exp_alerts:
+          - exp_labels: {severity: ticket, team: sf-data, table: bronze.heartbeat}
+            exp_annotations:
+              summary: "No bronze freshness measurement for 10m: the cdc-lag SLO counts these minutes as bad."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/freshness-probe-down.md
+
+  # Exporter restarted at 6000m while the probe is still failing (pipeline coming up): silent for 15 minutes, then
+  # the normal 10-minute `for`.
+  - name: probe alert is held during the first 15 minutes after the exporter starts
+    interval: 1m
+    input_series:
+      - series: 'kube_namespace_status_phase{namespace="lakehouse",phase="Active"}'
+        values: '1x6100'
+      - series: 'process_start_time_seconds{job="freshness-exporter"}'
+        values: '0x5999 360000x101'
+      - series: 'freshness_probe_success{job="freshness-exporter",table="bronze.heartbeat"}'
+        values: '1x5999 0x101'
+      - series: 'data_freshness_seconds{job="freshness-exporter",table="bronze.heartbeat"}'
+        values: '60x5999'
+    alert_rule_test:
+      - {eval_time: 6020m, alertname: CdcFreshnessProbeDown, exp_alerts: []}
+      - eval_time: 6027m
+        alertname: CdcFreshnessProbeDown
+        exp_alerts:
+          - exp_labels: {severity: ticket, team: sf-data}
+            exp_annotations:
+              summary: "No bronze freshness measurement for 10m: the cdc-lag SLO counts these minutes as bad."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/freshness-probe-down.md
+
+  - name: a failed connector task alerts after 10 minutes, once per connector
+    interval: 1m
+    input_series:
+      - series: 'kube_namespace_status_phase{namespace="kafka",phase="Active"}'
+        values: '1x120'
+      - series: 'kafka_connect_connector_task_status{connector="iceberg-sink",task="0",status="running"}'
+        values: '1x120'
+      - series: 'kafka_connect_connector_task_status{connector="shop-postgres",task="0",status="running"}'
+        values: '1x60'
+      - series: 'kafka_connect_connector_task_status{connector="shop-postgres",task="0",status="failed"}'
+        values: '_x60 1x60'
+    alert_rule_test:
+      - {eval_time: 60m, alertname: CdcConnectorFailed, exp_alerts: []}
+      - eval_time: 75m
+        alertname: CdcConnectorFailed
+        exp_alerts:
+          - exp_labels: {severity: ticket, team: sf-data, connector: shop-postgres}
+            exp_annotations:
+              summary: "CDC connector shop-postgres has had no running task for 10m."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/connector-failed.md
+
+  - name: a Kafka node that is not Ready pages after 5 minutes
+    interval: 1m
+    input_series:
+      - series: 'kube_pod_info{namespace="kafka",pod="shopflow-dual-role-0"}'
+        values: '1x60'
+      - series: 'kube_pod_status_ready{namespace="kafka",pod="shopflow-dual-role-0",condition="true"}'
+        values: '1x30 0x30'
+      - series: 'kube_pod_info{namespace="kafka",pod="cdc-connect-0"}'
+        values: '1x60'
+    alert_rule_test:
+      - {eval_time: 30m, alertname: KafkaBrokerDown, exp_alerts: []}
+      - eval_time: 37m
+        alertname: KafkaBrokerDown
+        exp_alerts:
+          - exp_labels: {severity: page, team: sf-data}
+            exp_annotations:
+              summary: "1 Kafka node(s) of cluster shopflow are not Ready for 5m."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/kafka-broker-down.md

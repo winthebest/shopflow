@@ -8,6 +8,7 @@ resources:
   - ../../apps/seaweedfs
   - ../../apps/iceberg-catalog
   - ../../apps/trino
+  - ../../apps/freshness-exporter
 components:
   - ../_common
 replacements:

@@ -1,0 +1,38 @@
+# CDC SLO (sf-data; source of truth, plan phase 4). Sloth turns it into
+# deploy/platform/slo/base/cdc-slo.prometheusrule.yaml with the repo's 28-day windows (slo/windows/).
+#
+# cdc-lag: 99% of minutes, a change committed in Postgres is visible in Iceberg bronze within 5 minutes.
+# The SLI is the per-minute recording rule cdc:bronze_heartbeat_stale:minute (cdc-sli.prometheusrule.yaml):
+# 1 = bad (bronze.heartbeat older than 5 minutes, probe failed, or exporter absent), 0 = good, no sample = not
+# counted (first 15 minutes after the exporter starts; clusters without the data profile).
+# Source-side companion signal (dashboards, triage): debezium_metrics_millisecondsbehindsource{context="streaming"}.
+apiVersion: sloth.slok.dev/v1
+kind: PrometheusServiceLevel
+metadata:
+  name: cdc
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: shopflow
+spec:
+  service: cdc
+  labels:
+    team: sf-data
+  slos:
+    - name: lag
+      objective: 99
+      description: "99% of minutes: Postgres changes reach Iceberg bronze within 5 minutes."
+      sli:
+        events:
+          errorQuery: |
+            sum_over_time(cdc:bronze_heartbeat_stale:minute[{{.window}}])
+          totalQuery: |
+            count_over_time(cdc:bronze_heartbeat_stale:minute[{{.window}}])
+      alerting:
+        name: CdcLagBurn
+        annotations:
+          summary: "Bronze is falling behind Postgres faster than the 99% cdc-lag SLO allows."
+          runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/cdc-lag.md
+        pageAlert:
+          labels: {severity: page}
+        ticketAlert:
+          labels: {severity: ticket}
