@@ -1,0 +1,267 @@
+# Profile data: namespaces kafka and lakehouse (docs/adr/0208-psa-and-network-policies.md, flows: docs/contracts/environment.md "Network flows").
+# baseline until the Strimzi operator runs with its restricted pod security provider (warn/audit show the gap).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kafka
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+---
+# baseline until Trino sets runAsNonRoot and a seccomp profile (warn/audit show the gap).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lakehouse
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: kafka
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: kafka
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+# Components of one namespace trust each other; flows that cross namespaces are listed one by one.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: kafka
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: lakehouse
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: lakehouse
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+# Components of one namespace trust each other; flows that cross namespaces are listed one by one.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: lakehouse
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+---
+# kafka: Debezium + Iceberg sink (KafkaConnect) -> Postgres, Polaris, SeaweedFS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: connect-egress
+  namespace: kafka
+spec:
+  podSelector:
+    matchLabels: {strimzi.io/kind: KafkaConnect}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: shop}
+          podSelector:
+            matchLabels: {cnpg.io/cluster: shop-db}
+      ports:
+        - {protocol: TCP, port: 5432}
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: lakehouse}
+      ports:
+        - {protocol: TCP, port: 8181}
+        - {protocol: TCP, port: 8333}
+---
+# kafka ingress: Prometheus scrapes Connect/Debezium metrics; Flink jobs read the CDC topics over TLS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kafka-ingress
+  namespace: kafka
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: prometheus}
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: flink}
+      ports:
+        - {protocol: TCP, port: 9093}
+---
+# kafka -> OTLP (Connect metrics/traces, when exported).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: otlp-egress
+  namespace: kafka
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/instance: otel-gateway}
+      ports:
+        - {protocol: TCP, port: 4317}
+        - {protocol: TCP, port: 4318}
+---
+# Strimzi operator and entity operator manage resources; Connect reads Secrets through its config provider.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: apiserver
+  namespace: kafka
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    # API server: k3s node IP:6443, EKS endpoint ENIs on 443 (no pod selector matches the host network).
+    - ports:
+        - {protocol: TCP, port: 6443}
+        - {protocol: TCP, port: 443}
+---
+# lakehouse ingress: Connect (catalog + objects), Airflow (dbt, maintenance) -> Trino, Flink checkpoints, Prometheus.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lakehouse-ingress
+  namespace: lakehouse
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kafka}
+          podSelector:
+            matchLabels: {strimzi.io/kind: KafkaConnect}
+      ports:
+        - {protocol: TCP, port: 8181}
+        - {protocol: TCP, port: 8333}
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: airflow}
+      ports:
+        - {protocol: TCP, port: 8443}
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: flink}
+      ports:
+        - {protocol: TCP, port: 8333}
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: prometheus}
+---
+# lakehouse egress: Trino's `pg` catalog and Polaris' metadata database are on shop-db; OTLP.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lakehouse-egress
+  namespace: lakehouse
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: shop}
+          podSelector:
+            matchLabels: {cnpg.io/cluster: shop-db}
+      ports:
+        - {protocol: TCP, port: 5432}
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/instance: otel-gateway}
+      ports:
+        - {protocol: TCP, port: 4317}
+        - {protocol: TCP, port: 4318}
+---
+# polaris-setup and the secret copy Jobs write/read Secrets through the API server.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: apiserver
+  namespace: lakehouse
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    # API server: k3s node IP:6443, EKS endpoint ENIs on 443 (no pod selector matches the host network).
+    - ports:
+        - {protocol: TCP, port: 6443}
+        - {protocol: TCP, port: 443}

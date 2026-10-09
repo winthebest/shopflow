@@ -22,9 +22,18 @@ NetworkPolicy with its embedded controller (kube-router); on EKS the VPC CNI net
   - Before enforcing, every running pod passed a server-side dry-run of the label.
   - A fresh `make up` with the labels in place had no PodSecurity rejection. This includes the chart hook Jobs
     (certgen, startupapicheck, migrations).
-  - `observability` will be `privileged` or `baseline` (node-exporter, OTel agent need host access), with the
-    reason recorded when that profile is labelled.
-- **NetworkPolicy** for the workload namespaces, starting with `shop` and the edge (`envoy-gateway-system`):
+  - Profile namespaces get their own apps, listed by each profile's owner: `network-policies-obs` (obs, obs-lite)
+    and `network-policies-data` (data). Levels come from a server-side dry-run of the rendered workloads:
+    - `observability`: **privileged**. node-exporter needs hostNetwork, hostPID and hostPath (/proc, /sys); the
+      OTel agent reads pod logs through hostPath. warn/audit run at baseline.
+    - `kafka`: **baseline**, until the Strimzi operator uses its restricted pod security provider.
+    - `lakehouse`: **baseline**, until Trino sets runAsNonRoot and a seccomp profile.
+    - For both, warn/audit run at restricted to show the gap.
+- **NetworkPolicy** for the workload namespaces. Per-pod least privilege in `shop` and the edge
+  (`envoy-gateway-system`). In `observability`, `kafka` and `lakehouse`, pods of one namespace trust each other and
+  every cross-namespace flow of the contract is listed. Prometheus may scrape any port in the cluster and the node
+  ports (read-only scraper).
+  The rules for `shop` and the edge:
   - `default-deny` (ingress + egress) plus DNS to kube-dns.
   - Then one policy per workload with exactly the contract's flows: edge → gateway → orders → payments/Postgres;
     consumers in kafka/lakehouse/airflow/flink/observability → Postgres; Prometheus → metrics; CNPG operator →
