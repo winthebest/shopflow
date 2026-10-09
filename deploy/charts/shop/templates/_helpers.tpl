@@ -39,8 +39,11 @@ capabilities:
   drop: ["ALL"]
 {{- end }}
 
-{{/* Environment shared by every container: log level and OpenTelemetry (off until Phase 3). */}}
+{{/* Environment shared by every container: log level and OpenTelemetry. Callers may pass `otelEnabled` to
+     override .Values.otel.enabled (the one-off Jobs keep the SDK off: no spans worth exporting, no exit delay). */}}
 {{- define "shop.commonEnv" -}}
+{{- $otelEnabled := .root.Values.otel.enabled -}}
+{{- if hasKey . "otelEnabled" }}{{ $otelEnabled = .otelEnabled }}{{ end -}}
 - name: LOG_LEVEL
   value: {{ .root.Values.logLevel | quote }}
 - name: OTEL_SERVICE_NAME
@@ -49,7 +52,7 @@ capabilities:
   value: {{ printf "deployment.environment=%s" (required "environment is required (local or aws)" .root.Values.environment) | quote }}
 - name: OTEL_SEMCONV_STABILITY_OPT_IN
   value: http
-{{- if .root.Values.otel.enabled }}
+{{- if $otelEnabled }}
 - name: OTEL_SDK_DISABLED
   value: "false"
 - name: OTEL_EXPORTER_OTLP_ENDPOINT
@@ -83,7 +86,7 @@ containers:
     command:
       {{- toYaml .job.command | nindent 6 }}
     env:
-      {{- include "shop.commonEnv" (dict "root" .root "name" .name "svc" $svc) | nindent 6 }}
+      {{- include "shop.commonEnv" (dict "root" .root "name" .name "svc" $svc "otelEnabled" false) | nindent 6 }}
     resources:
       {{- toYaml $svc.resources | nindent 6 }}
     securityContext:
