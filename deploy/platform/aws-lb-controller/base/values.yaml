@@ -1,0 +1,24 @@
+# AWS Load Balancer Controller v3.5.0 (chart 3.5.0), image pinned by digest (rendered as `repository:tag`).
+image:
+  repository: public.ecr.aws/eks/aws-load-balancer-controller
+  tag: v3.5.0@sha256:298acdff5a571731276aaea3d5cc450a264e4ad710a5bddf3e518f68a3f9f6cb
+# One replica: a short-lived single-operator cluster; a restart only delays reconciling the NLB.
+replicaCount: 1
+resources:
+  requests: {cpu: 20m, memory: 64Mi}
+  limits: {memory: 256Mi}
+securityContext:
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+  seccompProfile:
+    type: RuntimeDefault
+# The webhook certificate comes from cert-manager (core profile): the chart's built-in generator creates a new
+# certificate on every render, which Argo CD would see as a permanent diff.
+enableCertManager: true
+# No Shield Advanced, WAF or Ingress: the controller only provisions the NLB of the Envoy Gateway Service.
+enableShield: false
+enableWaf: false
+enableWafv2: false

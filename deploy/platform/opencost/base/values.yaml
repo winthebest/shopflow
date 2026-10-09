@@ -1,0 +1,44 @@
+# OpenCost 1.121.3 (chart 2.5.32); images pinned by digest as released with the chart.
+opencost:
+  exporter:
+    image:
+      registry: ghcr.io
+      repository: opencost/opencost
+      tag: 1.121.3@sha256:4cdd173253e5abba048dfe2cfa968707a5b59d774157d5356940d0d923a6c281
+    defaultClusterId: shopflow
+    resources:
+      requests: {cpu: 10m, memory: 64Mi}
+      limits: {memory: 512Mi}
+    securityContext:
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault
+  ui:
+    enabled: true
+    image:
+      registry: ghcr.io
+      repository: opencost/opencost-ui
+      tag: 1.121.3@sha256:99ee2db766a074fcbc321bbddfae1851c159339f463a3c32a9ba87727576a3ed
+    resources:
+      requests: {cpu: 10m, memory: 32Mi}
+      limits: {memory: 128Mi}
+    securityContext:
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault
+  # Cost metrics back into Prometheus for Grafana (kube-prometheus-stack selects every ServiceMonitor).
+  metrics:
+    serviceMonitor:
+      enabled: true
+  prometheus:
+    internal:
+      enabled: true
+      serviceName: kps-prometheus
+      namespaceName: observability
+      port: 9090

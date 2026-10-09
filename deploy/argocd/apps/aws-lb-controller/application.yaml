@@ -1,0 +1,47 @@
+# AWS Load Balancer Controller (AWS only): provisions the internet-facing NLB for the Envoy Gateway Service and
+# tags everything it creates project=shopflow,env=aws (Budgets, reapers). Pod Identity role
+# shopflow-pod-aws-lb-controller carries the upstream v3.5.0 IAM policy (infra/tofu/bootstrap/policies).
+# Session parameters needed from the platform-params mechanism (sf-platform, ADR 0206):
+#   aws.vpcId       -> Helm value `vpcId`       (required: IMDS hop limit 1 hides the VPC from pods)
+#   aws.region      -> Helm value `region`
+#   aws.clusterName -> Helm value `clusterName`
+# Not part of any profile yet: the aws root apps wire it once ADR 0206 lands.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: aws-lb-controller
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: shopflow
+    shopflow.io/profile: aws
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  project: default
+  sources:
+    - repoURL: https://aws.github.io/eks-charts
+      chart: aws-load-balancer-controller
+      targetRevision: 3.5.0
+      helm:
+        releaseName: aws-load-balancer-controller
+        valueFiles:
+          - $values/deploy/platform/aws-lb-controller/base/values.yaml
+          - $values/deploy/platform/aws-lb-controller/aws/values.yaml
+    - repoURL: https://github.com/winthebest/shopflow.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

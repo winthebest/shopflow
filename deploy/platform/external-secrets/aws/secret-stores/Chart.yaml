@@ -1,0 +1,5 @@
+apiVersion: v2
+name: shopflow-secret-stores
+description: SSM-backed ClusterSecretStores (one per namespace) and the ExternalSecrets that replace KSOPS on AWS.
+type: application
+version: 0.1.0
