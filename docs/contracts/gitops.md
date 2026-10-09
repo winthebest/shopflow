@@ -51,6 +51,10 @@ Third-party images are pinned by digest (Helm values or Kustomize `images:`).
 | 0 | Platform config and stateful backends (GatewayClass/Gateway, ClusterIssuer, Loki, Tempo, OTel Collector, Kafka, SeaweedFS, catalog, Trino) |
 | 1 | Workloads and resources that need CRDs from earlier waves (shop, PrometheusRule/SLO, dashboards, connectors) |
 
+Config that belongs to one controller may instead live inside that controller's app with an in-app
+`argocd.argoproj.io/sync-wave` and `SkipDryRunOnMissingResource=true` when it needs CRDs from the same sync
+(for example cert-manager's ClusterIssuers, Envoy Gateway's GatewayClass/Gateway).
+
 ## 4. Profiles
 
 - Profile = a directory `deploy/argocd/profiles/<profile>/kustomization.yaml` with this exact shape:
