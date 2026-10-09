@@ -1,0 +1,7 @@
+# gitleaks config shared by the pre-commit hook and the CI gate: the full default ruleset, no allowlists.
+# If a finding is a false positive, add the narrowest possible [[allowlists]] entry here (reviewed in the PR);
+# never allowlist a real secret: rotate it.
+title = "shopflow"
+
+[extend]
+useDefault = true

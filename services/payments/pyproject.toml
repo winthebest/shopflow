@@ -1,0 +1,19 @@
+[project]
+name = "shopflow-payments"
+version = "0.1.0"
+description = "Mock payment provider with configurable latency and failure rate"
+requires-python = ">=3.12,<3.13"
+dependencies = ["shopflow-common"]
+
+[project.scripts]
+payments = "payments.main:main"
+
+[tool.uv.sources]
+shopflow-common = { workspace = true }
+
+[tool.uv.build-backend]
+module-name = "payments"
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"

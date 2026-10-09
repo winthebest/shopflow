@@ -1,0 +1,19 @@
+[project]
+name = "shopflow-gateway"
+version = "0.1.0"
+description = "Public shop API: products, checkout, order lookup; forwards to orders"
+requires-python = ">=3.12,<3.13"
+dependencies = ["shopflow-common", "httpx>=0.28"]
+
+[project.scripts]
+gateway = "gateway.main:main"
+
+[tool.uv.sources]
+shopflow-common = { workspace = true }
+
+[tool.uv.build-backend]
+module-name = "gateway"
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"

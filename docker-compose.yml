@@ -1,0 +1,101 @@
+# Dev loop only (`make dev`); Kubernetes manifests live in deploy/charts/shop.
+# Host ports: Postgres 25432 (docs/contracts/environment.md), gateway 8000. Everything binds to 127.0.0.1.
+name: shopflow
+
+x-service: &service
+  read_only: true            # same as readOnlyRootFilesystem in Kubernetes: only /tmp is writable
+  tmpfs: [/tmp]
+  restart: unless-stopped
+  stop_grace_period: 25s     # services drain in-flight requests for up to 20s on SIGTERM
+  environment: &service-env
+    LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    # Trace ids in logs without a collector: SDK on, exporter off (Phase 3 sets the OTLP endpoint instead).
+    OTEL_SDK_DISABLED: "false"
+    OTEL_TRACES_EXPORTER: none
+    OTEL_SEMCONV_STABILITY_OPT_IN: http
+
+x-db-env: &db-env
+  # Dev-only credentials for a container bound to localhost; real environments use the CNPG secret.
+  DATABASE_URL: postgresql://shop_app:shop_app@postgres:5432/shop
+
+services:
+  postgres:
+    image: postgres:17.11@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
+    command: ["postgres", "-c", "wal_level=logical"]
+    environment:
+      POSTGRES_USER: shop_app
+      POSTGRES_PASSWORD: shop_app
+      POSTGRES_DB: shop
+    ports: ["127.0.0.1:25432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shop_app -d shop"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    build: {context: ., dockerfile: services/orders/Dockerfile}
+    image: shopflow-orders:dev
+    command: ["migrate"]
+    read_only: true
+    tmpfs: [/tmp]
+    environment: {<<: *db-env}
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  seed:
+    image: shopflow-orders:dev
+    command: ["seed"]
+    read_only: true
+    tmpfs: [/tmp]
+    environment: {<<: *db-env}
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+
+  payments:
+    <<: *service
+    build: {context: ., dockerfile: services/payments/Dockerfile}
+    image: shopflow-payments:dev
+    environment:
+      <<: *service-env
+      OTEL_SERVICE_NAME: payments
+      PAYMENT_LATENCY_MS: ${PAYMENT_LATENCY_MS:-50}
+      PAYMENT_FAILURE_RATE: ${PAYMENT_FAILURE_RATE:-0.02}
+    healthcheck: &healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen(sys.argv[1], timeout=2)", "http://localhost:8002/readyz"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  orders:
+    <<: *service
+    image: shopflow-orders:dev
+    environment:
+      <<: [*service-env, *db-env]
+      OTEL_SERVICE_NAME: orders
+      PAYMENTS_URL: http://payments:8002
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen(sys.argv[1], timeout=2)", "http://localhost:8001/readyz"]
+    depends_on:
+      seed: {condition: service_completed_successfully}
+      payments: {condition: service_healthy}
+
+  gateway:
+    <<: *service
+    build: {context: ., dockerfile: services/gateway/Dockerfile}
+    image: shopflow-gateway:dev
+    environment:
+      <<: *service-env
+      OTEL_SERVICE_NAME: gateway
+      ORDERS_URL: http://orders:8001
+    ports: ["127.0.0.1:8000:8000"]
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen(sys.argv[1], timeout=2)", "http://localhost:8000/readyz"]
+    depends_on:
+      orders: {condition: service_healthy}
+
+volumes:
+  pgdata:

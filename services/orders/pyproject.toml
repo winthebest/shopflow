@@ -1,0 +1,28 @@
+[project]
+name = "shopflow-orders"
+version = "0.1.0"
+description = "Orders service: owns the shop schema (Alembic), creates orders and settles them through payments"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "shopflow-common",
+    "alembic>=1.17",
+    "asyncpg>=0.30",
+    "httpx>=0.28",
+    "opentelemetry-instrumentation-asyncpg>=0.59b0",
+    "sqlalchemy[asyncio]>=2.0.44",
+]
+
+[project.scripts]
+orders = "orders.main:main"
+migrate = "orders.migrate:main"
+seed = "orders.seed:main"
+
+[tool.uv.sources]
+shopflow-common = { workspace = true }
+
+[tool.uv.build-backend]
+module-name = "orders"
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"
