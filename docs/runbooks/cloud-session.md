@@ -100,7 +100,7 @@ tofu -chdir=infra/tofu/network apply
 Secrets for External Secrets (SecureString, never on a command line):
 
 ```sh
-make cloud-seed-params < secrets.json                  # {"<namespace>": {"<name>": "<value>"}}
+make cloud-seed-params < secrets.json                  # {"<namespace>": {"<name>": "<value>" or {"<key>": "<value>"}}}
 make cloud-seed-params CLOUD_ARGS=--rotate < new.json  # overwrite the ones given
 ```
 
@@ -113,7 +113,7 @@ make cloud-seed-params CLOUD_ARGS=--rotate < new.json  # overwrite the ones give
 | `make cloud-up CLOUD_ARGS=--resume` | continues a cloud-up that stopped (reuses the recorded session plan) |
 | `make cloud-up CLOUD_ARGS="--pitr 2026-11-02T10:15:00Z"` | restores Postgres to that time |
 | `make cloud-extend HOURS=2` | lease + 2 h (max 8 h from now) and moves the Lambda schedule; nothing else |
-| `make cloud-pause` / `make cloud-resume` | node group to 0 and back (< 4 h breaks; control plane + NLB still bill ~$0.13/h) |
+| `make cloud-pause` / `make cloud-resume` | node group to 0 and back (< 4 h breaks; control plane, NLB and volumes still bill ~$0.16/h) |
 | `make cloud-down` | auto-sync off → final backup + pointer → evidence to S3 → Gateway/LB deleted, wait for ELBv2 → stateful CRs + PVCs deleted, wait for EBS → uninstall Argo CD → `tofu destroy` layer 2 (3 tries) → orphan check in every region → drop lease, session, schedule. Re-run it after any interruption |
 | `make cloud-down CLOUD_ARGS=--force-api` | paused or unreachable cluster: AWS API teardown like the reapers, no final backup |
 
@@ -131,7 +131,8 @@ kubeconfig through `KUBECONFIG`; after the apps are healthy cloud-up runs `scrip
 | `pg.serverName` | new `shop-db-<session>` every session, so a restored cluster never writes into the old chain |
 | `pg.recoveryTargetTime` | `--pitr` value or empty (latest) |
 | `cdcEpoch` | previous epoch + 1. Also written to SSM `/shopflow/aws/kafka/cdc-epoch` before the sync; ESO turns it into Secret `kafka/cdc-epoch` (key `epoch`), which the connector reads as `${secrets:kafka/cdc-epoch:epoch}` |
-| `aws.region`, `aws.vpcId`, `aws.clusterName` | for controllers that cannot read IMDS (hop limit 1), e.g. the LB controller |
+| `aws.region`, `aws.vpcId`, `aws.clusterName` | AWS Load Balancer Controller Helm values `region`, `vpcId` (required: pods cannot read IMDS, hop limit 1), `clusterName` |
+| `aws.accountId` | External Secrets store chart value `accountId` (role ARNs `shopflow-eso-<namespace>`) |
 | `aws.dataBucket` | `shopflow-data-<account>` (Iceberg warehouse, CNPG backups, Flink checkpoints) |
 
 ### Pod Identity: namespace/service account → role
@@ -150,8 +151,21 @@ session tags, so pointing another service account at a role does not work.
 | `flink` | `lakehouse/flink` | `flink-ckpt/*` (+ Glue/`iceberg/*` only with `flink_writes_iceberg`) |
 | `external-secrets` | `external-secrets/external-secrets` | may only assume `shopflow-eso-<namespace>` |
 
-External Secrets: one `SecretStore` per namespace with `role: arn:aws:iam::<account>:role/shopflow-eso-<namespace>`;
-each of those roles reads only `/shopflow/aws/<namespace>/*`. Namespaces: `eso_namespaces` in the contract.
+External Secrets (`deploy/platform/external-secrets/aws/secret-stores`): one ClusterSecretStore `ssm-<namespace>`
+per namespace in `eso_namespaces`, usable only from that namespace (`conditions`), assuming
+`shopflow-eso-<namespace>`, which reads only `/shopflow/aws/<namespace>/*`. Its `secrets` list maps each SSM
+parameter to a Kubernetes Secret with the same name and keys as the local KSOPS Secret, so workloads do not change:
+
+| Secret | SSM parameter (SecureString unless noted) | Seed value |
+|---|---|---|
+| `observability/grafana-admin` | `/shopflow/aws/observability/grafana-admin` | `{"admin-user": "...", "admin-password": "..."}` |
+| `observability/alertmanager-webhook` | `/shopflow/aws/observability/alertmanager-webhook` | `{"url": "..."}` |
+| `shop/shop-db-debezium`, `shop/shop-db-trino-pg`, `shop/shop-db-polaris` | `/shopflow/aws/shop/<name>` | `{"username": "...", "password": "..."}` |
+| `lakehouse/trino-exporter` | `/shopflow/aws/lakehouse/trino-exporter` | `{"password": "..."}` |
+| `kafka/cdc-epoch` (key `epoch`) | `/shopflow/aws/kafka/cdc-epoch` (String, written by cloud-up) | — |
+
+The shop-db role passwords must keep their first values: the roles come back with every restored database.
+`scripts/cloud-manifests-check.sh` (`make cloud-manifests`) fails if this chart drifts from the contract.
 
 ## Backup chain
 
@@ -201,6 +215,12 @@ cluster; reaper workflow disabled → the Lambda destroys it; a paused cluster �
 - [ ] `aws eks describe-addon-configuration --addon-name vpc-cni` / `aws-ebs-csi-driver`: confirm
       `enableNetworkPolicy`, `env.ADDITIONAL_ENI_TAGS` and `controller.extraVolumeTags` are in the schema.
 - [ ] Spot capacity in AZ-a for the instance types; add types if the node group stays `CREATE_FAILED`/pending.
+- [ ] The Envoy Gateway Service (sf-platform aws overlay) sets `loadBalancerClass: service.k8s.aws/nlb` itself.
+      Otherwise, if it is created before the LB controller's webhook is up, EKS's legacy cloud provider builds a
+      Classic ELB without the `project` tag, which the reapers cannot delete.
+- [ ] `kubectl get clustersecretstores,externalsecrets -A`: every store `Valid`, every ExternalSecret
+      `SecretSynced`. The usual causes are a missing `aws.accountId` parameter or an unseeded parameter.
+- [ ] OpenCost (`kubectl -n opencost port-forward svc/opencost 9090`) shows cost per namespace.
 - [ ] Measure $/hour (full stack and paused) and fill [`docs/cost.md`](../cost.md).
 
 ## Troubleshooting

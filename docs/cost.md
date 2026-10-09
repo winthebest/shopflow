@@ -38,18 +38,36 @@ EBS CSI `extraVolumeTags`, vpc-cni `ADDITIONAL_ENI_TAGS`, LB controller `--defau
 - **Every secret is SecureString** (default `aws/ssm` key), written only by `scripts/aws-seed-params.sh` from stdin.
   Never put a secret in a String parameter. See ADR 0508.
 
-## $/hour (fill after measuring)
+## $/hour
 
-| Item | Unit price (ap-southeast-1) | Full stack *measured* | Paused *measured* |
-|---|---|---|---|
-| EKS control plane (standard support) | $0.10/h | | |
-| Nodes: Graviton spot (types from `cloud-contract.json`) | spot, varies | | — |
-| EBS gp3 (node roots + PVCs) | per GB-month | | |
-| NLB (Envoy Gateway) | per hour + LCU | | |
-| Public IPv4 (nodes, NLB) | $0.005/h per address | | |
-| CloudWatch Logs (EKS audit + authenticator) | per GB ingested | | |
-| S3, Glue, SSM, Lambda, SNS, Scheduler | ≈ $0 at this scale | | |
-| **Total** | | | |
+*Estimates* come from AWS public prices for `ap-southeast-1` on 2026-10-09: the price list API files for EKS, ELB,
+VPC and CloudWatch, the EC2 on-demand and EBS price files behind the pricing pages, the public spot price feed, and
+the Spot Instance Advisor. No account was used. Spot prices move hourly. Replace the estimates with Cost Explorer
+numbers (Credit charge type excluded) after the first sessions.
+
+| Item | Unit price | Full stack *estimate* | Paused *estimate* | Full stack *measured* | Paused *measured* |
+|---|---|---|---|---|---|
+| EKS control plane, standard support | $0.10/h (extended support adds $0.50/h: `upgrade_policy = STANDARD` prevents it) | $0.100 | $0.100 | | |
+| Nodes: 2 × Graviton spot, 16 GiB each | spot $/h: r7g.large 0.051 · r6g.large 0.059 · m6g.xlarge 0.068 · m7g.xlarge 0.091 · c7g.2xlarge 0.165 (on-demand 0.12–0.33) | $0.10–0.18 | $0 | | |
+| Public IPv4 | $0.005/h per address: 2 nodes + NLB in 2 AZs | $0.020 | $0.010 | | |
+| EBS gp3 | $0.096/GB-month: 2 × 50 GB node roots + ~100 GB PVCs | $0.026 | $0.013 (PVCs only) | | |
+| NLB (Envoy Gateway) | $0.0252/h + $0.006 per NLCU-hour (demo traffic is far below 1 NLCU) | $0.026 | $0.026 | | |
+| CloudWatch Logs: EKS audit + authenticator | $0.70/GB ingested + $0.03/GB-month stored | $0.03–0.10 (50–150 MB/h; measure) | ≈ $0.01 | | |
+| S3, Glue, SSM, Lambda, SNS, Scheduler, Budgets | ≈ $0 at this scale (2 budgets with actions are free) | ≈ $0 | ≈ $0 | | |
+| **Total** | | **$0.30–0.45/h** | **≈ $0.16/h** | | |
+
+What this means:
+
+- A 4-hour session costs **about $1.2–1.8**. Phase 6's ~20 cloud hours fit the $7–10 estimate below.
+- A paused cluster is not free: about $0.16/h, or **≈ $3.8 per day**. Pause only for short breaks; run
+  `cloud-down` overnight.
+- The biggest uncertain line is the **EKS audit log** volume. If the measured ingestion is above ~$0.05/h, keep
+  only `authenticator` (`enabled_cluster_log_types`) outside security tests.
+- **Spot interruption rate in ap-southeast-1** (Spot Instance Advisor): c7g.2xlarge < 5% · r6g.large 5–10% ·
+  r7g.large 10–15% · m6g.xlarge and m7g.xlarge > 20%. Put types with fewer interruptions first when the node list
+  is finalized (ADR 0505); keep at least two types for capacity.
+- OpenCost shows the split between namespaces, but prices spot nodes at on-demand rates. Use it for relative
+  shares and Cost Explorer for absolute numbers.
 
 ## Budget plan (*estimate*, from plan.md; update with measured $/hour)
 
