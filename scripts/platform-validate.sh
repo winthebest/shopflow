@@ -30,11 +30,18 @@ trap 'rm -rf "$WORK"' EXIT
 rm -rf "$OUT_DIR" && mkdir -p "$OUT_DIR"
 cp -R "$ROOT_DIR/deploy" "$WORK/deploy"
 
-# Drop KSOPS generators from the copy (their Secrets cannot be decrypted here).
+# Drop KSOPS generators from the copy (their Secrets cannot be decrypted here). First check statically what
+# KSOPS would hit in the cluster: every listed file exists relative to the kustomization directory (KSOPS
+# resolves `files` from where kustomize runs, not from the generator file) and is SOPS-encrypted.
 while IFS= read -r kfile; do
   dir="$(dirname "$kfile")"
+  rel="${dir#"$WORK/"}"
   for gen in $(yq '.generators[]?' "$kfile"); do
     if [[ "$(yq '.kind' "$dir/$gen")" == "ksops" ]]; then
+      for enc in $(yq '.files[]' "$dir/$gen"); do
+        [[ -f "$dir/$enc" ]] || fail "$rel/$gen: $enc not found relative to $rel (KSOPS paths start at the kustomization directory)"
+        [[ "$(yq '.sops.mac // ""' "$dir/$enc")" != "" ]] || fail "$rel/$enc is not SOPS-encrypted"
+      done
       GEN="$gen" yq -i 'del(.generators[] | select(. == strenv(GEN)))' "$kfile"
     fi
   done
