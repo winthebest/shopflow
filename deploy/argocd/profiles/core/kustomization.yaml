@@ -1,0 +1,15 @@
+# Profile `core` (owner: sf-platform): the platform every other profile builds on.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../apps/cluster-secrets
+components:
+  - ../_common
+# Must stay inline in every profile (see ../_common/kustomization.yaml). Fails the build if an Application
+# has no source from this repo, so no app can silently ignore the root app's revision.
+replacements:
+  - source: {kind: ConfigMap, name: git-revision, fieldPath: data.revision}
+    targets:
+      - select: {kind: Application}
+        fieldPaths:
+          - spec.sources.[repoURL=https://github.com/winthebest/shopflow.git].targetRevision

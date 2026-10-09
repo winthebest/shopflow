@@ -1,0 +1,65 @@
+# Validates what Argo CD deploys: profiles, every Application source (Helm charts + Kustomize), the Argo CD
+# bootstrap chart, Kubernetes/CRD schemas and digest pinning. Same checks as `make platform-validate`.
+name: platform-ci
+
+on:
+  pull_request:
+    paths:
+      - "deploy/**"
+      - "scripts/k3d-*.sh"
+      - "scripts/platform-validate.sh"
+      - ".sops.yaml"
+      - "mk/platform.mk"
+      - ".github/workflows/platform-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "deploy/**"
+      - "scripts/k3d-*.sh"
+      - "scripts/platform-validate.sh"
+      - ".sops.yaml"
+      - "mk/platform.mk"
+      - ".github/workflows/platform-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  KUBECTL_VERSION: v1.36.1   # bundles kustomize v5.8.1
+  HELM_VERSION: v4.3.0
+  KUBECONFORM_VERSION: v0.8.0
+  KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Install kubeconform (checksum-verified)
+        run: |
+          curl -fsSLo /tmp/kubeconform.tar.gz \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  /tmp/kubeconform.tar.gz" | sha256sum -c -
+          sudo tar -xzf /tmp/kubeconform.tar.gz -C /usr/local/bin kubeconform
+
+      - name: Shellcheck platform scripts
+        run: shellcheck -x scripts/k3d-*.sh scripts/platform-validate.sh
+
+      - name: Render and validate deploy/
+        run: scripts/platform-validate.sh
