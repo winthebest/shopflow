@@ -27,6 +27,8 @@ ARGOCD_VALUES="$ROOT_DIR/deploy/argocd/bootstrap/values.yaml"
 ARGOCD_ADMIN_SECRET="$ROOT_DIR/deploy/secrets/local/argocd-admin.enc.yaml"
 ROOT_APP_TEMPLATE="$ROOT_DIR/deploy/argocd/root-app.yaml"
 
+has_profile() { [[ ",$PROFILES," == *",$1,"* ]]; }
+
 preflight() {
   require docker k3d kubectl helm sops yq jq htpasswd git
   docker info >/dev/null 2>&1 || die "Docker is not running"
@@ -39,9 +41,13 @@ preflight() {
     [[ "$profile" != _* && -f "$ROOT_DIR/deploy/argocd/profiles/$profile/kustomization.yaml" ]] \
       || die "unknown profile: $profile"
   done
-  # obs and obs-lite both own the otel-gateway release (docs/contracts/gitops.md §4).
-  if [[ ",$PROFILES," == *",obs,"* && ",$PROFILES," == *",obs-lite,"* ]]; then
+  # obs and obs-lite both own the otel-gateway release; data's ServiceMonitors and rules need the CRDs that
+  # either of them installs (docs/contracts/gitops.md §4).
+  if has_profile obs && has_profile obs-lite; then
     die "PROFILES cannot contain both obs and obs-lite; pick one"
+  fi
+  if has_profile data && ! has_profile obs && ! has_profile obs-lite; then
+    die "profile data needs obs or obs-lite in the same PROFILES (e.g. PROFILES=core,obs-lite,data)"
   fi
 
   # Argo CD reads Git from GitHub, not from this checkout, so the revision must be pushed. Resolve it to the
@@ -154,8 +160,46 @@ install_argocd() {
     --wait --timeout 10m >/dev/null
 }
 
+# Application names a profile deploys (from the local checkout of its kustomization).
+profile_apps() {
+  kubectl kustomize "$ROOT_DIR/deploy/argocd/profiles/$1" | yq -N 'select(.kind == "Application") | .metadata.name'
+}
+
+# obs and obs-lite are exclusive. When PROFILES asks for one and the cluster still runs the other, delete the old
+# root app first (non-cascading, so it cannot re-create anything), then the child apps only it had (their own
+# finalizers remove their resources). Apps both profiles share stay running and are adopted by the new root app.
+remove_excluded_profiles() {
+  local pair wanted excluded keep app
+  for pair in "obs obs-lite" "obs-lite obs"; do
+    read -r wanted excluded <<<"$pair"
+    has_profile "$wanted" || continue
+    kc -n argocd get applications.argoproj.io "root-$excluded" >/dev/null 2>&1 || continue
+    log "PROFILES has $wanted: removing root-$excluded and the apps only it deploys"
+    keep="$(for profile in "${PROFILE_LIST[@]}"; do profile_apps "$profile"; done)"
+    # Drop any resources finalizer first: deleting the root app must never cascade into the shared apps.
+    kc -n argocd patch applications.argoproj.io "root-$excluded" --type merge -p '{"metadata":{"finalizers":null}}' >/dev/null
+    kc -n argocd delete applications.argoproj.io "root-$excluded" --cascade=orphan --wait=true --timeout=120s >/dev/null
+    for app in $(profile_apps "$excluded"); do
+      grep -qxF "$app" <<<"$keep" && continue
+      log "  deleting app $app (only in $excluded)"
+      kc -n argocd delete applications.argoproj.io "$app" --ignore-not-found --wait=true --timeout=300s >/dev/null
+    done
+  done
+}
+
+# Profile data: start a new CDC epoch right after the root apps (sf-data's scripts/cdc-epoch.sh, ADR 0406). It waits
+# for the Strimzi CRDs itself and prints the epoch number.
+start_cdc_epoch() {
+  has_profile data || return 0
+  local epoch
+  epoch="$(CLUSTER="$CLUSTER" KUBE_CONTEXT="$KUBE_CONTEXT" "$ROOT_DIR/scripts/cdc-epoch.sh" new \
+    --timeout "$((WAIT_TIMEOUT > 600 ? WAIT_TIMEOUT : 600))")"
+  log "CDC epoch $epoch started"
+}
+
 apply_root_apps() {
   local profile
+  remove_excluded_profiles
   for profile in "${PROFILE_LIST[@]}"; do
     log "root app: root-$profile -> deploy/argocd/profiles/$profile @ $GIT_REVISION"
     PROFILE="$profile" REVISION="$GIT_REVISION" yq '
@@ -219,9 +263,17 @@ wait_for_apps() {
   done
 }
 
-preflight
-create_cluster
-install_argocd
-apply_root_apps
-wait_for_apps
-log "ready in ${SECONDS}s. Argo CD UI: make platform-argocd-ui CLUSTER=$CLUSTER (password: make platform-argocd-password)"
+main() {
+  preflight
+  create_cluster
+  install_argocd
+  apply_root_apps
+  start_cdc_epoch
+  wait_for_apps
+  log "ready in ${SECONDS}s. Argo CD UI: make platform-argocd-ui CLUSTER=$CLUSTER (password: make platform-argocd-password)"
+}
+
+# Run only when executed, so tests can source the functions.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main
+fi

@@ -15,7 +15,7 @@ Owner: sf-platform. Conventions: `docs/contracts/environment.md` (clusters, port
 |---|---|
 | Integration cluster on `main` | `make up` (cluster `sf-main`, profile `core`) |
 | Lane cluster on your branch | `make up CLUSTER=sf-platform GIT_REVISION=$(git branch --show-current)` |
-| More profiles | `make up CLUSTER=... PROFILES=core,obs-lite` (`obs` and `obs-lite` are exclusive) |
+| More profiles | `make up CLUSTER=... PROFILES=core,obs-lite` (`obs` and `obs-lite` are exclusive; `data` needs one of them) |
 | What is running | `make status CLUSTER=...` |
 | Argo CD UI | `make platform-argocd-ui CLUSTER=...` then open `https://localhost:18080` (`sf-main`; lanes 18081–18084) |
 | Argo CD password | `make platform-argocd-password` copies it to the clipboard (user `admin`) |
@@ -24,6 +24,16 @@ Owner: sf-platform. Conventions: `docs/contracts/environment.md` (clusters, port
 
 `make up` is idempotent: on an existing cluster it re-applies Argo CD and the root apps and waits for every
 Application to be `Synced` + `Healthy` (`WAIT_TIMEOUT`, default 900s).
+
+Profile changes on an existing cluster:
+
+- Switching `obs` ↔ `obs-lite`: `make up` deletes the other root app, then the apps only it deploys (e.g. loki,
+  tempo, otel-collector); apps both profiles share (kube-prometheus-stack, slo, grafana-dashboards) keep running
+  and are adopted by the new root app. Other profiles that are no longer listed are only reported, not removed.
+  The app lists come from the profiles in your local checkout: pull before switching, so they match the revision
+  the cluster tracks.
+- With `data`: right after the root apps, `make up` runs `scripts/cdc-epoch.sh new` (sf-data), so every `make up`
+  starts a new CDC epoch (ADR 0406).
 
 ## Image pull-through caches
 
