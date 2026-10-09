@@ -2,7 +2,7 @@
 
 On the cluster Trino runs that file; here there is no Trino, so the CREATE TABLE statements are translated to Iceberg
 REST create-table requests (same columns, types, partitioning and format version 2). Standard library only.
-Usage: create-bronze-tables.py <table> [<table> ...]
+Usage: create-bronze-tables.py [<table> ...]   (no argument: every table in the DDL)
 """
 
 import json
@@ -87,7 +87,7 @@ def main() -> None:
         },
         form=True,
     )["access_token"]
-    for name in sys.argv[1:]:
+    for name in sys.argv[1:] or sorted(tables):
         request("POST", "/api/catalog/v1/lake/namespaces/bronze/tables", token, tables[name])
         print(f"created bronze.{name} ({len(tables[name]['schema']['fields'])} columns, format-version 2)")
 

@@ -1,0 +1,16 @@
+{
+  "consumer.override.sasl.jaas.config": null,
+  "iceberg.kafka.bootstrap.servers": null,
+  "iceberg.kafka.security.protocol": null,
+  "iceberg.kafka.sasl.mechanism": null,
+  "iceberg.kafka.sasl.jaas.config": null,
+  "iceberg.kafka.ssl.truststore.type": null,
+  "iceberg.kafka.ssl.truststore.certificates": null,
+  "iceberg.control.topic": "iceberg-control-${env:CDC_EPOCH}",
+  "iceberg.control.commit.interval-ms": "10000",
+  "iceberg.catalog.uri": "http://polaris:8181/api/catalog",
+  "iceberg.catalog.credential": "${file:/opt/smoke/secrets/kafka/polaris-iceberg-sink.properties:credential}",
+  "iceberg.catalog.s3.endpoint": "http://seaweedfs:8333",
+  "iceberg.catalog.s3.access-key-id": "${env:SINK_S3_ACCESS_KEY}",
+  "iceberg.catalog.s3.secret-access-key": "${env:SINK_S3_SECRET_KEY}"
+}

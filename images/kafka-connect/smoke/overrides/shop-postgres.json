@@ -1,0 +1,7 @@
+{
+  "database.hostname": "postgres",
+  "database.user": "debezium",
+  "database.password": "${env:DEBEZIUM_PASSWORD}",
+  "database.sslmode": "disable",
+  "transforms.epoch.static.value": "${env:CDC_EPOCH}"
+}
