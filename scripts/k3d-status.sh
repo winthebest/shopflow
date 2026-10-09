@@ -26,5 +26,12 @@ kc get gateways.gateway.networking.k8s.io,httproutes.gateway.networking.k8s.io -
   || echo "(Gateway API not installed yet)"
 echo "   https://shop.127.0.0.1.sslip.io:$HTTPS_PORT"
 echo
-echo "== container memory"
-docker stats --no-stream --format '{{.Name}}\t{{.MemUsage}}' | grep -E "^(k3d-$CLUSTER-|$REGISTRY_NAME)" || true
+echo "== container memory (cluster, local registry, shared pull-through caches)"
+docker stats --no-stream --format '{{.Name}}\t{{.MemUsage}}' | grep -E "^(k3d-$CLUSTER-|$REGISTRY_NAME|k3d-shopflow-cache-)" || true
+echo
+echo "== pull-through cache disk use"
+volumes="$(docker system df -v --format json 2>/dev/null | jq -r '.Volumes[] | "\(.Name) \(.Size)"' || true)"
+for entry in "${REGISTRY_CACHES[@]}"; do
+  read -r name _ _ <<<"$entry"
+  printf '%s\t%s\n' "$name" "$(awk -v n="$name" '$1 == n {print $2}' <<<"$volumes" | grep . || echo "(not created)")"
+done

@@ -25,6 +25,18 @@ Owner: sf-platform. Conventions: `docs/contracts/environment.md` (clusters, port
 `make up` is idempotent: on an existing cluster it re-applies Argo CD and the root apps and waits for every
 Application to be `Synced` + `Healthy` (`WAIT_TIMEOUT`, default 900s).
 
+## Image pull-through caches
+
+Every node of every local cluster pulls through four shared caches (ADR 0207): `k3d-shopflow-cache-docker`
+(docker.io), `-quay`, `-ghcr`, `-k8s` (registry.k8s.io) on `127.0.0.1:5060–5063`. `make up` creates them on first
+use; their data lives in Docker volumes of the same names and survives `make down`, so each image is downloaded
+from the internet once per machine.
+
+- Only clusters created after the caches exist use them (`registries.yaml` is read when a node starts).
+- If a cache is down, containerd falls back to the upstream registry; pulls are slower but nothing breaks.
+- Disk use: `make status`. Reset: `make platform-cache-down` (deletes caches + data). Opt out: `PULL_CACHE=0 make up`.
+- Caches are anonymous: never configure registry credentials on them (private images would be served to anyone).
+
 ## How a change reaches the cluster
 
 1. Commit and push to the branch the cluster tracks.

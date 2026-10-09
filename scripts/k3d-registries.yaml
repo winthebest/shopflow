@@ -1,0 +1,16 @@
+# containerd mirrors for k3d nodes (passed with --registry-config): pull through the shared caches created by
+# scripts/k3d-up.sh. containerd falls back to the upstream registry when a cache is unreachable, and pulls by
+# digest are served byte-for-byte, so digest pins keep their meaning (docs/adr/0207-pull-through-image-cache.md).
+mirrors:
+  docker.io:
+    endpoint:
+      - http://k3d-shopflow-cache-docker:5000
+  quay.io:
+    endpoint:
+      - http://k3d-shopflow-cache-quay:5000
+  ghcr.io:
+    endpoint:
+      - http://k3d-shopflow-cache-ghcr:5000
+  registry.k8s.io:
+    endpoint:
+      - http://k3d-shopflow-cache-k8s:5000
