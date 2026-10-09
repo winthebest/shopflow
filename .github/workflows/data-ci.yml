@@ -14,6 +14,7 @@ on:
       - deploy/platform/iceberg-catalog/**
       - deploy/platform/trino/**
       - deploy/argocd/apps/**
+      - data/contracts/**  # the CDC table list and bronze columns are checked against them
       - images/kafka-connect/**
       - services/freshness-exporter/**
       - scripts/data-*.sh
