@@ -179,10 +179,14 @@ heartbeat="$(docker compose exec -T kafka /opt/kafka/bin/kafka-console-consumer.
 [[ -n "$heartbeat" ]] || { echo "no heartbeat event within 60s" >&2; exit 1; }
 echo "heartbeat event received"
 
-echo "== Connect metrics for the cdc-lag SLI (source side)"
-docker compose exec -T connect curl -fsS http://localhost:9404/metrics \
-  | grep -E '^debezium_metrics_millisecondsbehindsource\{[^}]*context="streaming"' \
+echo "== Connect metrics: cdc-lag source SLI and connector task status (CdcConnectorFailed)"
+metrics="$(docker compose exec -T connect curl -fsS http://localhost:9404/metrics)"
+grep -E '^debezium_metrics_millisecondsbehindsource\{[^}]*context="streaming"' <<< "$metrics" \
   || { echo "debezium_metrics_millisecondsbehindsource{context=\"streaming\"} missing" >&2; exit 1; }
+for connector in shop-postgres iceberg-sink; do
+  grep -E "^kafka_connect_connector_task_status\{[^}]*connector=\"$connector\"[^}]*status=\"running\"[^}]*\} 1(\.0)?$" <<< "$metrics" \
+    || { echo "kafka_connect_connector_task_status{connector=\"$connector\",status=\"running\"} missing" >&2; exit 1; }
+done
 
 echo "== bronze, read back as the read-only principal (waits for the sink to commit)"
 tools env SNAPSHOT_CUSTOMERS="$SNAPSHOT_CUSTOMERS" SNAPSHOT_PRODUCTS="$SNAPSHOT_PRODUCTS" sh -c '

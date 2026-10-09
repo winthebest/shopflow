@@ -1,0 +1,117 @@
+# freshness-exporter (services/freshness-exporter, docs/adr/0402): every 60s, max(_source_ts_ms) per bronze table
+# through Trino catalog lake_ro as user exporter (HTTPS + password). Metrics on 8080, scraped by the ServiceMonitor.
+# bronze.heartbeat changes every 10s (Debezium heartbeat.action.query), so its freshness is the cdc-lag SLI
+# (slo/cdc.yaml) independent of shop traffic; the transactional tables are exported for dashboards.
+apiVersion: v1
+kind: Service
+metadata:
+  name: freshness-exporter
+  namespace: lakehouse
+  labels:
+    app.kubernetes.io/name: freshness-exporter
+    app.kubernetes.io/part-of: shopflow
+spec:
+  selector:
+    app.kubernetes.io/name: freshness-exporter
+  ports:
+    - name: metrics
+      port: 8080
+      targetPort: metrics
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: freshness-exporter
+  namespace: lakehouse
+  labels:
+    app.kubernetes.io/name: freshness-exporter
+    app.kubernetes.io/part-of: shopflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: freshness-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: freshness-exporter
+        app.kubernetes.io/part-of: shopflow
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: freshness-exporter
+          # Published by data-images.yml (job freshness-exporter); bump tag + digest from that run's summary.
+          image: ghcr.io/winthebest/shopflow-freshness-exporter:sha-cb4eded@sha256:acb2e4a856bead6865f806c29c4dfd8a80d58165f30b2bcb2b98a3042749de55
+          ports:
+            - name: metrics
+              containerPort: 8080
+          env:
+            - name: TRINO_HOST
+              value: trino.lakehouse.svc
+            - name: TRINO_PORT
+              value: "8443"
+            - name: TRINO_CATALOG
+              value: lake_ro
+            - name: TRINO_USER
+              valueFrom: {secretKeyRef: {name: trino-exporter, key: username}}
+            - name: TRINO_PASSWORD
+              valueFrom: {secretKeyRef: {name: trino-exporter, key: password}}
+            - name: TRINO_CA_FILE
+              value: /etc/trino-ca/ca.crt
+            - name: FRESHNESS_TABLES
+              value: bronze.heartbeat,bronze.orders,bronze.order_items,bronze.payments
+            - name: PROBE_INTERVAL_SECONDS
+              value: "60"
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: trino-ca
+              mountPath: /etc/trino-ca
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        # Trusts the internal CA through the ca.crt of Trino's own serving certificate (docs/adr/0411).
+        - name: trino-ca
+          secret:
+            secretName: trino-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: freshness-exporter
+  namespace: lakehouse
+  labels:
+    app.kubernetes.io/part-of: shopflow
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: freshness-exporter
+  endpoints:
+    - port: metrics
+      interval: 30s

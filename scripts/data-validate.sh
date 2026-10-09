@@ -14,12 +14,14 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-COMPONENTS=(strimzi kafka kafka-connect seaweedfs iceberg-catalog trino)
+COMPONENTS=(strimzi kafka kafka-connect seaweedfs iceberg-catalog trino freshness-exporter)
 K8S_VERSION="${K8S_VERSION:-1.34.0}"
 SCHEMA_DIR="${SCHEMA_DIR:-out/data-schemas}"
 ARGOCD_CRD_VERSION=v3.5.3
 CERT_MANAGER_VERSION=v1.21.2
 STRIMZI_VERSION="$(yq '.spec.sources[0].targetRevision' deploy/argocd/apps/strimzi/application.yaml 2> /dev/null || echo 1.2.0)"
+# PodMonitor / ServiceMonitor schemas come from the kube-prometheus-stack chart that sf-sre deploys.
+KPS_VERSION="$(yq '.spec.sources[0].targetRevision' deploy/argocd/apps/kube-prometheus-stack/application.yaml)"
 
 # CRD (multi-document YAML on stdin) -> $SCHEMA_DIR/<group>/<kind>_<version>.json, the layout kubeconform reads.
 # Objects with declared properties are closed (additionalProperties: false) unless the CRD keeps unknown fields:
@@ -39,6 +41,7 @@ crds_to_schemas() {
 
 generate_schemas() {
   local stamp="strict-v2 strimzi=$STRIMZI_VERSION argocd=$ARGOCD_CRD_VERSION cert-manager=$CERT_MANAGER_VERSION"
+  stamp+=" kube-prometheus-stack=$KPS_VERSION"
   if [[ -f "$SCHEMA_DIR/.stamp" && "$(cat "$SCHEMA_DIR/.stamp")" == "$stamp" ]]; then
     return
   fi
@@ -49,6 +52,8 @@ generate_schemas() {
     | crds_to_schemas
   curl -fsSL "https://github.com/cert-manager/cert-manager/releases/download/$CERT_MANAGER_VERSION/cert-manager.crds.yaml" \
     | crds_to_schemas
+  helm show crds kube-prometheus-stack --repo https://prometheus-community.github.io/helm-charts \
+    --version "$KPS_VERSION" 2> /dev/null | crds_to_schemas
   echo "$stamp" > "$SCHEMA_DIR/.stamp"
 }
 

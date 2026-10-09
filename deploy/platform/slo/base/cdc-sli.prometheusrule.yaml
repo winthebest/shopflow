@@ -1,0 +1,84 @@
+# CDC SLI and cause alerts (sf-data). The SLO itself is slo/cdc.yaml (Sloth → cdc-slo.prometheusrule.yaml).
+#
+# SLI, one sample per minute: 1 = bad minute, 0 = good minute, no sample = not counted.
+#   bad   bronze.heartbeat older than 5 minutes (data_freshness_seconds >= 300), or the probe failed
+#         (freshness_probe_success == 0; a failed probe removes data_freshness_seconds), or the exporter is
+#         absent while the data profile is deployed. A blind SLI never looks green.
+#   none  during the first 15 minutes after the exporter (re)starts (the pipeline is still coming up on a fresh
+#         `make up`), and on clusters without the data profile (namespace lakehouse absent).
+# bronze.heartbeat changes every 10s (Debezium heartbeat.action.query), so an idle shop still yields good minutes.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cdc-sli
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: shopflow
+spec:
+  groups:
+    - name: shopflow-cdc-sli
+      interval: 1m
+      rules:
+        - record: cdc:bronze_heartbeat_stale:minute
+          expr: |
+            (
+              max(
+                (data_freshness_seconds{table="bronze.heartbeat"} >= bool 300)
+                or
+                (1 - freshness_probe_success{table="bronze.heartbeat"})
+              )
+              or on() vector(1)
+            )
+            unless on() (time() - max(process_start_time_seconds{job="freshness-exporter"}) < 900)
+            and on() (max(kube_namespace_status_phase{namespace="lakehouse", phase="Active"}) == 1)
+
+    - name: shopflow-cdc-alerts
+      rules:
+        # Blind SLI: the probe fails (Trino, Polaris, credentials) or the exporter is gone.
+        - alert: CdcFreshnessProbeDown
+          expr: |
+            (
+              (max(freshness_probe_success{table="bronze.heartbeat"}) == 0)
+              or on() absent(freshness_probe_success{table="bronze.heartbeat"})
+            )
+            unless on() (time() - max(process_start_time_seconds{job="freshness-exporter"}) < 900)
+            and on() (max(kube_namespace_status_phase{namespace="lakehouse", phase="Active"}) == 1)
+          for: 10m
+          labels:
+            severity: ticket
+            team: sf-data
+          annotations:
+            summary: "No bronze freshness measurement for 10m: the cdc-lag SLO counts these minutes as bad."
+            runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/freshness-probe-down.md
+
+        # A CDC connector task is not running (failed, unassigned, paused) or has disappeared.
+        - alert: CdcConnectorFailed
+          expr: |
+            max by (connector) (
+              (kafka_connect_connector_task_status{connector=~"shop-postgres|iceberg-sink", status!="running"} == 1)
+              or absent(kafka_connect_connector_task_status{connector="shop-postgres", status="running"})
+              or absent(kafka_connect_connector_task_status{connector="iceberg-sink", status="running"})
+            )
+            and on() (max(kube_namespace_status_phase{namespace="kafka", phase="Active"}) == 1)
+          for: 10m
+          labels:
+            severity: ticket
+            team: sf-data
+          annotations:
+            summary: "CDC connector {{ $labels.connector }} has had no running task for 10m."
+            runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/connector-failed.md
+
+        # A Kafka node (dual-role locally, brokers on AWS) is not Ready.
+        - alert: KafkaBrokerDown
+          expr: |
+            count(kube_pod_info{namespace="kafka", pod=~"shopflow-dual-role-[0-9]+|shopflow-broker-[0-9]+"})
+            -
+            (sum(kube_pod_status_ready{namespace="kafka", pod=~"shopflow-dual-role-[0-9]+|shopflow-broker-[0-9]+", condition="true"}) or on() vector(0))
+            > 0
+          for: 5m
+          labels:
+            severity: page
+            team: sf-data
+          annotations:
+            summary: "{{ $value }} Kafka node(s) of cluster shopflow are not Ready for 5m."
+            runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/kafka-broker-down.md

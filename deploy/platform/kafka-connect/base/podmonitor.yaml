@@ -1,0 +1,18 @@
+# Scrapes the KafkaConnect cdc metrics (metricsConfig, port tcp-prometheus = 9404; rules in metrics.yaml):
+# Debezium MilliSecondsBehindSource (cdc-lag source SLI) and connector task status (CdcConnectorFailed).
+# Lives next to the Connect cluster; Prometheus selects PodMonitors in every namespace.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: cdc-connect
+  namespace: kafka
+  labels:
+    app.kubernetes.io/part-of: shopflow
+spec:
+  selector:
+    matchLabels:
+      strimzi.io/cluster: cdc
+      strimzi.io/kind: KafkaConnect
+  podMetricsEndpoints:
+    - port: tcp-prometheus
+      interval: 30s

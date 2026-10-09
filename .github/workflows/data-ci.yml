@@ -13,7 +13,9 @@ on:
       - deploy/platform/seaweedfs/**
       - deploy/platform/iceberg-catalog/**
       - deploy/platform/trino/**
+      - deploy/platform/freshness-exporter/**
       - deploy/argocd/apps/**
+      - deploy/argocd/profiles/data/**
       - data/contracts/**  # the CDC table list and bronze columns are checked against them
       - images/kafka-connect/**
       - services/freshness-exporter/**
