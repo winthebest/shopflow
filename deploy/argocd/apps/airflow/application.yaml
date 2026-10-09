@@ -6,7 +6,7 @@ metadata:
   namespace: argocd
   labels:
     app.kubernetes.io/part-of: shopflow
-    shopflow.io/profile: data
+    shopflow.io/profile: batch
   annotations:
     argocd.argoproj.io/sync-wave: "1"
 spec:

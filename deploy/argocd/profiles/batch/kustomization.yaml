@@ -1,14 +1,10 @@
-# Profile `data` (sf-data): CDC + lakehouse ingest. Shape fixed by docs/contracts/gitops.md section 4.
+# Profile `batch` (sf-data): Airflow and its DAGs (dbt, Iceberg maintenance, reconciliation). Shape fixed by
+# docs/contracts/gitops.md section 4. Needs profile `data` in the same PROFILES: the DAGs run dbt against its Trino
+# and Airflow's copy Job reads lakehouse/trino-dbt.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - ../../apps/strimzi
-  - ../../apps/kafka
-  - ../../apps/kafka-connect
-  - ../../apps/seaweedfs
-  - ../../apps/iceberg-catalog
-  - ../../apps/trino
-  - ../../apps/freshness-exporter
+  - ../../apps/airflow
 components:
   - ../_common
 replacements:
