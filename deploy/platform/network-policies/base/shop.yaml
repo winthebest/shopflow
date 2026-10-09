@@ -196,3 +196,8 @@ spec:
     - ports:
         - {protocol: TCP, port: 6443}
         - {protocol: TCP, port: 443}
+    # AWS: the EKS Pod Identity agent hands out the S3 credentials of the backup plugin (unused locally).
+    - to:
+        - ipBlock: {cidr: 169.254.170.23/32}
+      ports:
+        - {protocol: TCP, port: 80}
