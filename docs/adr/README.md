@@ -42,3 +42,16 @@ orchestrator adds rows when merging a PR that contains ADRs.
 | [0409](0409-seaweedfs-over-minio.md) | Local object storage: SeaweedFS (not MinIO) | Accepted |
 | [0410](0410-trino-catalogs-per-identity.md) | Trino as the query engine, with the safety boundary at the catalog | Accepted |
 | [0411](0411-trino-https-internal-ca.md) | Trino HTTPS with a certificate from the internal cert-manager CA | Accepted |
+| [0500](0500-opentofu-over-terraform.md) | OpenTofu instead of Terraform for the AWS layers | Accepted |
+| [0501](0501-ephemeral-env-with-lease.md) | Ephemeral AWS sessions bounded by a lease and two reapers | Accepted |
+| [0502](0502-layer2-state-aws-only.md) | Layer 2 state holds only AWS resources | Accepted |
+| [0503](0503-no-nat-public-subnets.md) | Public subnets, no NAT gateway | Accepted |
+| [0504](0504-single-az-node-group.md) | Node group in a single AZ | Accepted |
+| [0505](0505-graviton-spot-nodes.md) | Graviton spot instances for nodes | Accepted |
+| [0506](0506-glue-catalog-on-aws.md) | AWS Glue as the Iceberg catalog on AWS | Accepted |
+| [0507](0507-ghcr-over-ecr.md) | Images stay in GHCR; no ECR | Accepted |
+| [0508](0508-ssm-over-secrets-manager.md) | SSM Parameter Store (via External Secrets) instead of Secrets Manager | Accepted |
+| [0509](0509-ci-cannot-apply-oidc-scoping.md) | CI cannot apply infrastructure; OIDC roles are scoped to one workflow | Accepted |
+| [0510](0510-cost-guardrails-exclude-credits.md) | Cost guardrails that exclude credits | Accepted |
+| [0511](0511-cnpg-backup-chain-fail-closed.md) | Postgres backup chain with a pointer, failing closed | Accepted |
+| [0512](0512-security-baseline-before-cloud.md) | Security baseline from the first cloud session | Accepted |
