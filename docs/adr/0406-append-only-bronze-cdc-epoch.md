@@ -21,6 +21,10 @@ Kafka the offsets restart at 0, so with the same control topic every commit woul
   `kafka/cdc-epoch` through the config provider). A new life = a new epoch, recorded in `meta.cdc_epochs`;
   silver reads only the newest epoch whose snapshot completed, ordered by `_lsn` inside that epoch.
 - The sink's control topic is `iceberg-control-<epoch>`, created by the epoch tooling with the epoch.
+- Epoch tooling: `scripts/cdc-epoch.sh new` (before the connectors sync: Secret `kafka/cdc-epoch` + KafkaTopic
+  `iceberg-control-<epoch>`; needs only the Strimzi CRDs) and `scripts/cdc-epoch.sh wait` (inserts the epoch into
+  `meta.cdc_epochs` and sets `snapshot_completed_at` once Debezium's `SnapshotCompleted` metric is 1). Locally the
+  epoch is the unix time in seconds; on AWS it comes from SSM via ESO.
 - The Connect group stays `connect-<connector name>`: the coordinator is elected from that group's members
   (`CommitterImpl.hasLeaderPartition`), and `iceberg.connect.group-id` is documented as "should not be set under
   normal conditions". A per-epoch control topic already gives a fresh snapshot-summary key.

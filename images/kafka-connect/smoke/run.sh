@@ -17,7 +17,8 @@ export ORDERS_IMAGE="${ORDERS_IMAGE:-ghcr.io/winthebest/shopflow-orders:sha-ac86
 # Same Postgres image as the shop dev compose.
 POSTGRES_IMAGE="$(yq '.services.postgres.image' "$REPO/docker-compose.yml")"
 export POSTGRES_IMAGE
-export CDC_EPOCH="$(date +%s)"
+CDC_EPOCH="$(date +%s)"
+export CDC_EPOCH
 SMOKE_DIR="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/connect-smoke.XXXXXX")" && pwd -P)"
 export SMOKE_DIR
 mkdir -p "$SMOKE_DIR/initdb" "$SMOKE_DIR/seaweedfs" "$SMOKE_DIR/secrets" "$SMOKE_DIR/connectors"
@@ -61,11 +62,16 @@ for connector in shop-postgres iceberg-sink; do
       | .spec.config + {\"connector.class\": .spec.class, \"tasks.max\": .spec.tasksMax}" "$SMOKE_DIR/kafka-connect.yaml" \
     | jq --slurpfile o "overrides/$connector.json" \
       '. + $o[0] | with_entries(select(.value != null)) | map_values(tostring)' > "$SMOKE_DIR/connectors/$connector.json"
+  # shellcheck disable=SC2016 # a literal ${secrets: reference, not an expansion
   if grep -q '\${secrets:' "$SMOKE_DIR/connectors/$connector.json"; then
     echo "$connector: cluster Secret reference without a smoke override" >&2
     exit 1
   fi
 done
+# JMX exporter rules of the KafkaConnect CR (ConfigMap cdc-connect-metrics), loaded by the Connect container.
+yq -N 'select(.kind == "ConfigMap" and .metadata.name == "cdc-connect-metrics") | .data["metrics-config.yml"]' \
+  "$SMOKE_DIR/kafka-connect.yaml" > "$SMOKE_DIR/connect-metrics.yml"
+chmod 0644 "$SMOKE_DIR/connect-metrics.yml"
 # Topics as declared by the KafkaTopic CRs, plus this epoch's control topic (created by the epoch tooling).
 "$REPO/scripts/data-render-overlay.sh" deploy/platform/kafka/local | yq -N 'select(.kind == "KafkaTopic") | .spec.topicName' \
   > "$SMOKE_DIR/topics.txt"
@@ -144,6 +150,16 @@ wait_running shop-postgres
 connect_api PUT /connectors/iceberg-sink/config "$SMOKE_DIR/connectors/iceberg-sink.json" > /dev/null
 wait_running iceberg-sink
 
+echo "== scripts/cdc-epoch.sh wait (meta.cdc_epochs + Debezium SnapshotCompleted from the Connect metrics)"
+# Test seam of cdc-epoch.sh: SQL as shop_app and the metrics endpoint through docker compose instead of kubectl.
+# shellcheck disable=SC2016 # expanded by cdc-epoch.sh when it runs the command, not here
+CDC_EPOCH_PSQL='docker compose exec -T -e PGPASSWORD="$SHOP_APP_PASSWORD" postgres psql -h 127.0.0.1 -U shop_app -d shop -v ON_ERROR_STOP=1 -qAt' \
+  CDC_EPOCH_METRICS='docker compose exec -T connect curl -fsS http://localhost:9404/metrics' \
+  "$REPO/scripts/cdc-epoch.sh" wait --epoch "$CDC_EPOCH" --timeout 180
+[[ "$(psql_shop -c "SELECT snapshot_completed_at IS NOT NULL FROM meta.cdc_epochs WHERE epoch = $CDC_EPOCH")" == t ]] \
+  || { echo "meta.cdc_epochs: epoch $CDC_EPOCH has no snapshot_completed_at" >&2; exit 1; }
+echo "meta.cdc_epochs: epoch $CDC_EPOCH snapshot completed"
+
 echo "== changes in Postgres: one checkout, paid, then removed (children before the order: foreign keys)"
 psql_shop > /dev/null <<'SQL'
 INSERT INTO customers (email, name) VALUES ('smoke@example.test', 'Smoke Test') RETURNING id \gset c_
@@ -162,6 +178,11 @@ heartbeat="$(docker compose exec -T kafka /opt/kafka/bin/kafka-console-consumer.
   --topic debezium-heartbeat.shop --from-beginning --max-messages 1 --timeout-ms 60000 2> /dev/null)"
 [[ -n "$heartbeat" ]] || { echo "no heartbeat event within 60s" >&2; exit 1; }
 echo "heartbeat event received"
+
+echo "== Connect metrics for the cdc-lag SLI (source side)"
+docker compose exec -T connect curl -fsS http://localhost:9404/metrics \
+  | grep -E '^debezium_metrics_millisecondsbehindsource\{[^}]*context="streaming"' \
+  || { echo "debezium_metrics_millisecondsbehindsource{context=\"streaming\"} missing" >&2; exit 1; }
 
 echo "== bronze, read back as the read-only principal (waits for the sink to commit)"
 tools env SNAPSHOT_CUSTOMERS="$SNAPSHOT_CUSTOMERS" SNAPSHOT_PRODUCTS="$SNAPSHOT_PRODUCTS" sh -c '
