@@ -50,7 +50,6 @@ orchestrator adds rows when merging a PR that contains ADRs.
 | [0414](0414-airflow3-local-executor-cosmos.md) | Airflow 3 with LocalExecutor, dbt through Cosmos, DAGs baked into one image | Accepted |
 | [0412](0412-dbt-core-over-sqlmesh.md) | dbt Core with dbt-trino for bronze → silver → gold | Accepted |
 | [0413](0413-silver-latest-epoch-full-rebuild.md) | Silver = current state of the latest completed CDC epoch, rebuilt in full | Accepted |
-| [0414](0414-airflow3-local-executor-cosmos.md) | Airflow 3 with LocalExecutor, dbt through Cosmos, DAGs baked into one image | Accepted |
 | [0500](0500-opentofu-over-terraform.md) | OpenTofu instead of Terraform for the AWS layers | Accepted |
 | [0501](0501-ephemeral-env-with-lease.md) | Ephemeral AWS sessions bounded by a lease and two reapers | Accepted |
 | [0502](0502-layer2-state-aws-only.md) | Layer 2 state holds only AWS resources | Accepted |

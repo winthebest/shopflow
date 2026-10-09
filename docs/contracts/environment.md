@@ -6,6 +6,9 @@
   (measured: `core` ≈ 3.3GB; `obs` adds ≈ 2.5GB; `data` adds ≈ 5–6GB). `sf-main` (orchestrator, pinned to a `main`
   SHA) runs only during gates. Lane clusters hold **slots** assigned by the orchestrator; ask before `make up`,
   run `make down` when your cluster work is done.
+- Measurement windows (soak, perf baseline, page timing, gate runs) are announced by the orchestrator. During one,
+  no other lane runs heavy Docker workloads on the machine (compose smoke stacks, image builds, extra clusters):
+  they starve the shared VM's CPU and corrupt the measurement. Light render/validate jobs are fine.
 - Deterministic names and ports. On "address in use", stop and report; never pick another port.
 
 | Cluster | Owner | API port | HTTPS (load balancer) | Local registry (API − 1500) | Argo CD UI port-forward (API + 11530) |
