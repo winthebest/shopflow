@@ -71,6 +71,16 @@ Burn rate = observed error ratio / allowed error ratio. At burn rate 1 the budge
 | ticket | 3× | 1d | 2h | 10.7% | Discord, grouped 30m, repeat 24h |
 | ticket | 1× | 3d | 6h | 10.7% | Discord, grouped 30m, repeat 24h |
 
+Delivery and access (local overlay, SOPS + KSOPS):
+
+- Alertmanager posts to the Discord webhook in Secret `alertmanager-webhook`
+  ([`…/local/secrets/alertmanager-webhook.enc.yaml`](../../deploy/platform/kube-prometheus-stack/local/secrets/alertmanager-webhook.enc.yaml)).
+  It ships with a placeholder (`discord.invalid`, never resolves): alerts still show in Grafana and the
+  Alertmanager UI, but nothing is delivered until the owner sets the real URL with
+  `sops deploy/platform/kube-prometheus-stack/local/secrets/alertmanager-webhook.enc.yaml`.
+- Grafana admin password (random, never displayed): copy it without printing it,
+  `kubectl -n observability get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d | pbcopy`.
+
 The long window proves the burn is significant; the short window makes the alert stop soon after the fix.
 Factors are exactly 14.4/6/3/1 (custom 28-day window file [`slo/windows/shopflow-28d.yaml`](../../slo/windows/shopflow-28d.yaml)).
 
