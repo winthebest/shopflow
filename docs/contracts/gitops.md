@@ -108,6 +108,8 @@ Config that belongs to one controller may instead live inside that controller's 
   revision (`main` on `sf-main`, the lane branch on a lane cluster). Labels are metadata only.
 - Fail-closed check: `scripts/platform-validate.sh` (sf-platform, run in platform-ci) builds every profile with a
   test revision patched the same way as the root app and fails if any shopflow source is not on that revision.
+- Profiles `rt` (Flink), `batch` (Airflow) and `bi` (Metabase) need `data` in the same `PROFILES` (they read Kafka,
+  Trino or shop-db through data's components); `platform-root-apps.sh` rejects them without it.
 - Profile `data` needs `obs` or `obs-lite` in the same `PROFILES` (its ServiceMonitors and rules need their CRDs);
   `make up` rejects `data` without one of them.
 - `obs` and `obs-lite` are mutually exclusive (both own the `otel-gateway` release in `observability`);
