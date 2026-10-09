@@ -74,6 +74,9 @@ are a hand-set constant of `7d`, never derived from policy files and never `0s`.
 
 - Local: SOPS + age. Age private key lives only at `~/.config/sops/age/keys.txt` on the user's machine (with an
   offline backup). Lanes never print, copy or commit it.
+- Standing user approval (2026-10-09): a lane may run `make up` / `make down` on its own k3d cluster. `make up` uses
+  the key only to decrypt the Argo CD admin password and to load it into the cluster for KSOPS (ADR 0204). Any other
+  use of the private key (`sops -d`, laptop KSOPS builds) still needs the user's approval through the orchestrator.
 - No plaintext secrets in git; gitleaks runs in pre-commit and CI.
 - AWS (Phase 6): SSM Parameter Store via External Secrets Operator. Only `sf-cloud` touches AWS, and only after the
   user approves each session through the orchestrator.
