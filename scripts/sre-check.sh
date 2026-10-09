@@ -218,6 +218,20 @@ cmd_lint() {
     done < <(find "$ROOT/deploy/platform/$c" -path '*/secrets/*.enc.yaml')
   done
   log "secrets: every *.enc.yaml value is SOPS-encrypted"
+  # KSOPS resolves `files` from the kustomization root, not from the generator file's directory.
+  local kfile kdir gen enc
+  for c in "${COMPONENTS[@]}"; do
+    while IFS= read -r kfile; do
+      kdir="$(dirname "$kfile")"
+      for gen in $(yq '.generators[]?' "$kfile"); do
+        [[ "$(yq '.kind' "$kdir/$gen")" == "ksops" ]] || continue
+        for enc in $(yq '.files[]' "$kdir/$gen"); do
+          [[ -f "$kdir/$enc" ]] || fail "$kdir/$gen: '$enc' not found relative to the kustomization root $kdir"
+        done
+      done
+    done < <(find "$ROOT/deploy/platform/$c" -name kustomization.yaml)
+  done
+  log "secrets: every KSOPS file path resolves from its kustomization root"
   [[ -d "$OUT/rendered" ]] || cmd_render
   # Image fields and image flags (e.g. --prometheus-config-reloader=, --thanos-default-base-image=), same rule as
   # scripts/platform-validate.sh.
