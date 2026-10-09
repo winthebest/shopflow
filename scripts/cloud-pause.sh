@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Short breaks (< 4h) inside a session: scale the node group to zero and back. The control plane
-# and the NLB keep billing (~$0.13/h), so never pause overnight: cloud-down instead.
+# Short breaks (< 4h) inside a session: scale the node group to zero and back. The control plane,
+# the NLB and the volumes keep billing (~$0.16/h, docs/cost.md), so never pause overnight: cloud-down instead.
 set -euo pipefail
 # shellcheck source=scripts/cloud-lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/cloud-lib.sh"
@@ -43,7 +43,7 @@ pause() {
   local lease end="none (the reapers treat it as expired)"
   lease="$(lease_epoch)"
   [ -z "$lease" ] || end="$(iso_from_epoch "$lease")"
-  warn "paused: control plane + NLB still bill ~\$0.13/h; lease ends $end. Do not keep it paused overnight."
+  warn "paused: control plane, NLB and volumes still bill ~\$0.16/h; lease ends $end. Do not keep it paused overnight."
 }
 
 resume() {

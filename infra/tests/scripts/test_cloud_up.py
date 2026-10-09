@@ -117,7 +117,13 @@ def test_dry_run_plans_a_recovery_without_changing_anything(fake, hooks):
     plan = next(c for c in fake.calls("tofu") if "plan" in c.argv)
     assert "operator_cidr=203.0.113.10/32" in plan.argv
     root_apps = next(line for line in result.stderr.splitlines() if "platform-root-apps.sh" in line and "DRY-RUN" in line)
-    for expected in ("--overlay aws", "pg.recoveryFrom=shop-db-20261001t080000z", "cdcEpoch=8", "operatorCidr=203.0.113.10/32"):
+    for expected in (
+        "--overlay aws",
+        "pg.recoveryFrom=shop-db-20261001t080000z",
+        "cdcEpoch=8",
+        "operatorCidr=203.0.113.10/32",
+        "aws.accountId=123456789012",
+    ):
         assert expected in root_apps
 
 

@@ -3,7 +3,10 @@
 # External Secrets reads them: /shopflow/aws/<namespace>/<name>.
 #
 # Input is a JSON object on stdin, never arguments (arguments show up in `ps` and shell history):
-#   {"shop": {"db-app-password": "..."}, "kafka": {"connect-scram-password": "..."}}
+#   {"observability": {"grafana-admin": {"admin-user": "...", "admin-password": "..."}},
+#    "lakehouse": {"trino-exporter": {"password": "..."}}}
+# A value is a string (stored as is) or an object of strings (one Kubernetes Secret with several keys, stored as
+# compact JSON; the ExternalSecret reads each key as a property). See deploy/platform/external-secrets/aws.
 # Idempotent: existing parameters are left alone unless --rotate, which overwrites the ones given.
 # Values are never printed and never passed on a command line.
 set -euo pipefail
@@ -38,8 +41,10 @@ main() {
   [ ! -t 0 ] || die "pipe the secrets JSON on stdin (see --help)"
   local input
   input="$(cat)"
-  jq -e 'type == "object" and all(.[]; type == "object" and all(.[]; type == "string" and length > 0))' <<<"$input" >/dev/null ||
-    die "stdin must be {\"<namespace>\": {\"<name>\": \"<non-empty value>\"}}"
+  jq -e 'def value: (type == "string" and length > 0)
+                     or (type == "object" and length > 0 and all(.[]; type == "string" and length > 0));
+         type == "object" and all(.[]; type == "object" and all(.[]; value))' <<<"$input" >/dev/null ||
+    die "stdin must be {\"<namespace>\": {\"<name>\": \"<value>\" or {\"<key>\": \"<value>\"}}} with non-empty strings"
   local bad
   bad="$(jq -r --argjson allowed "$(jq -c .eso_namespaces "$CONTRACT")" \
     'to_entries[] | .key as $ns | if ($allowed | any(. == $ns)) | not then "namespace \($ns) is not in eso_namespaces" else (.value | keys[] | select(test("^[A-Za-z0-9_.-]+$") | not) | "name \($ns)/\(.) has invalid characters") end' <<<"$input")"
@@ -57,7 +62,8 @@ main() {
       fi
       if dry_run; then log "DRY-RUN: would overwrite $path (SecureString)"; else
         jq -c --arg ns "$ns" --arg name "$name" --arg path "$path" \
-          '{Name: $path, Value: .[$ns][$name], Type: "SecureString", KeyId: "alias/aws/ssm", Overwrite: true}' <<<"$input" |
+          '{Name: $path, Value: (.[$ns][$name] | if type == "object" then tojson else . end), Type: "SecureString",
+            KeyId: "alias/aws/ssm", Overwrite: true}' <<<"$input" |
           aws_ ssm put-parameter --cli-input-json file:///dev/stdin >/dev/null
       fi
       log "rotated $path"
@@ -65,7 +71,8 @@ main() {
     else
       if dry_run; then log "DRY-RUN: would create $path (SecureString)"; else
         jq -c --arg ns "$ns" --arg name "$name" --arg path "$path" --arg project "$PROJECT" \
-          '{Name: $path, Value: .[$ns][$name], Type: "SecureString", KeyId: "alias/aws/ssm", Tags: [{Key: "project", Value: $project}]}' <<<"$input" |
+          '{Name: $path, Value: (.[$ns][$name] | if type == "object" then tojson else . end), Type: "SecureString",
+            KeyId: "alias/aws/ssm", Tags: [{Key: "project", Value: $project}]}' <<<"$input" |
           aws_ ssm put-parameter --cli-input-json file:///dev/stdin >/dev/null
       fi
       log "created $path"

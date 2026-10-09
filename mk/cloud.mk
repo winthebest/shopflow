@@ -16,7 +16,8 @@ CLOUD_SHELLCHECK_IMAGE := koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484e
 CLOUD_ZIZMOR_VERSION := 1.30.1
 
 .PHONY: cloud-up cloud-down cloud-pause cloud-resume cloud-extend cloud-orphan-check cloud-seed-params cloud-evidence \
-	cloud-check cloud-fmt cloud-validate cloud-test cloud-lint cloud-trivy cloud-shellcheck cloud-pytest cloud-zizmor
+	cloud-check cloud-fmt cloud-validate cloud-test cloud-lint cloud-trivy cloud-shellcheck cloud-pytest cloud-zizmor \
+	cloud-manifests
 
 cloud-up: ## Start an AWS session (CLOUD_ARGS="--dry-run|--resume|--hours N|--pitr TIME")
 	scripts/cloud-up.sh $(CLOUD_ARGS)
@@ -42,7 +43,7 @@ cloud-seed-params: ## Seed app secrets into SSM from stdin JSON: make cloud-seed
 cloud-evidence: ## Upload the current session's evidence to S3 (CLOUD_ARGS="--session ID")
 	scripts/export-evidence.sh $(CLOUD_ARGS)
 
-cloud-check: cloud-fmt cloud-validate cloud-test cloud-lint cloud-trivy cloud-shellcheck cloud-pytest ## All offline infra checks (what infra-ci runs)
+cloud-check: cloud-fmt cloud-validate cloud-test cloud-lint cloud-trivy cloud-shellcheck cloud-pytest cloud-manifests ## All offline infra checks (what infra-ci runs)
 
 cloud-fmt: ## tofu fmt -check
 	tofu fmt -check -recursive infra/tofu
@@ -68,6 +69,9 @@ cloud-shellcheck: ## shellcheck the cloud scripts
 
 cloud-pytest: ## Reaper unit tests (moto) and cloud script tests (fake CLIs)
 	cd infra && $(CLOUD_OFFLINE) uv run --locked pytest
+
+cloud-manifests: ## Render the AWS-only components (ESO, LB controller, OpenCost); validate CRs and the cloud contract
+	scripts/cloud-manifests-check.sh
 
 cloud-zizmor: ## zizmor on the cloud workflows (CI runs it repo-wide in ci.yml)
 	uvx "zizmor==$(CLOUD_ZIZMOR_VERSION)" --min-severity=low .github/workflows/infra-ci.yml .github/workflows/cloud-reaper.yml
