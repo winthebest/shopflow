@@ -5,6 +5,9 @@
 -- make the KPIs jump. Event time is created_at with a 30 s watermark; rows later than that are dropped (window TVF).
 -- The sink upserts by window_start, so a replay rewrites the same rows.
 -- Run by io.shopflow.flink.SqlRunner: placeholders come from the environment, statements end with ';' at line end.
+-- Offsets: group-offsets with a consumer group per CDC epoch. A new group has no committed offsets, and the
+-- connector's reset strategy then defaults to NONE (job fails), hence auto.offset.reset = earliest: the group reads
+-- the retained topic from its start; snapshot rows are filtered out and the upsert rewrites earlier minutes unchanged.
 
 CREATE TABLE orders_cdc (
     id BIGINT,

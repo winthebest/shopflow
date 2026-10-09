@@ -34,6 +34,11 @@ epoch.
   - Event time is `created_at` with a 30-second watermark; late rows are dropped by the window TVF.
   - 1-minute tumbling windows over a union of order and payment inserts.
   - The JDBC sink upserts on `window_start`, so replays rewrite the same rows.
+- **Offsets:** `scan.startup.mode = group-offsets` with `properties.auto.offset.reset = earliest` on both sources.
+  For group-offsets, connector 5.0.0 reads the reset strategy from `auto.offset.reset` and defaults to `NONE`
+  (`KafkaDynamicSource`, `case GROUP_OFFSETS`), so a group without committed offsets would fail the job. A new group
+  replays the retained topics (the CDC topics are shared by all epochs): snapshot rows are filtered out and the
+  upsert rewrites earlier minutes with the same values.
 - **Epochs:** the Kafka consumer group carries the CDC epoch (`flink-kpi-minute-<epoch>`, in the SQL). The
   deployment PR adds the per-epoch checkpoint directory (`flink-ckpt/<epoch>/`) and the switch to a new epoch, which
   starts from fresh state and never restores another epoch's checkpoint.
