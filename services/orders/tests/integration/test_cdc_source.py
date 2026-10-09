@@ -110,3 +110,24 @@ def test_downgrade_removes_cdc_objects_and_grants(app_database):
 
     command.upgrade(config, "head")
     command.check(config)
+
+
+async def test_debezium_privileges_are_exactly_the_spec(database_url):
+    tables = await query(
+        database_url,
+        "SELECT n.nspname || '.' || c.relname, acl.privilege_type"
+        " FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace, aclexplode(c.relacl) acl"
+        " WHERE acl.grantee = 'debezium'::regrole ORDER BY 1, 2",
+    )
+    schemas = await query(
+        database_url,
+        "SELECT n.nspname, acl.privilege_type FROM pg_namespace n, aclexplode(n.nspacl) acl"
+        " WHERE acl.grantee = 'debezium'::regrole ORDER BY 1, 2",
+    )
+    published = await query(
+        database_url, "SELECT schemaname || '.' || tablename FROM pg_publication_tables WHERE pubname = 'shop_cdc'"
+    )
+    # From the publication, so a new source table whose migration forgets the debezium grant fails here.
+    expected = sorted([(name, "SELECT") for (name,) in published] + [("public.heartbeat", "UPDATE")])
+    assert tables == expected
+    assert schemas == [("public", "USAGE")]

@@ -28,7 +28,7 @@ select = ["E", "F", "W", "I", "B", "UP", "S", "ASYNC", "SIM", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**" = ["S101", "S105", "S106", "S311"]
-"services/orders/migrations/**" = ["E501"]
+"services/orders/migrations/**" = ["E501", "S608"]  # DDL built from module constants
 
 [tool.ruff.lint.isort]
 known-first-party = ["shopflow_common", "gateway", "orders", "payments"]
@@ -36,7 +36,8 @@ known-first-party = ["shopflow_common", "gateway", "orders", "payments"]
 [tool.pytest.ini_options]
 testpaths = ["services"]
 pythonpath = ["scripts"]  # tests import scripts/check_contracts.py as `check_contracts`
-addopts = ["--import-mode=importlib", "-ra", "--strict-markers"]
+# services/freshness-exporter is sf-data's standalone uv project with its own lockfile and test run (data-ci).
+addopts = ["--import-mode=importlib", "-ra", "--strict-markers", "--ignore=services/freshness-exporter"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = ["integration: needs Docker (real Postgres via testcontainers or a real server process)"]
