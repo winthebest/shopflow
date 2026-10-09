@@ -1,0 +1,13 @@
+# EKS: an internet-facing NLB from the AWS LB Controller (never the in-tree Classic ELB), accepting only the
+# operator's IP (session param operatorCidr, required on aws). Clients call the NLB's DNS name, which is unknown
+# before the session, so the listener has no hostname and the certificate is issued explicitly.
+service:
+  loadBalancerClass: service.k8s.aws/nlb
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+listener:
+  hostname: ""
+tls:
+  dnsNames:
+    - shop.aws.shopflow.internal

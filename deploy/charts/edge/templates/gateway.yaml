@@ -1,0 +1,54 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: {{ .Values.name }}
+  labels:
+    app.kubernetes.io/part-of: shopflow
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+  parametersRef:
+    group: gateway.envoyproxy.io
+    kind: EnvoyProxy
+    name: {{ .Values.name }}
+    namespace: {{ .Release.Namespace }}
+---
+# The single public entry point (docs/adr/0205-admin-ui-port-forward-only.md): one HTTPS listener, routes only
+# from the namespaces in listener.routeNamespaces.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ .Values.name }}
+  labels:
+    app.kubernetes.io/part-of: shopflow
+  {{- if .Values.listener.hostname }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.tls.clusterIssuer }}
+  {{- end }}
+spec:
+  gatewayClassName: {{ .Values.name }}
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      {{- with .Values.listener.hostname }}
+      hostname: {{ . }}
+      {{- end }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          # group/kind spelled out: the API server defaults them, and Argo CD would otherwise report a diff.
+          - group: ""
+            kind: Secret
+            name: {{ .Values.tls.secretName }}
+      allowedRoutes:
+        kinds:
+          - group: gateway.networking.k8s.io
+            kind: HTTPRoute
+        namespaces:
+          from: Selector
+          selector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values:
+                  {{- toYaml (required "listener.routeNamespaces is required" .Values.listener.routeNamespaces) | nindent 18 }}
