@@ -1,0 +1,18 @@
+# Local (k3d): 1.5GB heap (plan.md data profile). Scale the Deployment to 0 when checking Flink KPIs.
+server:
+  config:
+    query:
+      maxMemory: 1GB
+
+coordinator:
+  jvm:
+    maxHeapSize: 1536M
+  config:
+    query:
+      maxMemoryPerNode: 768MB
+  resources:
+    requests:
+      cpu: 250m
+      memory: 2Gi
+    limits:
+      memory: 2Gi

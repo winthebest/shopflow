@@ -1,0 +1,26 @@
+# Serving certificate for Trino's HTTPS port, issued by the cluster's internal CA (cert-manager; docs/adr/0411).
+# Password authentication is only accepted over HTTPS. Clients trust the CA via the `ca.crt` key of this Secret.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: trino-tls
+  namespace: lakehouse
+spec:
+  secretName: trino-tls
+  # Trino reads one PEM file holding the private key and the chain: key tls-combined.pem.
+  additionalOutputFormats:
+    - type: CombinedPEM
+  dnsNames:
+    - trino
+    - trino.lakehouse
+    - trino.lakehouse.svc
+    - trino.lakehouse.svc.cluster.local
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    # Internal CA issuer provided by sf-platform (cert-manager component).
+    name: shopflow-ca

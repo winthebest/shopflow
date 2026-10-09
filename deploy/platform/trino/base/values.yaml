@@ -1,0 +1,147 @@
+# Trino 483, chart trino 1.42.2 (docs/adr/0410, 0411). HTTPS + password authentication + file-based access control.
+#
+# Safety boundary is the catalog, not table rules: file-based access control cannot restrict table procedures
+# (expire_snapshots, remove_orphan_files, rollback_to_snapshot, optimize), so every identity that reaches a
+# writable catalog can run them (docs/contracts/environment.md). Hence:
+#   lake     read/write + procedures   dbt (later executor)        Polaris principal trino_lake, S3 rw keys
+#   lake_ro  iceberg.security=READ_ONLY exporter, metabase (gold)   Polaris principal trino_lake_ro, S3 ro keys
+#   pg       Postgres `shop`, read only dbt (reconciliation)        DB role trino_pg (SELECT only)
+# The retention floors on lake are a hand-set constant (7d), never derived from policy and never 0s.
+
+image:
+  repository: trinodb/trino
+  tag: "483"
+  digest: sha256:db58cc93e593a2706553745f276bb119c9810e69918be56ecde088ba7ccb0534
+
+# Named ServiceAccount: on AWS it gets an EKS Pod Identity association (Glue + S3), managed by sf-cloud.
+serviceAccount:
+  create: true
+  name: trino
+
+server:
+  # Coordinator only; it also runs the work (single-node laptop and demo sizes).
+  workers: 0
+  config:
+    https:
+      enabled: true
+      port: 8443
+      # cert-manager Certificate trino-tls (CombinedPEM output = key + chain in one file), mounted below.
+      keystore:
+        path: /etc/trino/tls/tls-combined.pem
+    authenticationType: PASSWORD
+
+coordinator:
+  config:
+    nodeScheduler:
+      includeCoordinator: true
+  secretMounts:
+    - name: trino-tls
+      secretName: trino-tls
+      path: /etc/trino/tls
+
+# Secret with key password.db: bcrypt entries for dbt, exporter, metabase (SOPS-managed).
+auth:
+  passwordAuthSecret: trino-password-db
+
+additionalConfigProperties:
+  # Required once authentication is on; same value on every node.
+  - internal-communication.shared-secret=${ENV:TRINO_INTERNAL_SHARED_SECRET}
+
+accessControl:
+  type: configmap
+  refreshPeriod: 60s
+  configFile: rules.json
+  rules:
+    rules.json: |-
+      {
+        "catalogs": [
+          {"user": "dbt", "catalog": "lake", "allow": "all"},
+          {"user": "dbt", "catalog": "pg", "allow": "read-only"},
+          {"user": "(exporter|metabase)", "catalog": "lake_ro", "allow": "read-only"},
+          {"user": "(dbt|exporter|metabase)", "catalog": "system", "allow": "read-only"},
+          {"catalog": ".*", "allow": "none"}
+        ],
+        "schemas": [
+          {"user": "dbt", "catalog": "lake", "schema": ".*", "owner": true},
+          {"catalog": ".*", "schema": ".*", "owner": false}
+        ],
+        "tables": [
+          {"user": "dbt", "catalog": "lake", "privileges": ["SELECT", "INSERT", "DELETE", "UPDATE", "OWNERSHIP"]},
+          {"user": "dbt", "catalog": "pg", "privileges": ["SELECT"]},
+          {"user": "exporter", "catalog": "lake_ro", "schema": "(bronze|gold)", "privileges": ["SELECT"]},
+          {"user": "metabase", "catalog": "lake_ro", "schema": "gold", "privileges": ["SELECT"]},
+          {"user": "(dbt|exporter|metabase)", "catalog": "system", "privileges": ["SELECT"]},
+          {"privileges": []}
+        ],
+        "catalog_session_properties": [
+          {"property": "(expire_snapshots_min_retention|remove_orphan_files_min_retention)", "allow": false},
+          {"allow": true}
+        ]
+      }
+
+catalogs:
+  # The chart's default tpch/tpcds catalogs are not needed.
+  tpch: null
+  tpcds: null
+  lake: |-
+    connector.name=iceberg
+    iceberg.catalog.type=rest
+    iceberg.rest-catalog.uri=http://polaris.lakehouse.svc:8181/api/catalog
+    iceberg.rest-catalog.warehouse=lake
+    iceberg.rest-catalog.security=OAUTH2
+    iceberg.rest-catalog.oauth2.credential=${ENV:POLARIS_TRINO_LAKE_CREDENTIAL}
+    iceberg.rest-catalog.oauth2.scope=PRINCIPAL_ROLE:ALL
+    iceberg.file-format=PARQUET
+    iceberg.expire-snapshots.min-retention=7d
+    iceberg.remove-orphan-files.min-retention=7d
+    fs.s3.enabled=true
+    s3.endpoint=http://seaweedfs.lakehouse.svc:8333
+    s3.path-style-access=true
+    s3.region=us-east-1
+    s3.aws-access-key=${ENV:LAKE_S3_TRINO_ACCESS_KEY}
+    s3.aws-secret-key=${ENV:LAKE_S3_TRINO_SECRET_KEY}
+  lake_ro: |-
+    connector.name=iceberg
+    iceberg.security=READ_ONLY
+    iceberg.catalog.type=rest
+    iceberg.rest-catalog.uri=http://polaris.lakehouse.svc:8181/api/catalog
+    iceberg.rest-catalog.warehouse=lake
+    iceberg.rest-catalog.security=OAUTH2
+    iceberg.rest-catalog.oauth2.credential=${ENV:POLARIS_TRINO_LAKE_RO_CREDENTIAL}
+    iceberg.rest-catalog.oauth2.scope=PRINCIPAL_ROLE:ALL
+    iceberg.expire-snapshots.min-retention=7d
+    iceberg.remove-orphan-files.min-retention=7d
+    fs.s3.enabled=true
+    s3.endpoint=http://seaweedfs.lakehouse.svc:8333
+    s3.path-style-access=true
+    s3.region=us-east-1
+    s3.aws-access-key=${ENV:LAKE_S3_TRINO_RO_ACCESS_KEY}
+    s3.aws-secret-key=${ENV:LAKE_S3_TRINO_RO_SECRET_KEY}
+  pg: |-
+    connector.name=postgresql
+    connection-url=jdbc:postgresql://shop-db-rw.shop.svc:5432/shop?sslmode=require
+    connection-user=${ENV:PG_TRINO_USER}
+    connection-password=${ENV:PG_TRINO_PASSWORD}
+
+env:
+  - name: TRINO_INTERNAL_SHARED_SECRET
+    valueFrom: {secretKeyRef: {name: trino-internal, key: shared-secret}}
+  # Written by the Polaris setup Job (deploy/platform/iceberg-catalog).
+  - name: POLARIS_TRINO_LAKE_CREDENTIAL
+    valueFrom: {secretKeyRef: {name: polaris-trino-lake, key: credential}}
+  - name: POLARIS_TRINO_LAKE_RO_CREDENTIAL
+    valueFrom: {secretKeyRef: {name: polaris-trino-lake-ro, key: credential}}
+  # SeaweedFS identities trino-lake / trino-lake-ro (SOPS-managed, same values as seaweedfs-s3-config).
+  - name: LAKE_S3_TRINO_ACCESS_KEY
+    valueFrom: {secretKeyRef: {name: lake-s3-trino, key: access-key-id}}
+  - name: LAKE_S3_TRINO_SECRET_KEY
+    valueFrom: {secretKeyRef: {name: lake-s3-trino, key: secret-access-key}}
+  - name: LAKE_S3_TRINO_RO_ACCESS_KEY
+    valueFrom: {secretKeyRef: {name: lake-s3-trino-ro, key: access-key-id}}
+  - name: LAKE_S3_TRINO_RO_SECRET_KEY
+    valueFrom: {secretKeyRef: {name: lake-s3-trino-ro, key: secret-access-key}}
+  # CNPG managed role trino_pg (SELECT on shop tables + meta.cdc_epochs).
+  - name: PG_TRINO_USER
+    valueFrom: {secretKeyRef: {name: trino-pg, key: username}}
+  - name: PG_TRINO_PASSWORD
+    valueFrom: {secretKeyRef: {name: trino-pg, key: password}}
