@@ -2,7 +2,7 @@
 # Prefixed with `app-` (except `dev*`) so they never collide with other lanes' mk files.
 COMPOSE ?= docker compose
 
-.PHONY: dev dev-down dev-reset dev-logs app-sync app-lint app-fmt app-test app-test-unit app-hooks
+.PHONY: dev dev-down dev-reset dev-logs app-sync app-lint app-fmt app-test app-test-unit app-hooks app-loadtest
 
 dev: ## Build and start postgres + migrate + seed + 3 services on compose (gateway: http://localhost:8000)
 	$(COMPOSE) up --build --detach --wait
@@ -35,3 +35,16 @@ app-test-unit: app-sync ## Unit tests only (no Docker)
 
 app-hooks: ## Install the pre-commit hooks (gitleaks) in this clone
 	pre-commit install
+
+LOADTEST_PROFILE ?= constant
+LOADTEST_RATE ?= 20
+LOADTEST_DURATION ?= 5m
+LOADTEST_STAMP := $(shell date -u +%Y%m%dT%H%M%SZ)
+
+app-loadtest: ## k6 browse+checkout on the gateway (LOADTEST_PROFILE=constant|ramp, LOADTEST_RATE=20/s, LOADTEST_DURATION=5m); ack log + summary in out/
+	@mkdir -p out
+	k6 run --log-format raw \
+		--console-output out/acks-$(LOADTEST_STAMP).jsonl \
+		--summary-export out/k6-summary-$(LOADTEST_STAMP).json \
+		-e PROFILE=$(LOADTEST_PROFILE) -e RATE=$(LOADTEST_RATE) -e DURATION=$(LOADTEST_DURATION) \
+		loadtest/checkout.js
