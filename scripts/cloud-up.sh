@@ -199,10 +199,16 @@ install_argocd() {
 
 # Root apps are created by the same sf-platform mechanism as `make up`; cloud-up only passes the
 # aws overlay and the session parameters (the full list is in docs/runbooks/cloud-session.md).
-create_root_apps() {
+# Root apps come from the same sf-platform mechanism as `make up` (scripts/platform-root-apps.sh, ADR 0206);
+# cloud-up only passes the aws overlay and the session parameters. ROOT_APP_ARGS is set by root_app_args.
+root_app_args() {
   local vpc_id
-  vpc_id="$(tofu_layer cluster output -raw vpc_id 2>/dev/null || true)"
-  local params=(
+  # Layer 1 is permanent, so the VPC is known before layer 2 exists.
+  vpc_id="$(aws_ ec2 describe-vpcs --filters "Name=tag:Name,Values=$PROJECT" "Name=tag:project,Values=$PROJECT" \
+    --query 'Vpcs[0].VpcId' --output text)" || die "cannot read the shopflow VPC"
+  case "$vpc_id" in vpc-*) ;; *) die "no shopflow VPC (is layer 1 applied?)" ;; esac
+  ROOT_APP_ARGS=(
+    --overlay aws --revision "$REVISION" --profiles "$PROFILES"
     --param "operatorCidr=$OPERATOR_CIDR"
     --param "pg.recoveryFrom=$PG_RECOVERY_FROM"
     --param "pg.serverName=$PG_SERVER_NAME"
@@ -214,11 +220,23 @@ create_root_apps() {
     --param "aws.dataBucket=$(data_bucket)"
     --param "aws.clusterName=$CLUSTER"
   )
-  if [ ! -x "$ROOT_APPS_HOOK" ]; then
-    dry_run || die "missing $ROOT_APPS_HOOK (sf-platform root app mechanism)"
-    warn "missing $ROOT_APPS_HOOK (sf-platform root app mechanism)"
+}
+
+# Preflight: profiles and parameters are validated by the hook itself (no cluster access) before anything bills.
+check_root_apps() {
+  [ -x "$ROOT_APPS_HOOK" ] || die "missing $ROOT_APPS_HOOK (sf-platform root app mechanism)"
+  root_app_args
+  "$ROOT_APPS_HOOK" "${ROOT_APP_ARGS[@]}" --check || die "root apps rejected the session parameters or profiles"
+  log "root apps: profiles $PROFILES and session parameters accepted"
+}
+
+create_root_apps() {
+  if dry_run; then
+    log "dry-run: root Applications that would be applied:"
+    "$ROOT_APPS_HOOK" "${ROOT_APP_ARGS[@]}" --print >&2
+    return 0
   fi
-  run env KUBECONFIG="$KUBECONFIG_FILE" "$ROOT_APPS_HOOK" --overlay aws --revision "$REVISION" --profiles "$PROFILES" "${params[@]}"
+  env KUBECONFIG="$KUBECONFIG_FILE" "$ROOT_APPS_HOOK" "${ROOT_APP_ARGS[@]}"
 }
 
 apps_healthy() {
@@ -329,6 +347,7 @@ main() {
   check_budget_action
   check_kubernetes_version
   if [ "$RESUME" = 1 ]; then resume_session; else new_session; fi
+  check_root_apps
   mkdir -p "$OUT_DIR/$SESSION_ID"
 
   step 2 "apply layer 2 (EKS, nodes, addons, Pod Identity)"
