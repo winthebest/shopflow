@@ -1,0 +1,119 @@
+# CDC connectors. Same SMT chain and routing as images/kafka-connect/smoke (tested there end to end).
+# docs/adr/0405 (JSON without registry), 0406 (append-only bronze + CDC epoch).
+#
+# Runtime inputs that are not in git:
+#   Secret kafka/cdc-epoch (key epoch): integer, new value for every Kafka/Postgres "life" (make up, cloud-up,
+#     restore, re-snapshot). Written by scripts/cdc-epoch.sh locally and by ESO from SSM on AWS; the epoch tooling
+#     also creates the topic iceberg-control-<epoch>.
+#   Secret shop/shop-db-debezium (username, password): CNPG managed role with REPLICATION.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaConnector
+metadata:
+  name: shop-postgres
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: cdc
+spec:
+  class: io.debezium.connector.postgresql.PostgresConnector
+  tasksMax: 1
+  autoRestart:
+    enabled: true
+  config:
+    database.hostname: shop-db-rw.shop.svc
+    database.port: 5432
+    database.dbname: shop
+    database.user: ${secrets:shop/shop-db-debezium:username}
+    database.password: ${secrets:shop/shop-db-debezium:password}
+    database.sslmode: require
+    topic.prefix: shop
+    plugin.name: pgoutput
+    # Publication, slot user and grants are defined in docs/contracts/services.md (CDC source objects): Alembic
+    # creates shop_cdc (5 shop tables + heartbeat, never meta.*), so Debezium never creates or alters it.
+    publication.name: shop_cdc
+    publication.autocreate.mode: disabled
+    slot.name: debezium_shop
+    # Exactly the tables of publication shop_cdc = data/contracts/*.yaml (scripts/data-validate.sh fails otherwise).
+    # Without a list Debezium would also snapshot tables it cannot read (alembic_version).
+    table.include.list: public.customers,public.products,public.orders,public.order_items,public.payments,public.heartbeat
+    # Snapshot when there is no usable offset (new Kafka, new connector, slot lost), otherwise stream.
+    snapshot.mode: when_needed
+    # Every 10s: emit a heartbeat and touch the single heartbeat row, so the slot advances while the shop is idle
+    # and freshness always has a recent change to measure (bronze.heartbeat.beat_at).
+    heartbeat.interval.ms: 10000
+    heartbeat.action.query: UPDATE heartbeat SET beat_at = now() WHERE id = 1
+    # Default prefix is __debezium-heartbeat; a leading __ marks Kafka-internal topics, so use a plain name.
+    topic.heartbeat.prefix: debezium-heartbeat
+    # numeric -> exact decimal string; the sink converts it to the bronze decimal column.
+    decimal.handling.mode: string
+    tombstones.on.delete: false
+    key.converter: org.apache.kafka.connect.json.JsonConverter
+    key.converter.schemas.enable: false
+    value.converter: org.apache.kafka.connect.json.JsonConverter
+    value.converter.schemas.enable: false
+    transforms: unwrap,epoch
+    # After-image + _op/_lsn/_source_ts_ms; deletes become a row with _op='d' (no tombstone).
+    transforms.unwrap.type: io.debezium.transforms.ExtractNewRecordState
+    transforms.unwrap.add.fields: op,lsn,source.ts_ms
+    transforms.unwrap.add.fields.prefix: _
+    transforms.unwrap.delete.tombstone.handling.mode: rewrite
+    transforms.epoch.type: org.apache.kafka.connect.transforms.InsertField$Value
+    transforms.epoch.static.field: _cdc_epoch
+    transforms.epoch.static.value: ${secrets:kafka/cdc-epoch:epoch}
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaConnector
+metadata:
+  name: iceberg-sink
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: cdc
+spec:
+  class: org.apache.iceberg.connect.IcebergSinkConnector
+  tasksMax: 1
+  autoRestart:
+    enabled: true
+  config:
+    topics: shop.public.customers,shop.public.products,shop.public.orders,shop.public.order_items,shop.public.payments,shop.public.heartbeat
+    key.converter: org.apache.kafka.connect.json.JsonConverter
+    key.converter.schemas.enable: false
+    value.converter: org.apache.kafka.connect.json.JsonConverter
+    value.converter.schemas.enable: false
+    # _topic drives routing (it is not a bronze column, so the sink drops it); _ingested_at = Kafka record time.
+    transforms: topic,ingested
+    transforms.topic.type: org.apache.kafka.connect.transforms.InsertField$Value
+    transforms.topic.topic.field: _topic
+    transforms.ingested.type: org.apache.kafka.connect.transforms.InsertField$Value
+    transforms.ingested.timestamp.field: _ingested_at
+    iceberg.tables: bronze.customers,bronze.products,bronze.orders,bronze.order_items,bronze.payments,bronze.heartbeat
+    iceberg.tables.route-field: _topic
+    iceberg.table.bronze.customers.route-regex: shop\.public\.customers
+    iceberg.table.bronze.products.route-regex: shop\.public\.products
+    iceberg.table.bronze.orders.route-regex: shop\.public\.orders
+    iceberg.table.bronze.order_items.route-regex: shop\.public\.order_items
+    iceberg.table.bronze.payments.route-regex: shop\.public\.payments
+    iceberg.table.bronze.heartbeat.route-regex: shop\.public\.heartbeat
+    # Bronze tables are created up front by Trino with format_version = 2 (deploy/platform/trino); the sink never
+    # creates or alters them.
+    iceberg.tables.auto-create-enabled: false
+    iceberg.tables.evolve-schema-enabled: false
+    # The sink records control-topic offsets per (control topic, Connect group) in each snapshot and drops data
+    # whose offsets are lower. A new Kafka restarts offsets at 0, so every epoch gets its own control topic.
+    # The Connect group (connect-iceberg-sink) stays fixed: the coordinator is elected from that group's members.
+    iceberg.control.topic: iceberg-control-${secrets:kafka/cdc-epoch:epoch}
+    iceberg.control.group-id-prefix: connect-iceberg-sink-control-
+    iceberg.coordinator.transactional.prefix: iceberg-sink-
+    # Default is 300s; 60s keeps bronze within the 2-minute freshness target.
+    iceberg.control.commit.interval-ms: 60000
+    # Default 1 stops the coordinator after a single failed commit (e.g. a conflict with OPTIMIZE).
+    iceberg.control.commit.max-consecutive-failures: 10
+    # Identity: KafkaUser iceberg-sink for the task consumer and for the sink's own control-topic clients. The
+    # sink reads the worker's properties file, whose values are unresolved provider placeholders, so the
+    # control-topic client settings are given explicitly.
+    consumer.override.sasl.jaas.config: ${secrets:kafka/iceberg-sink:sasl.jaas.config}
+    iceberg.kafka.bootstrap.servers: shopflow-kafka-bootstrap:9093
+    iceberg.kafka.security.protocol: SASL_SSL
+    iceberg.kafka.sasl.mechanism: SCRAM-SHA-512
+    iceberg.kafka.sasl.jaas.config: ${secrets:kafka/iceberg-sink:sasl.jaas.config}
+    iceberg.kafka.ssl.truststore.type: PEM
+    iceberg.kafka.ssl.truststore.certificates: ${secrets:kafka/shopflow-cluster-ca-cert:ca.crt}
+    # Catalog and object storage are environment specific: see the overlays.
