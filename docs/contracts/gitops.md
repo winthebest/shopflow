@@ -68,13 +68,15 @@ Third-party images are pinned by digest (Helm values or Kustomize `images:`).
   ConfigMap and the replacement into `spec.sources.[repoURL=https://github.com/winthebest/shopflow.git].targetRevision`.
   `make up PROFILES=core,obs` creates one root Application per profile and patches the ConfigMap with the
   revision (`main` on `sf-main`, the lane branch on a lane cluster). Labels are metadata only.
+- `obs` and `obs-lite` are mutually exclusive (both own the `otel-gateway` release in `observability`);
+  `make up` rejects `PROFILES` containing both.
 - Profile files and their owners:
 
 | Profile | Owner | Contents |
 |---|---|---|
 | `core` | sf-platform | Argo CD self-management (optional), Gateway API CRDs, Envoy Gateway, cert-manager, CNPG, shop, network policies |
-| `obs-lite` | sf-sre | kube-prometheus-stack, slo, grafana-dashboards |
-| `obs` | sf-sre | everything in `obs-lite` + loki, tempo, otel-collector |
+| `obs-lite` | sf-sre | kube-prometheus-stack, slo, grafana-dashboards, otel-collector-lite (only the `otel-gateway` Deployment: spanmetrics for SLIs, traces dropped after metrics, no log agent) |
+| `obs` | sf-sre | kube-prometheus-stack, slo, grafana-dashboards, loki, tempo, otel-collector (full: gateway → Tempo + log agent DaemonSet) |
 | `data` | sf-data | strimzi, kafka, kafka-connect, seaweedfs, iceberg-catalog, trino |
 | `rt`, `batch`, `bi` | sf-data | flink, airflow, metabase |
 | `ops` | sf-sre | chaos-mesh (game days only), keda (Kyverno added by Phase 8) |
