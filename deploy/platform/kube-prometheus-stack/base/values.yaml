@@ -1,5 +1,6 @@
 # kube-prometheus-stack: Prometheus 3 (+ native OTLP receiver), Alertmanager, Grafana, node-exporter,
-# kube-state-metrics. Environment-neutral settings; sizing/retention live in the overlay values.
+# kube-state-metrics. Settings shared by every environment, including lab sizing measured on the sf-sre lane
+# cluster (short sessions on AWS use the same sizing); local/ and aws/ hold only what differs.
 # Images are pinned by digest (multi-arch index). Chart version is pinned in deploy/argocd/apps/.
 fullnameOverride: kps
 
@@ -40,11 +41,12 @@ prometheusOperator:
   # pod waits forever for the Secret. Plain HTTP on its in-cluster metrics port instead.
   tls:
     enabled: false
+  resources:
+    requests: {cpu: 20m, memory: 64Mi}
+    limits: {memory: 128Mi}
 
 prometheus:
   prometheusSpec:
-    # aws overlay (Phase 6), not here: enableAdminAPI: true for TSDB snapshots by scripts/export-evidence.sh
-    # (sf-cloud). Local stays off; Prometheus is never exposed (port-forward / in-cluster Job only).
     image:
       tag: v3.15.0-distroless
       sha: b2a413d5a03ea6a76782a508d1c7947440bba3b973931a25676e278431891b01
@@ -67,6 +69,19 @@ prometheus:
     podMonitorSelectorNilUsesHelmValues: false
     probeSelectorNilUsesHelmValues: false
     scrapeConfigSelectorNilUsesHelmValues: false
+    # Short retention: lab sessions last hours; evidence is exported before teardown.
+    retention: 3d
+    retentionSize: 4GB
+    resources:
+      requests: {cpu: 200m, memory: 512Mi}
+      limits: {memory: 1Gi}
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 5Gi
 
 alertmanager:
   alertmanagerSpec:
@@ -76,6 +91,9 @@ alertmanager:
     # Secret alertmanager-webhook (key url) is mounted at /etc/alertmanager/secrets/alertmanager-webhook/url.
     # The URL never appears in values or in the rendered config (docs/contracts/gitops.md §5).
     secrets: [alertmanager-webhook]
+    resources:
+      requests: {cpu: 10m, memory: 32Mi}
+      limits: {memory: 64Mi}
   config:
     global:
       resolve_timeout: 5m
@@ -138,6 +156,10 @@ grafana:
     passwordKey: admin-password
   testFramework:
     enabled: false
+  # Measured on the sf-sre lane cluster: Grafana 13 sits at ~250Mi after start (256Mi limit → OOMKilled 3×).
+  resources:
+    requests: {cpu: 50m, memory: 256Mi}
+    limits: {memory: 512Mi}
   grafana.ini:
     analytics:
       reporting_enabled: false
@@ -154,6 +176,9 @@ grafana:
     image:
       tag: 2.14.1
       sha: 092dbe0c335fba9af414a27630ca68f34df6185784fa847d9954187e69dbfdd7
+    resources:
+      requests: {cpu: 5m, memory: 64Mi}
+      limits: {memory: 128Mi}
     dashboards:
       # Dashboards as code: ConfigMaps labelled grafana_dashboard=1 (deploy/platform/grafana-dashboards/).
       folderAnnotation: grafana_folder
@@ -172,8 +197,14 @@ kube-state-metrics:
   image:
     tag: v2.20.0
     sha: sha256:42cfe3723a5f058171c627537fb57a3ea0f26e4380fa18555a95cb1a1b4cfc5b  # this subchart expects the sha256: prefix
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {memory: 96Mi}
 
 prometheus-node-exporter:
   image:
     tag: v1.12.1  # the chart appends -distroless
     digest: sha256:8c9bac11973b94b59be88d6e11fee4429aa743c8846cdc75d65b18db33f6a106
+  resources:
+    requests: {cpu: 10m, memory: 24Mi}
+    limits: {memory: 64Mi}

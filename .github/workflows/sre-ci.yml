@@ -26,6 +26,13 @@ on:
       - deploy/argocd/apps/grafana-dashboards/**
       - deploy/argocd/profiles/obs/**
       - deploy/argocd/profiles/obs-lite/**
+      - deploy/argocd/apps-aws/otel-collector/**
+      - deploy/argocd/apps-aws/otel-collector-lite/**
+      - deploy/argocd/apps-aws/kube-prometheus-stack/**
+      - deploy/argocd/apps-aws/loki/**
+      - deploy/argocd/apps-aws/tempo/**
+      - deploy/argocd/profiles-aws/obs/**
+      - deploy/argocd/profiles-aws/obs-lite/**
       - deploy/argocd/profiles/_common/**
       - slo/**
       - docs/runbooks/** # every alert must link to an existing runbook, whoever owns it

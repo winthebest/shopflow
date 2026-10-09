@@ -1,0 +1,21 @@
+# AWS variant of the full OTel Collector (gateway + log agent): aws values for both releases.
+# Each `test` op fails the build if the local app's source layout changes, instead of patching the wrong entry.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../apps/otel-collector
+patches:
+  - target: {kind: Application, name: otel-collector}
+    patch: |-
+      - op: test
+        path: /spec/sources/0/helm/valueFiles/1
+        value: $values/deploy/platform/otel-collector/local/values-gateway.yaml
+      - op: replace
+        path: /spec/sources/0/helm/valueFiles/1
+        value: $values/deploy/platform/otel-collector/aws/values-gateway.yaml
+      - op: test
+        path: /spec/sources/1/helm/valueFiles/1
+        value: $values/deploy/platform/otel-collector/local/values-agent.yaml
+      - op: replace
+        path: /spec/sources/1/helm/valueFiles/1
+        value: $values/deploy/platform/otel-collector/aws/values-agent.yaml

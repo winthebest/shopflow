@@ -1,0 +1,6 @@
+# AWS (EKS) overlay. Sizing and retention are shared (base/values.yaml); Secrets come from SSM (./external-secrets).
+prometheus:
+  prometheusSpec:
+    # TSDB snapshots for scripts/export-evidence.sh (sf-cloud) before cloud-down. Prometheus stays ClusterIP
+    # (port-forward or an in-cluster Job only, NetworkPolicy), so the admin API is not reachable from outside.
+    enableAdminAPI: true

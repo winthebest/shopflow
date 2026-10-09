@@ -1,0 +1,3 @@
+# AWS (EKS) overlay: nothing differs from base/values.yaml today (filesystem storage on an EBS PVC;
+# sessions are short and evidence is exported before teardown).
+{}

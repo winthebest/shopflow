@@ -13,8 +13,9 @@ OUT="${SRE_OUT:-$ROOT/out/sre}"
 KUBE_VERSION="${KUBE_VERSION:-1.34.12}"   # same schema set as scripts/platform-validate.sh
 SHOPFLOW_REPO="https://github.com/winthebest/shopflow.git"
 APPS=(kube-prometheus-stack loki tempo otel-collector otel-collector-lite slo grafana-dashboards)
+AWS_APPS=(kube-prometheus-stack loki tempo otel-collector otel-collector-lite)   # deploy/argocd/apps-aws/<app>
 COMPONENTS=(kube-prometheus-stack loki tempo otel-collector slo grafana-dashboards)   # deploy/platform/<c>
-PROFILES=(obs-lite obs)
+PROFILES=(obs-lite obs)   # deploy/argocd/profiles/<p> and deploy/argocd/profiles-aws/<p>
 
 # Tool images, pinned by digest (multi-arch index).
 SLOTH_IMAGE="ghcr.io/slok/sloth:v0.16.0@sha256:f0f0075b0d45c1cf684e92947508cc1d5bf573925f785f803a439b2306c8b9a5"
@@ -58,9 +59,9 @@ prepare_work_copy() {
   done < <(find "$work/deploy" -name kustomization.yaml)
 }
 
-# Render one Argo Application (every chart source + every repo path source) into one multi-doc YAML.
+# Render one Argo Application file (every chart source + every repo path source) into one multi-doc YAML.
 render_app() {
-  local app="$1" file="$ROOT/deploy/argocd/apps/$1/application.yaml" ns n i src
+  local app="$1" file="$2" ns n i src
   ns="$(yq '.spec.destination.namespace' "$file")"
   n="$(yq '.spec.sources | length' "$file")"
   for ((i = 0; i < n; i++)); do
@@ -81,13 +82,19 @@ render_app() {
   done
 }
 
+# rendered/<app>.yaml for the local apps, rendered/aws-<app>.yaml for the aws variants (apps-aws/ patches applied).
 cmd_render() {
-  mkdir -p "$OUT/rendered"
+  rm -rf "$OUT/rendered" && mkdir -p "$OUT/rendered" "$OUT/argocd"
   prepare_work_copy
   local app
   for app in "${APPS[@]}"; do
     log "render $app"
-    render_app "$app" > "$OUT/rendered/$app.yaml"
+    render_app "$app" "$ROOT/deploy/argocd/apps/$app/application.yaml" > "$OUT/rendered/$app.yaml"
+  done
+  for app in "${AWS_APPS[@]}"; do
+    log "render aws/$app"
+    kubectl kustomize "$ROOT/deploy/argocd/apps-aws/$app" > "$OUT/argocd/aws-app-$app.yaml"
+    render_app "$app" "$OUT/argocd/aws-app-$app.yaml" > "$OUT/rendered/aws-$app.yaml"
   done
 }
 
@@ -99,12 +106,16 @@ cmd_kubeconform() {
     kubectl kustomize "$ROOT/deploy/argocd/apps/$app" > "$OUT/argocd/app-$app.yaml"
     docs+=("$OUT/argocd/app-$app.yaml")
   done
+  for app in "${AWS_APPS[@]}"; do
+    docs+=("$OUT/argocd/aws-app-$app.yaml")
+  done
   # Profiles need deploy/argocd/profiles/_common (sf-platform). sf-platform's platform-ci checks the
   # revision wiring of every profile; here we only check that ours build.
   if [[ -d "$ROOT/deploy/argocd/profiles/_common" ]]; then
     for prof in "${PROFILES[@]}"; do
       kubectl kustomize "$ROOT/deploy/argocd/profiles/$prof" > "$OUT/argocd/profile-$prof.yaml"
-      docs+=("$OUT/argocd/profile-$prof.yaml")
+      kubectl kustomize "$ROOT/deploy/argocd/profiles-aws/$prof" > "$OUT/argocd/profile-aws-$prof.yaml"
+      docs+=("$OUT/argocd/profile-$prof.yaml" "$OUT/argocd/profile-aws-$prof.yaml")
     done
   else
     log "skip profile build: deploy/argocd/profiles/_common is not on this branch yet"
@@ -205,13 +216,20 @@ cmd_rules() {
   docker_run -v "$dir:/rules:ro" -w /rules --entrypoint promtool "$PROMETHEUS_IMAGE" test rules "${tests[@]}"
 }
 
-# Validate the rendered configs with the binaries that will run them.
+# Validate the rendered configs with the binaries that will run them, for each variant ("" = local, "aws-").
 cmd_configs() {
   [[ -d "$OUT/rendered" ]] || cmd_render
-  local dir="$OUT/configs"
-  rm -rf "$dir" && mkdir -p "$dir/otel" "$dir/loki" "$dir/tempo" "$dir/alertmanager"
+  rm -rf "$OUT/configs"
+  validate_configs ""
+  validate_configs aws-
+}
+
+validate_configs() {
+  local v="$1" dir="$OUT/configs/${1:-local-}"
+  dir="${dir%-}"
+  mkdir -p "$dir/otel" "$dir/loki" "$dir/tempo" "$dir/alertmanager"
   local app cm found
-  for app in otel-collector otel-collector-lite; do
+  for app in "${v}otel-collector" "${v}otel-collector-lite"; do
     found=0
     # The chart stores the collector config under data.relay (gateway: <name>, DaemonSet: <name>-agent).
     for cm in $(yq -N 'select(.kind == "ConfigMap" and .data.relay != null) | .metadata.name' "$OUT/rendered/$app.yaml"); do
@@ -225,22 +243,22 @@ cmd_configs() {
     [[ $found -gt 0 ]] || fail "$app: no collector config rendered"
   done
   yq 'select(.kind == "ConfigMap" and .metadata.name == "loki") | .data["config.yaml"]' \
-    "$OUT/rendered/loki.yaml" > "$dir/loki/config.yaml"
-  log "loki -verify-config"
+    "$OUT/rendered/${v}loki.yaml" > "$dir/loki/config.yaml"
+  log "loki -verify-config (${v:-local-}loki)"
   docker_run -v "$dir/loki:/cfg:ro" "$LOKI_IMAGE" -config.file=/cfg/config.yaml -verify-config
   yq 'select(.kind == "ConfigMap" and .metadata.name == "tempo") | .data["tempo.yaml"]' \
-    "$OUT/rendered/tempo.yaml" | sed 's#/conf/overrides.yaml#/cfg/overrides.yaml#' > "$dir/tempo/tempo.yaml"
+    "$OUT/rendered/${v}tempo.yaml" | sed 's#/conf/overrides.yaml#/cfg/overrides.yaml#' > "$dir/tempo/tempo.yaml"
   yq 'select(.kind == "ConfigMap" and .metadata.name == "tempo") | .data["overrides.yaml"]' \
-    "$OUT/rendered/tempo.yaml" > "$dir/tempo/overrides.yaml"
-  log "tempo -config.verify"
+    "$OUT/rendered/${v}tempo.yaml" > "$dir/tempo/overrides.yaml"
+  log "tempo -config.verify (${v:-local-}tempo)"
   docker_run -v "$dir/tempo:/cfg:ro" "$TEMPO_IMAGE" -config.file=/cfg/tempo.yaml -config.verify=true
   local am='select(.kind == "Secret" and .metadata.name == "alertmanager-kps-alertmanager")'
-  yq "$am | .data[\"alertmanager.yaml\"]" "$OUT/rendered/kube-prometheus-stack.yaml" | base64 -d \
+  yq "$am | .data[\"alertmanager.yaml\"]" "$OUT/rendered/${v}kube-prometheus-stack.yaml" | base64 -d \
     | sed 's#/etc/alertmanager/config/#/cfg/#' > "$dir/alertmanager/alertmanager.yaml"
-  yq "$am | .data[\"shopflow.tmpl\"]" "$OUT/rendered/kube-prometheus-stack.yaml" | base64 -d \
+  yq "$am | .data[\"shopflow.tmpl\"]" "$OUT/rendered/${v}kube-prometheus-stack.yaml" | base64 -d \
     > "$dir/alertmanager/shopflow.tmpl"
   grep -q 'webhook_url_file' "$dir/alertmanager/alertmanager.yaml" || fail "Alertmanager webhook must be read from a file"
-  log "amtool check-config"
+  log "amtool check-config (${v:-local-}kube-prometheus-stack)"
   docker_run -v "$dir/alertmanager:/cfg:ro" --entrypoint amtool "$ALERTMANAGER_IMAGE" check-config /cfg/alertmanager.yaml
 }
 
@@ -287,19 +305,34 @@ cmd_lint() {
     | sort -u | grep -v '@sha256:' || true)"
   [[ -z "$unpinned" ]] || fail "images not pinned by digest:"$'\n'"$unpinned"
   log "images: all pinned by digest"
-  # Every Secret a rendered workload/CR needs must come from somewhere: the render itself or a SOPS file in deploy/
-  # (KSOPS). A Secret normally made by a disabled chart Job (e.g. the operator's kps-admission TLS cert) is caught
-  # here instead of as a pod stuck in ContainerCreating.
-  local refs known missing
-  refs="$({ yq -N '.. | select(tag == "!!map") | select(has("secretName") and (.optional // false) != true) | .secretName' "$OUT"/rendered/*.yaml
-    yq -N '.. | select(tag == "!!map") | select(has("secretKeyRef") and (.secretKeyRef.optional // false) != true) | .secretKeyRef.name' "$OUT"/rendered/*.yaml
-    yq -N '.. | select(tag == "!!map") | select(has("secretRef") and (.secretRef.optional // false) != true) | .secretRef.name' "$OUT"/rendered/*.yaml
-    yq -N 'select(.kind == "Alertmanager" or .kind == "Prometheus") | .spec.secrets[]?' "$OUT"/rendered/*.yaml; } | sort -u)"
-  known="$({ yq -N 'select(.kind == "Secret") | .metadata.name' "$OUT"/rendered/*.yaml
-    find "$ROOT/deploy" -path '*/secrets/*.enc.yaml' -exec yq '.metadata.name' {} \; ; } | sort -u)"
+  # Every Secret a rendered workload/CR needs must come from somewhere in the same environment. Local: the render
+  # itself or a SOPS file in deploy/ (KSOPS). AWS: the render itself, including ExternalSecret targets (no SOPS
+  # there). A Secret normally made by a disabled chart Job (e.g. the operator's kps-admission TLS cert), or an aws
+  # overlay without its ExternalSecret, is caught here instead of as a pod stuck in ContainerCreating.
+  local local_files=() aws_files=() f
+  for f in "$OUT"/rendered/*.yaml; do
+    if [[ "$(basename "$f")" == aws-* ]]; then aws_files+=("$f"); else local_files+=("$f"); fi
+  done
+  check_secret_refs local "${local_files[@]}"
+  check_secret_refs aws "${aws_files[@]}"
+}
+
+# check_secret_refs <local|aws> <rendered files...>: fail on any referenced Secret that nothing creates.
+check_secret_refs() {
+  local env="$1" refs known missing; shift
+  refs="$({ yq -N '.. | select(tag == "!!map") | select(has("secretName") and (.optional // false) != true) | .secretName' "$@"
+    yq -N '.. | select(tag == "!!map") | select(has("secretKeyRef") and (.secretKeyRef.optional // false) != true) | .secretKeyRef.name' "$@"
+    yq -N '.. | select(tag == "!!map") | select(has("secretRef") and (.secretRef.optional // false) != true) | .secretRef.name' "$@"
+    yq -N 'select(.kind == "Alertmanager" or .kind == "Prometheus") | .spec.secrets[]?' "$@"; } | sort -u)"
+  known="$({ yq -N 'select(.kind == "Secret") | .metadata.name' "$@"
+    yq -N 'select(.kind == "ExternalSecret") | .spec.target.name // .metadata.name' "$@"
+    if [[ "$env" == local ]]; then
+      find "$ROOT/deploy" -path '*/secrets/*.enc.yaml' -exec yq '.metadata.name' {} \;
+    fi; } | sort -u)"
   missing="$(comm -23 <(echo "$refs") <(echo "$known") | grep -v '^$' || true)"
-  [[ -z "$missing" ]] || fail "Secrets referenced but never created (render or deploy/**/secrets/*.enc.yaml):"$'\n'"$missing"
-  log "secrets: every referenced Secret is rendered or SOPS-managed"
+  [[ -z "$missing" ]] || fail "$env: Secrets referenced but never created:"$'\n'"$missing"
+  local source=SOPS; [[ "$env" == aws ]] && source=ExternalSecret
+  log "secrets ($env): every referenced Secret is created by the render or $source"
 }
 
 usage() {

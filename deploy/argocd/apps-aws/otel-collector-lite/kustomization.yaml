@@ -1,0 +1,15 @@
+# AWS variant of the obs-lite gateway collector: aws values.
+# Each `test` op fails the build if the local app's source layout changes, instead of patching the wrong entry.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../apps/otel-collector-lite
+patches:
+  - target: {kind: Application, name: otel-collector-lite}
+    patch: |-
+      - op: test
+        path: /spec/sources/0/helm/valueFiles/1
+        value: $values/deploy/platform/otel-collector/local/values-gateway.yaml
+      - op: replace
+        path: /spec/sources/0/helm/valueFiles/1
+        value: $values/deploy/platform/otel-collector/aws/values-gateway.yaml
