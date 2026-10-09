@@ -1,0 +1,9 @@
+# Profile `core` (owner: sf-platform): platform needed by every other profile.
+# A root Application per profile (deploy/argocd/root-app.yaml) builds this directory.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../git-revision.yaml
+  - ../../apps/cluster-secrets.yaml
+replacements:
+  - path: ../git-revision-replacement.yaml

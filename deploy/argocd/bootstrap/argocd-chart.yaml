@@ -1,0 +1,5 @@
+# Argo CD Helm chart installed by scripts/k3d-up.sh and rendered by scripts/platform-validate.sh.
+# Chart 10.9.6 ships Argo CD v3.5.3; image digests are pinned in values.yaml.
+repo: https://argoproj.github.io/argo-helm
+chart: argo-cd
+version: 10.9.6

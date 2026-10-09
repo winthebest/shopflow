@@ -1,0 +1,115 @@
+# Argo CD bootstrap values (installed once by scripts/k3d-up.sh; everything else comes from Git).
+# The admin password hash is not here: k3d-up.sh derives it from deploy/secrets/local/argocd-admin.enc.yaml
+# and passes it as an extra values file, so the chart default (random initial password) is never used.
+
+global:
+  image:
+    repository: quay.io/argoproj/argocd
+    tag: v3.5.3@sha256:dd3f47d5a5e4da563a7a398506e892481b358a7cec50abdf320c71aa55904bfa
+
+dex:
+  enabled: false
+
+notifications:
+  enabled: false
+
+configs:
+  params:
+    # Admin UI is reached only through `kubectl port-forward` (see docs/adr/0205-admin-ui-port-forward-only.md);
+    # argocd-server keeps its own TLS.
+    server.insecure: false
+  cm:
+    admin.enabled: true
+    # Faster Git polling for the local GitOps loop (no webhook can reach a laptop cluster).
+    timeout.reconciliation: 60s
+    timeout.reconciliation.jitter: 10s
+    # KSOPS runs as a Kustomize exec plugin. Profiles list app files from ../../apps, which is outside the
+    # profile root, so the load restrictor is relaxed. Both flags trust the repo contents (see ADR 0204).
+    kustomize.buildOptions: --enable-alpha-plugins --enable-exec --load-restrictor LoadRestrictionsNone
+    # Argo CD does not assess the health of child Applications by default. Without this, app-of-apps sync
+    # waves would not wait for CRDs/operators in earlier waves to become Healthy.
+    resource.customizations.health.argoproj.io_Application: |
+      hs = {}
+      hs.status = "Progressing"
+      hs.message = ""
+      if obj.status ~= nil and obj.status.health ~= nil then
+        hs.status = obj.status.health.status
+        if obj.status.health.message ~= nil then
+          hs.message = obj.status.health.message
+        end
+      end
+      return hs
+  repositories:
+    # Envoy Gateway publishes its Helm charts only as OCI artifacts on Docker Hub.
+    envoyproxy-oci:
+      name: envoyproxy
+      type: helm
+      url: docker.io/envoyproxy
+      enableOCI: "true"
+
+controller:
+  resources:
+    requests: {cpu: 100m, memory: 384Mi}
+    limits: {memory: 1Gi}
+
+server:
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 256Mi}
+
+applicationSet:
+  resources:
+    requests: {cpu: 20m, memory: 64Mi}
+    limits: {memory: 128Mi}
+
+redis:
+  image:
+    repository: ecr-public.aws.com/docker/library/redis
+    tag: 8.6.4-alpine@sha256:2cc044fc5a07c9b701f8f1255a309ae9ad7856e694ac03513bf3648c01e40763
+  resources:
+    requests: {cpu: 20m, memory: 32Mi}
+    limits: {memory: 128Mi}
+
+repoServer:
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 768Mi}
+  # KSOPS: copy the ksops and kustomize binaries into the repo-server, and mount the age key from the
+  # `sops-age` Secret that k3d-up.sh creates from ~/.config/sops/age/keys.txt.
+  initContainers:
+    - name: install-ksops
+      image: docker.io/viaductoss/ksops:v4.5.1@sha256:4def9fdd4e2f850265740ebe9592c5455d19b76891e88e602df8b52d74b95334
+      command: ["/usr/local/bin/ksops", "install", "--with-kustomize", "/custom-tools"]
+      securityContext:
+        runAsNonRoot: true
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        capabilities: {drop: ["ALL"]}
+        seccompProfile: {type: RuntimeDefault}
+      resources:
+        requests: {cpu: 10m, memory: 32Mi}
+        limits: {memory: 128Mi}
+      volumeMounts:
+        - name: custom-tools
+          mountPath: /custom-tools
+  volumes:
+    - name: custom-tools
+      emptyDir: {}
+    - name: sops-age
+      secret:
+        secretName: sops-age
+  volumeMounts:
+    - name: custom-tools
+      mountPath: /usr/local/bin/kustomize
+      subPath: kustomize
+    - name: custom-tools
+      mountPath: /usr/local/bin/ksops
+      subPath: ksops
+    - name: sops-age
+      mountPath: /.config/sops/age
+      readOnly: true
+  env:
+    - name: XDG_CONFIG_HOME
+      value: /.config
+    - name: SOPS_AGE_KEY_FILE
+      value: /.config/sops/age/keys.txt

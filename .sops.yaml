@@ -1,0 +1,10 @@
+# SOPS creation rules (see docs/adr/0204-sops-ksops-local-secrets.md).
+# Encrypting needs only the public age recipient below; decrypting needs the private key, which lives only at
+# ~/.config/sops/age/keys.txt on the owner's machine (plus an offline copy) and in the in-cluster `sops-age`
+# Secret used by KSOPS. Only `data`/`stringData` are encrypted so metadata stays reviewable in diffs.
+creation_rules:
+  # Component secrets: deploy/platform/<component>/<overlay>/secrets/<name>.enc.yaml
+  # Cluster-wide secrets: deploy/secrets/<overlay>/<name>.enc.yaml
+  - path_regex: (^|/)deploy/(.+/)?secrets/(.+/)?[^/]+\.enc\.yaml$
+    encrypted_regex: ^(data|stringData)$
+    age: age1a6zmtke62fs5cpa55jczu78at35j4skx97esmxuuzkjcndfxxvdqvemt4q

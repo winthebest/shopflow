@@ -1,0 +1,11 @@
+# Holds the Git revision that every child Application in a profile should track.
+# The root Application patches `data.revision`; git-revision-replacement.yaml copies it into the apps.
+# local-config: used during the Kustomize build only, never applied to the cluster.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: git-revision
+  annotations:
+    config.kubernetes.io/local-config: "true"
+data:
+  revision: main
