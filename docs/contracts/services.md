@@ -82,6 +82,12 @@ every gateway 5xx as bad).
   `heartbeat.action.query=UPDATE heartbeat SET beat_at = now() WHERE id = 1`.
 - The migration fails if role `debezium` does not exist; the migration Job's retries cover the short window
   before CNPG reconciles managed roles.
+- Other database roles on `shop-db` (CNPG `managed.roles` by sf-platform, password Secret in namespace `shop`):
+
+  | Role | Secret (`shop`) | Grants / ownership | Consumer |
+  |---|---|---|---|
+  | `trino_pg` | `shop-db-trino-pg` | Alembic (sf-app): `USAGE` on `public`, `meta`; `SELECT` on the 5 shop tables, `heartbeat`, `meta.cdc_epochs`; nothing else | Trino catalog `pg` (sf-data) |
+  | `polaris` | `shop-db-polaris` | owns Database `catalog` (CNPG `Database`, sf-platform) and its schema `polaris_schema`; no access to `shop` | Polaris (sf-data) |
 - `debezium` has `REPLICATION`: it could open its own logical slot with another output plugin and read changes of
   every table, whatever the publication and grants say. Treat Secret `shop-db-debezium` (and any copy for Kafka
   Connect) as a database-wide read credential: limit who can read it.

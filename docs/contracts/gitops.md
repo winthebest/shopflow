@@ -104,6 +104,15 @@ Config that belongs to one controller may instead live inside that controller's 
 - Each component owner keeps its encrypted secrets next to its overlay:
   `deploy/platform/<component>/<overlay>/secrets/<name>.enc.yaml`, plus a KSOPS generator in that overlay.
   `deploy/secrets/` is only for cluster-wide secrets owned by sf-platform (for example Argo CD admin).
+- KSOPS `files:` paths are relative to the directory of the overlay's `kustomization.yaml`, not to the generator
+  file (`./secrets/<name>.enc.yaml`); `platform-validate.sh` checks this.
+- Cross-namespace credentials (one origin per password):
+  - Read in place when the consumer can: Strimzi reads `shop/shop-db-debezium` through
+    `KubernetesSecretConfigProvider`; a Role in `shop` grants `get` on that one Secret (`resourceNames`) to the
+    consumer's ServiceAccount. The Role/RoleBinding belong to the consumer component.
+  - Otherwise (env from a same-namespace Secret, e.g. Polaris, Trino) the consumer's owner derives its own SOPS file
+    from the origin in a pipe: `sops -d <origin> | yq '<new name/namespace/keys>' | sops -e --filename-override <dest>
+    /dev/stdin > <dest>`. Never displayed, never written in plaintext; re-derive when the origin rotates.
 - Generated values (passwords) are random at creation time. Values only the user knows (for example a chat
   webhook URL) start as a clearly marked placeholder; the user replaces them with `sops <file>` later.
 - Known secrets (name → keys):
