@@ -1,7 +1,7 @@
-# Infra CI: OpenTofu fmt/validate/test (mocked AWS, no credentials), tflint, trivy config and the reaper tests.
-# The `plan` job is the only one with AWS access: read-only role ci-plan through OIDC, same-repo pull requests
-# only, and switched off until the repository variable INFRA_PLAN_ENABLED=true (set once layer 0 exists).
-# No job can apply infrastructure (ADR 0509).
+# Infra CI: OpenTofu fmt/validate/test (mocked AWS, no credentials), tflint, trivy config, ShellCheck, and the
+# reaper and cloud script tests. The `plan` job is the only one with AWS access: read-only role ci-plan through
+# OIDC, same-repo pull requests only, and switched off until the repository variable INFRA_PLAN_ENABLED=true
+# (set once layer 0 exists). No job can apply infrastructure (ADR 0509).
 #
 # Supply-chain rules follow ci.yml: actions pinned to full commit SHAs, images pinned by digest, least-privilege
 # permissions per job, no Actions cache. zizmor runs repo-wide in ci.yml.
@@ -11,14 +11,22 @@ on:
   pull_request:
     paths:
       - infra/**
+      - scripts/cloud-*.sh
+      - scripts/aws-*.sh
+      - scripts/export-evidence.sh
       - mk/cloud.mk
       - .github/workflows/infra-ci.yml
+      - .github/workflows/cloud-reaper.yml
   push:
     branches: [main]
     paths:
       - infra/**
+      - scripts/cloud-*.sh
+      - scripts/aws-*.sh
+      - scripts/export-evidence.sh
       - mk/cloud.mk
       - .github/workflows/infra-ci.yml
+      - .github/workflows/cloud-reaper.yml
 
 permissions: {}
 
@@ -78,8 +86,8 @@ jobs:
           persist-credentials: false
       - run: make cloud-trivy
 
-  python:
-    name: reaper tests
+  scripts:
+    name: shellcheck + reaper and script tests
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -92,7 +100,7 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: false
-      - run: make cloud-pytest
+      - run: make cloud-shellcheck cloud-pytest
 
   plan:
     name: tofu plan ${{ matrix.layer }} (read-only role)

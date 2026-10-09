@@ -1,7 +1,7 @@
 [project]
 name = "shopflow-infra"
 version = "0.1.0"
-description = "Cloud tooling for shopflow: the reaper (Lambda + CLI)."
+description = "Cloud tooling for shopflow: the reaper (Lambda + CLI) and offline tests for the cloud scripts."
 requires-python = ">=3.13"
 # boto3 ships with the Lambda runtime; it is declared here for the CLI and the tests.
 dependencies = ["boto3>=1.40"]
@@ -19,7 +19,7 @@ package = false
 exclude-newer = "2026-09-25T00:00:00Z"
 
 [tool.pytest.ini_options]
-testpaths = ["lambda/reaper/tests"]
+testpaths = ["lambda/reaper/tests", "tests"]
 pythonpath = ["lambda/reaper/src"]
 addopts = "-q"
 

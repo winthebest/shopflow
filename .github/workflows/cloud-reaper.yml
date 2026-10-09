@@ -1,0 +1,61 @@
+# GitHub reaper: the primary kill switch for an AWS session whose lease expired (scripts/cloud-reap.sh).
+# AWS APIs only, so it works while the node group is paused or the EKS API is unreachable. The backup kill
+# switch is the Lambda in layer 0, scheduled at lease + 1h, which does not depend on GitHub.
+#
+# The hourly schedule stays off until the first AWS session is approved: uncomment `schedule` in that PR
+# (docs/runbooks/cloud-session.md, "Arming the GitHub reaper"). cloud-up re-enables the workflow on every
+# session because GitHub disables cron workflows after 60 days without repository activity.
+# A failed run is the alert (GitHub notifies on failed scheduled runs).
+name: cloud-reaper
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Read state and print what would be deleted
+        type: boolean
+        default: true
+  # schedule:
+  #   - cron: "17 * * * *"
+
+permissions: {}
+
+# One cloud mutation at a time; never cancel a teardown half-way.
+concurrency:
+  group: cloud
+  cancel-in-progress: false
+
+env:
+  TOFU_VERSION: "1.13.1"
+  UV_VERSION: "0.11.29"
+
+jobs:
+  reap:
+    name: reap expired session
+    if: vars.AWS_ACCOUNT_ID != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      id-token: write # OIDC -> shopflow-reaper (delete project-tagged session compute only)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/shopflow-reaper
+          aws-region: ap-southeast-1
+      - name: reap
+        env:
+          # Scheduled runs have no inputs: always the real teardown.
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '1' || '0' }}
+        run: scripts/cloud-reap.sh
