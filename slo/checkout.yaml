@@ -1,0 +1,61 @@
+# Checkout SLOs (source of truth). `make sre-slo` turns this into
+# deploy/platform/slo/base/checkout-slo.prometheusrule.yaml with Sloth (docs/adr/0300-slo-tooling-sloth.md).
+# Definitions, thresholds and the error budget policy: docs/slo/checkout.md.
+#
+# SLI source: server spans of the gateway for POST /checkout, turned into metrics by the OTel span_metrics
+# connector (deploy/platform/otel-collector/base/values-gateway.yaml) and ingested by Prometheus over OTLP.
+# `total > 0` makes a window with no traffic produce no sample instead of NaN (0/0); a NaN would otherwise
+# poison the 28-day average and hide the error budget until it ages out.
+# `or vector(0)` on the 5xx query: a 5xx series only exists after the first 5xx, and an empty numerator
+# would hide a perfectly healthy SLI.
+apiVersion: sloth.slok.dev/v1
+kind: PrometheusServiceLevel
+metadata:
+  name: checkout
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: shopflow
+spec:
+  service: checkout
+  labels:
+    team: sf-sre
+  slos:
+    - name: availability
+      objective: 99.5
+      description: "99.5% of POST /checkout requests do not return 5xx."
+      sli:
+        events:
+          errorQuery: |
+            sum(rate(traces_span_metrics_calls_total{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/checkout",http_response_status_code=~"5.."}[{{.window}}])) or vector(0)
+          totalQuery: |
+            sum(rate(traces_span_metrics_calls_total{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/checkout"}[{{.window}}])) > 0
+      alerting:
+        name: CheckoutAvailabilityBurn
+        annotations:
+          summary: "Checkout is returning 5xx faster than the 99.5% SLO allows."
+          runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/checkout-availability.md
+        pageAlert:
+          labels: {severity: page}
+        ticketAlert:
+          labels: {severity: ticket}
+    - name: latency
+      objective: 99
+      description: "99% of POST /checkout requests complete in under 300ms."
+      sli:
+        events:
+          # Slow = all requests minus those in the le="0.3" bucket (0.3 is an explicit bucket boundary).
+          errorQuery: |
+            sum(rate(traces_span_metrics_duration_seconds_count{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/checkout"}[{{.window}}]))
+            -
+            sum(rate(traces_span_metrics_duration_seconds_bucket{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/checkout",le="0.3"}[{{.window}}]))
+          totalQuery: |
+            sum(rate(traces_span_metrics_duration_seconds_count{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/checkout"}[{{.window}}])) > 0
+      alerting:
+        name: CheckoutLatencyBurn
+        annotations:
+          summary: "Checkout requests are slower than 300ms faster than the 99% SLO allows."
+          runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/checkout-latency.md
+        pageAlert:
+          labels: {severity: page}
+        ticketAlert:
+          labels: {severity: ticket}
