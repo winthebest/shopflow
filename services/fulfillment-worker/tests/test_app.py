@@ -104,3 +104,31 @@ async def test_stalled_loop_fails_liveness(monkeypatch):
     async with app.router.lifespan_context(app):
         monkeypatch.setattr(app.state.worker, "seconds_since_poll", lambda: 500.0)
         assert await probe(app, "/healthz") == 503
+
+
+@pytest.mark.parametrize(
+    ("latency_ms", "batch", "ok"),
+    [(20, 500, True), (120, 500, True), (300, 200, True), (300, 500, False), (10_000, 7, False)],
+)
+def test_batch_latency_must_stay_below_the_stall_bound(latency_ms, batch, ok):
+    def build() -> Settings:
+        return Settings(
+            kafka_bootstrap_servers="kafka:9092",
+            kafka_security_protocol="PLAINTEXT",
+            database_url=UNREACHABLE_DB,
+            shipment_latency_ms=latency_ms,
+            batch_max_records=batch,
+        )
+
+    if ok:
+        build()
+    else:
+        with pytest.raises(ValidationError, match=r"set BATCH_MAX_RECORDS <= \d+"):
+            build()
+
+
+def test_stall_bound_leaves_room_for_the_slowest_allowed_batch():
+    from fulfillment_worker.main import STALLED_AFTER_S
+    from fulfillment_worker.settings import MAX_BATCH_LATENCY_MS
+
+    assert MAX_BATCH_LATENCY_MS / 1000 <= STALLED_AFTER_S / 2

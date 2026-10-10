@@ -4,6 +4,10 @@ from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings
 from sqlalchemy.engine import URL
 
+# A batch's simulated latency must stay well below the liveness stall bound (main.STALLED_AFTER_S = 120s) and the
+# consumer's max.poll.interval (300s): half the stall bound, so DB retries (~25s) still fit.
+MAX_BATCH_LATENCY_MS = 60_000
+
 
 class Settings(BaseSettings):
     kafka_bootstrap_servers: str
@@ -38,6 +42,13 @@ class Settings(BaseSettings):
             raise ValueError("SASL_SSL needs KAFKA_USERNAME, KAFKA_PASSWORD and KAFKA_CA_FILE")
         if not self.database_url and not (self.database_host and self.database_user and self.database_password):
             raise ValueError("set DATABASE_URL, or DATABASE_HOST, DATABASE_USER and DATABASE_PASSWORD")
+        batch_latency_ms = self.shipment_latency_ms * self.batch_max_records
+        if batch_latency_ms > MAX_BATCH_LATENCY_MS:
+            largest_batch = MAX_BATCH_LATENCY_MS // self.shipment_latency_ms
+            raise ValueError(
+                f"SHIPMENT_LATENCY_MS x BATCH_MAX_RECORDS = {batch_latency_ms}ms exceeds {MAX_BATCH_LATENCY_MS}ms: a"
+                f" batch would outlast the liveness stall bound; set BATCH_MAX_RECORDS <= {largest_batch}"
+            )
         return self
 
     def dsn(self) -> str:

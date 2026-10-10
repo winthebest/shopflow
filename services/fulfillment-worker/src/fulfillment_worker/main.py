@@ -31,7 +31,8 @@ SERVICE = "fulfillment-worker"
 PORT = 8003
 READY_TIMEOUT_S = 1.0
 STOP_TIMEOUT_S = GRACEFUL_SHUTDOWN_S - 2  # leave time to close the consumer and the engine
-# Liveness: the loop polls every second when idle; a batch takes at most ~batch x latency plus ~25s of DB retries.
+# Liveness: the loop polls every second when idle; a batch takes at most batch x latency (<= 60s, enforced by
+# settings.MAX_BATCH_LATENCY_MS) plus ~25s of DB retries.
 STALLED_AFTER_S = 120.0
 DB_CONNECT_TIMEOUT_S = 5.0  # no 1s request budget here, unlike orders
 DB_STATEMENT_TIMEOUT_S = 10.0
