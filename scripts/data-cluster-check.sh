@@ -89,7 +89,9 @@ fi
 
 order="$(psql_shop <<< "INSERT INTO orders (customer_id, status, total)
   SELECT min(id), 'pending', 1.00 FROM customers RETURNING id")"
-psql_shop > /dev/null <<< "UPDATE orders SET status = 'paid' WHERE id = $order; DELETE FROM orders WHERE id = $order"
+# `failed`, not `paid`: the fulfillment worker (profile ops) ships paid orders, and its shipment row would then block
+# the DELETE (foreign key shipments -> orders). Still an `u` event.
+psql_shop > /dev/null <<< "UPDATE orders SET status = 'failed' WHERE id = $order; DELETE FROM orders WHERE id = $order"
 started=$SECONDS
 ops=""
 until [[ "$ops" == c,u,d ]] || ((SECONDS - started > TIMEOUT)); do
