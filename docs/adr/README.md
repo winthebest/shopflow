@@ -35,6 +35,7 @@ orchestrator adds rows when merging a PR that contains ADRs.
 | [0301](0301-otel-collector-single-pipeline.md) | One OpenTelemetry Collector pipeline; SLIs from span metrics | Accepted |
 | [0302](0302-observability-backends-chart-sources.md) | Observability backends, chart sources and pinning | Accepted |
 | [0303](0303-chaos-mesh-game-day-only.md) | Chaos Mesh installed only for game days (profile `chaos`) | Accepted |
+| [0304](0304-keda-kafka-lag.md) | KEDA autoscaling on Kafka consumer lag (profile `ops`) | Accepted |
 | [0400](0400-kafka-kraft-debezium-iceberg-versions.md) | Kafka 4.3 on Strimzi 1.2 (KRaft), Debezium 3.7, Iceberg 1.12 sink | Accepted |
 | [0401](0401-connect-image-built-in-ci.md) | Kafka Connect image built in CI, not by Strimzi `spec.build` | Accepted |
 | [0402](0402-freshness-exporter-custom.md) | Custom freshness exporter for lakehouse tables | Accepted |
