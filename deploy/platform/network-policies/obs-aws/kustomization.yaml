@@ -1,0 +1,9 @@
+# AWS variant of the observability policies: API server egress on 443 to the VPC (components/apiserver-aws) and the
+# AWS-only OpenCost flow into Prometheus.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../obs
+  - opencost.yaml
+components:
+  - ../components/apiserver-aws

@@ -1,0 +1,19 @@
+# AWS only (docs/contracts/environment.md "Network flows"): OpenCost queries Prometheus (kps-prometheus:9090) for cost
+# allocation. Prometheus scraping OpenCost is covered by prometheus-scrape (egress to any pod).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prometheus-from-opencost
+  namespace: observability
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: prometheus}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: opencost}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: opencost}
+      ports:
+        - {protocol: TCP, port: 9090}

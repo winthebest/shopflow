@@ -170,6 +170,11 @@ done
 for out in "$OUT_DIR"/profile-aws-*.yaml; do
   [[ -f "$out" ]] && render_apps "$out" "app-aws-"
 done
+# aws variants no aws profile lists yet, straight from their directories (no session params; listed ones are skipped).
+for app_dir in "$WORK"/deploy/argocd/apps-aws/*/; do
+  build "$app_dir" > "$WORK/apps.yaml" || fail "aws $(basename "$app_dir"): app does not build"
+  render_apps "$WORK/apps.yaml" "app-aws-"
+done
 
 # Argo CD bootstrap chart (installed by k3d-up.sh) and the root app template.
 helm template argocd "$(yq '.chart' "$ROOT_DIR/deploy/argocd/bootstrap/argocd-chart.yaml")" \

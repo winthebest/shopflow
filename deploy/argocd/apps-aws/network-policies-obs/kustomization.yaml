@@ -1,0 +1,11 @@
+# AWS variant of network-policies-obs: deploy/platform/network-policies/obs-aws (API server egress on 443 to the VPC, OpenCost → Prometheus).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../apps/network-policies-obs
+patches:
+  - target: {kind: Application, name: network-policies-obs}
+    patch: |-
+      - op: replace
+        path: /spec/sources/0/path
+        value: deploy/platform/network-policies/obs-aws
