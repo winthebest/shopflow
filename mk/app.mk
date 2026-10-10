@@ -49,5 +49,5 @@ app-loadtest: ## k6 browse+checkout on the gateway (LOADTEST_PROFILE=constant|ra
 		-e PROFILE=$(LOADTEST_PROFILE) -e RATE=$(LOADTEST_RATE) -e DURATION=$(LOADTEST_DURATION) \
 		loadtest/checkout.js
 
-app-worker-check: ## fulfillment-worker on a cluster (CLUSTER=sf-main): copies, SASL_SSL group, KEDA 1->N->min under k6, 0 duplicate shipments (SKIP_LOAD=1: no load)
+app-worker-check: ## fulfillment-worker on a cluster (CLUSTER=sf-main): copies, SASL_SSL, KEDA 1->N->min under k6 (SKIP_LOAD=1; WATCH=1: a backlog), 0 duplicates (SAVE_BASELINE/REPLAY_BASELINE=<file> around a re-snapshot)
 	scripts/app-worker-check.sh
