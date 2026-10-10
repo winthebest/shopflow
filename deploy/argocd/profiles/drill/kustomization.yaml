@@ -1,0 +1,21 @@
+# Profile `drill` (sf-cloud): the local restore drill (docs/runbooks/restore.md, scripts/restore-drill.sh). Adds to
+# `core` the object store and plugin shop-db backs up through, so a drill can destroy the database and recover it.
+# Needs core; exclusive with data, which deploys the same SeaweedFS (scripts/platform-root-apps.sh enforces both).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  # Namespace lakehouse with its Pod Security level and default-deny NetworkPolicies, including seaweedfs <- shop-db
+  # (sf-platform, wave -2); it also declares the kafka namespace, unused here.
+  - ../../apps/network-policies-data
+  # SeaweedFS S3 (sf-data): bucket pg-backup and the cnpg-backup identity, next to the lake.
+  - ../../apps/seaweedfs
+  # CNPG barman-cloud plugin (sf-platform): WAL archive and base backups of shop-db.
+  - ../../apps/cnpg-barman-plugin
+components:
+  - ../_common
+replacements:
+  - source: {kind: ConfigMap, name: git-revision, fieldPath: data.revision}
+    targets:
+      - select: {kind: Application}
+        fieldPaths:
+          - spec.sources.[repoURL=https://github.com/winthebest/shopflow.git].targetRevision
