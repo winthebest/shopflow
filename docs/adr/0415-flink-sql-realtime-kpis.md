@@ -17,7 +17,8 @@ epoch.
 - **Image `shopflow-flink`** (`data/flink/Dockerfile`, built and planned in CI, published by `data-images.yml`):
   - the Kafka SQL connector 5.0.0-2.2 (shaded Kafka client: the SCRAM login module is the shaded class name);
   - the JDBC connector 4.0.0-2.0 with its Postgres dialect plus the Postgres driver;
-  - the Presto S3 filesystem plugin for checkpoints on SeaweedFS;
+  - the Hadoop S3A filesystem plugin for checkpoints on SeaweedFS (credentials from the pod environment, not the
+    Flink configuration);
   - a 70-line `SqlRunner`, compiled against Flink's own jars;
   - the SQL `data/flink/kpi_minute.sql`.
   Every jar is pinned by sha256, cross-checked against Maven Central's sha1. The SQL is baked in rather than mounted
