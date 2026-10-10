@@ -25,6 +25,17 @@ scripts/restore-drill.sh run --cluster <slot> --pitr 30   # PITR: 30 s before th
 `--profiles` and `--revision` default to what the cluster's root apps use (the `root-*` apps and root-core's
 revision), so re-applying the root apps for the recovery never moves the other apps to `main`.
 
+Checks for the first drill slot, before `prepare`. Record the growth rate under Results.
+
+- [ ] Job `cnpg-system/shop-db-backup-copy` Succeeded, so Secret `shop/shop-db-backup-s3` exists.
+- [ ] `kubectl -n shop get clusters.postgresql.cnpg.io shop-db -o jsonpath='{.status.conditions[?(@.type=="ContinuousArchiving")].status}'`
+      prints `True`.
+- [ ] Bucket `pg-backup` exists and receives WAL:
+      `kubectl -n lakehouse exec deploy/seaweedfs -- sh -c 'echo "fs.du /buckets/pg-backup" | weed shell'`.
+- [ ] Growth rate: run `fs.du` again one hour later. With `archive_timeout: 60s`, an idle database still switches
+      WAL every minute. gzip shrinks the mostly empty segments, but 60 files an hour add up; the rate decides how
+      long a drill cluster can stay up.
+
 What `run` does:
 
 1. **Preflight:**
@@ -70,6 +81,8 @@ Expectations:
 | Date | Where | Mode | acked | lost | RPO | RTO db / service | Notes |
 |---|---|---|---|---|---|---|---|
 | | | | | | | | |
+
+`pg-backup` growth (idle / under k6): _to measure in the first slot_.
 
 ## When a recovery fails
 
