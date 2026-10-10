@@ -9,6 +9,8 @@
 #   WAIT_TIMEOUT       seconds to wait for every Application to be Synced + Healthy (default 900; 0 = no wait)
 #   SOPS_AGE_KEY_FILE  age private key (default ~/.config/sops/age/keys.txt); copied into the cluster, never printed
 #   PULL_CACHE         1 (default) = pull images through the shared caches (ADR 0207); 0 = straight from upstream
+#   PG_SERVER_NAME     shop-db backup chain when the profiles deploy the cnpg-barman-plugin app (default shop-db);
+#                      PG_RECOVERY_FROM / PG_RECOVERY_TARGET_TIME restore from a chain (restore drill, ADR 0203)
 set -euo pipefail
 
 # shellcheck source=scripts/k3d-lib.sh
@@ -35,8 +37,9 @@ preflight() {
   [[ -r "$SOPS_AGE_KEY_FILE" ]] || die "age key not found at $SOPS_AGE_KEY_FILE (docs/runbooks/local-platform.md)"
   sops -d "$ARGOCD_ADMIN_SECRET" >/dev/null 2>&1 || die "cannot decrypt $ARGOCD_ADMIN_SECRET with $SOPS_AGE_KEY_FILE"
 
-  # Profile rules (exclusive obs/obs-lite, data needs obs*) live in the shared root-app script.
-  "$ROOT_APPS" --check --overlay local --revision "$GIT_REVISION" --profiles "$PROFILES"
+  # Profile rules (exclusive obs/obs-lite and drill/data, data needs obs*) live in the shared root-app script.
+  local_params
+  "$ROOT_APPS" --check --overlay local --revision "$GIT_REVISION" --profiles "$PROFILES" ${PARAMS[@]+"${PARAMS[@]}"}
 
   # Argo CD reads Git from GitHub, not from this checkout, so the revision must be pushed. Resolve it to the
   # commit SHA that every Application must report before `make up` calls the cluster ready.
@@ -186,7 +189,27 @@ start_cdc_epoch() {
 
 # One root app per profile, through the mechanism cloud-up uses too (scripts/platform-root-apps.sh, ADR 0206).
 apply_root_apps() {
-  KUBE_CONTEXT="$KUBE_CONTEXT" "$ROOT_APPS" --overlay local --revision "$GIT_REVISION" --profiles "$PROFILES"
+  KUBE_CONTEXT="$KUBE_CONTEXT" "$ROOT_APPS" --overlay local --revision "$GIT_REVISION" --profiles "$PROFILES" \
+    ${PARAMS[@]+"${PARAMS[@]}"}
+}
+
+# Session params for the local overlay. shop-db archives only while pg.serverName is set, and only a profile set that
+# deploys the barman-cloud plugin (profiles drill or data) has somewhere to archive to (SeaweedFS), so the default
+# chain name is set exactly then. Recovery params pass through for the restore drill.
+local_params() {
+  local profile
+  PARAMS=()
+  for profile in ${PROFILES//,/ }; do
+    [[ -f "$ROOT_DIR/deploy/argocd/profiles/$profile/kustomization.yaml" ]] || continue
+    if kubectl kustomize "$ROOT_DIR/deploy/argocd/profiles/$profile" \
+      | yq -e 'select(.kind == "Application" and .metadata.name == "cnpg-barman-plugin")' >/dev/null 2>&1; then
+      PARAMS+=(--param "pg.serverName=${PG_SERVER_NAME:-shop-db}")
+      break
+    fi
+  done
+  [[ -z "${PG_RECOVERY_FROM:-}" ]] || PARAMS+=(--param "pg.recoveryFrom=$PG_RECOVERY_FROM")
+  [[ -z "${PG_RECOVERY_TARGET_TIME:-}" ]] || PARAMS+=(--param "pg.recoveryTargetTime=$PG_RECOVERY_TARGET_TIME")
+  ((${#PARAMS[@]} == 0)) || log "session params: ${PARAMS[*]}"
 }
 
 # name, sync, health, phase of the last sync operation, and whether the app has synced TARGET_SHA or a later commit

@@ -51,7 +51,7 @@ spec:
         passwordSecret:
           name: {{ $role.secret }}
       {{- end }}
-  {{- if .Values.backup.enabled }}
+  {{- if eq (include "shop-db.backupActive" .) "true" }}
   plugins:
     - name: barman-cloud.cloudnative-pg.io
       isWALArchiver: true

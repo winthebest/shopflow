@@ -49,6 +49,17 @@ scripts/platform-root-apps.sh --check --overlay aws --revision main --profiles c
   `shopflow.io/required-aws` if cloud-up must always pass it), then copy it into a Helm value with a top-level
   replacement in the aws profile. `make platform-validate` fails on undeclared keys.
 
+## Backups for the restore drill
+
+Profiles that deploy the `cnpg-barman-plugin` app (`drill`, or `data` once it lists the plugin) make shop-db archive
+WAL to SeaweedFS (`s3://pg-backup/shop-db`, ADR 0203):
+- `make up` passes `pg.serverName=${PG_SERVER_NAME:-shop-db}`;
+- `PG_RECOVERY_FROM=<chain>` (and optionally `PG_RECOVERY_TARGET_TIME`) bootstraps shop-db from a chain instead of
+  initdb.
+
+`drill` excludes `data` and needs `core`. After a drill, run `make down`, or rerun with the drill's `PG_*`: a plain
+`make up` resets the chain name to the default.
+
 ## Image pull-through caches
 
 Every node of every local cluster pulls through four shared caches (ADR 0207): `k3d-shopflow-cache-docker`

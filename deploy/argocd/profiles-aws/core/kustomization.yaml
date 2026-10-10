@@ -11,7 +11,7 @@ resources:
   - ../../apps-aws/envoy-gateway
   - ../../apps-aws/cert-manager
   - ../../apps-aws/cnpg
-  - ../../apps/cnpg-barman-plugin
+  - ../../apps-aws/cnpg-barman-plugin
   - ../../apps-aws/shop-db
   - ../../apps-aws/shop
 components:

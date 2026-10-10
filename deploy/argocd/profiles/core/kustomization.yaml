@@ -20,3 +20,32 @@ replacements:
       - select: {kind: Application}
         fieldPaths:
           - spec.sources.[repoURL=https://github.com/winthebest/shopflow.git].targetRevision
+  # shop-db: the backup chain and where to restore from (restore drill, docs/adr/0203). Empty pg.serverName = no
+  # backups, the default for every profile set without the cnpg-barman-plugin app (scripts/k3d-up.sh).
+  - source:
+      kind: ConfigMap
+      name: platform-params
+      fieldPath: data.[pg.serverName]
+    targets:
+      - select: {kind: Application, name: shop-db}
+        fieldPaths:
+          - spec.sources.[path=deploy/charts/shop-db].helm.valuesObject.backup.serverName
+        options: {create: true}
+  - source:
+      kind: ConfigMap
+      name: platform-params
+      fieldPath: data.[pg.recoveryFrom]
+    targets:
+      - select: {kind: Application, name: shop-db}
+        fieldPaths:
+          - spec.sources.[path=deploy/charts/shop-db].helm.valuesObject.recovery.fromServerName
+        options: {create: true}
+  - source:
+      kind: ConfigMap
+      name: platform-params
+      fieldPath: data.[pg.recoveryTargetTime]
+    targets:
+      - select: {kind: Application, name: shop-db}
+        fieldPaths:
+          - spec.sources.[path=deploy/charts/shop-db].helm.valuesObject.recovery.targetTime
+        options: {create: true}

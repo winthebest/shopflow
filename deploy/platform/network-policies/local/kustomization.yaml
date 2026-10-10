@@ -1,5 +1,6 @@
-# Local overlay: same namespaces and policies as base.
+# Local overlay: base policies plus shop-db's backups to SeaweedFS (restore drill).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../base
+  - shop-db-backup.yaml

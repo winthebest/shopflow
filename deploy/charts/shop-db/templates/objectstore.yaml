@@ -1,5 +1,6 @@
-{{- if or .Values.backup.enabled .Values.recovery.fromServerName }}
-# Backup destination for the barman-cloud plugin. Credentials: the pod's IAM role (EKS Pod Identity), no keys.
+{{- if or (eq (include "shop-db.backupActive" .) "true") .Values.recovery.fromServerName }}
+# Backup destination for the barman-cloud plugin. Credentials: the pod's IAM role (EKS Pod Identity) on AWS; locally a
+# Secret with the keys of SeaweedFS identity cnpg-backup.
 apiVersion: barmancloud.cnpg.io/v1
 kind: ObjectStore
 metadata:
@@ -12,8 +13,20 @@ spec:
   retentionPolicy: {{ .Values.backup.retentionPolicy | quote }}
   configuration:
     destinationPath: {{ printf "s3://%s/%s" (required "backup.bucket (session param aws.dataBucket) is required" .Values.backup.bucket) .Values.backup.path | quote }}
+    {{- with .Values.backup.endpointURL }}
+    endpointURL: {{ . | quote }}
+    {{- end }}
     s3Credentials:
+      {{- with .Values.backup.credentialsSecret }}
+      accessKeyId:
+        name: {{ . }}
+        key: access-key-id
+      secretAccessKey:
+        name: {{ . }}
+        key: secret-access-key
+      {{- else }}
       inheritFromIAMRole: true
+      {{- end }}
     wal:
       compression: gzip
     data:

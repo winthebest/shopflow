@@ -17,6 +17,8 @@ postgresql:
     # A slot whose consumer is gone would retain WAL until the volume is full and the shop stops. Past this size
     # the slot is invalidated and CDC re-snapshots into a new epoch (ADR 0203). Sized against the 5Gi volume.
     max_slot_wal_keep_size: 2GB
+    # RPO: a WAL segment is archived at least every 60s even when it is not full (CNPG's default is 5 minutes).
+    archive_timeout: 60s
 
 # Consumer login roles, managed by CNPG (`managed.roles`). Each may reach only `database` (pg_hba); the password
 # Secret (keys username, password) comes from the overlay: KSOPS locally, External Secrets on AWS. Grants on shop
@@ -71,14 +73,19 @@ databases:
     enabled: true
     owner: flink_serving
 
-# AWS: WAL archive + base backups through the barman-cloud plugin. serverName names this session's chain
-# (session param pg.serverName); bucket is aws.dataBucket.
+# WAL archive + base backups through the barman-cloud plugin. serverName names the chain (session param
+# pg.serverName). AWS: bucket aws.dataBucket, credentials from the pod's IAM role. Local (restore drill, profiles drill
+# or data): SeaweedFS in lakehouse through endpointURL + credentialsSecret, and only while serverName is set
+# (onlyWithServerName), so a cluster without SeaweedFS never archives into the void.
 backup:
   enabled: false
+  onlyWithServerName: false
   bucket: ""
   path: pg-backup
   serverName: ""
   retentionPolicy: 30d
+  endpointURL: ""        # empty = AWS S3
+  credentialsSecret: ""  # Secret with access-key-id/secret-access-key; empty = IAM role (inheritFromIAMRole)
 
 # AWS: restore from the chain `fromServerName` (session param pg.recoveryFrom) instead of initdb; empty = initdb.
 # targetTime (pg.recoveryTargetTime) is a PITR target; empty = latest.
