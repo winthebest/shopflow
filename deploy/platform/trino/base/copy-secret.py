@@ -52,7 +52,7 @@ def main() -> None:
     # Only text keys can feed a template. Binary keys (e.g. ca.p12 of a Strimzi cluster CA) are copied as they are and
     # never decoded; a template that names one fails with KeyError.
     values = {}
-    for key, encoded in (source.get("data", {}).items() if derived else ()):
+    for key, encoded in source.get("data", {}).items() if derived else ():
         try:
             values[key] = urllib.parse.quote(base64.b64decode(encoded).decode(), safe="")
         except UnicodeDecodeError:
