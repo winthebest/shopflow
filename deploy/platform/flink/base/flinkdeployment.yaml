@@ -14,7 +14,7 @@ metadata:
     argocd.argoproj.io/sync-wave: "1"
 spec:
   # Published by data-images.yml (job flink); bump tag + digest from that run's summary.
-  image: ghcr.io/winthebest/shopflow-flink:sha-1a7a7f7@sha256:d1841cfcea22383aebabe425f589e923a640cd1ee88e643bc03c2f81956a8d2f
+  image: ghcr.io/winthebest/shopflow-flink:sha-319fe97@sha256:b25077918a68aa64024ef2531f03cf89d79b1156b8f51f49a35e2ca37dae93a2
   imagePullPolicy: IfNotPresent
   flinkVersion: v2_2
   serviceAccount: flink
@@ -88,5 +88,9 @@ spec:
     entryClass: io.shopflow.flink.SqlRunner
     args: [/opt/flink/sql/kpi_minute.sql]
     parallelism: 1
+    # last-state resumes from the latest checkpoint after an image change, but only if the SQL plan is unchanged: a
+    # changed plan has other operator IDs and its restore fails. Roll out a SQL change by deleting this FlinkDeployment
+    # after the sync (Argo CD recreates it); the job resumes from the Kafka group offsets, and the minute that was
+    # open is undercounted once.
     upgradeMode: last-state
     state: running
