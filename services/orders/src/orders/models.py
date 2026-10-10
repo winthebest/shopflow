@@ -16,12 +16,14 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Identity,
+    Index,
     Integer,
     MetaData,
     Numeric,
     SmallInteger,
     Text,
     func,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -76,6 +78,8 @@ class Order(StandardColumns, Base):
     __table_args__ = (
         CheckConstraint(_in("status", ORDER_STATUSES), name="status_valid"),
         CheckConstraint("total >= 0", name="total_non_negative"),
+        # Stranded-order sweeper and its oldest-pending gauge read only `pending` rows (migration 0005).
+        Index("ix_orders_pending_created_at", "created_at", postgresql_where=text("status = 'pending'")),
     )
 
     customer_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("customers.id"), index=True)

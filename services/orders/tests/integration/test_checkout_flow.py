@@ -66,7 +66,9 @@ async def test_declined_payment_fails_order(seeded_db, shop_client):
     assert rows == [("failed", "declined")]
 
 
-async def test_payments_timeout_fails_order_and_returns_504(seeded_db, shop_client):
+async def test_payments_timeout_leaves_order_pending_and_returns_504(seeded_db, shop_client):
+    """A timeout may come after payments charged: the sweeper settles the order with the real answer later."""
+
     def timeout(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("slow", request=request)
 
@@ -75,13 +77,9 @@ async def test_payments_timeout_fails_order_and_returns_504(seeded_db, shop_clie
 
     assert response.status_code == 504
     body = response.json()
-    assert body["status"] == "failed"
-    rows = await fetch(
-        seeded_db,
-        "SELECT o.status, p.status FROM orders o JOIN payments p ON p.order_id = o.id WHERE o.id = :id",
-        id=body["order_id"],
-    )
-    assert rows == [("failed", "error")]
+    assert body["status"] == "pending"
+    assert await fetch(seeded_db, "SELECT status FROM orders WHERE id = :id", id=body["order_id"]) == [("pending",)]
+    assert await fetch(seeded_db, "SELECT count(*) FROM payments") == [(0,)]
 
 
 def _non_json_201(request: httpx.Request) -> httpx.Response:
@@ -97,14 +95,14 @@ def _refused(request: httpx.Request) -> httpx.Response:
 
 
 @pytest.mark.parametrize("handler", [_non_json_201, _unavailable, _refused], ids=["non-json-201", "503", "refused"])
-async def test_payments_failure_still_settles_order_as_failed(seeded_db, shop_client, handler):
+async def test_payments_failure_leaves_order_pending_and_returns_502(seeded_db, shop_client, handler):
     async with shop_client(seeded_db, payments_transport=httpx.MockTransport(handler)) as client:
         response = await client.post("/checkout", json=CHECKOUT)
 
     assert response.status_code == 502
-    assert response.json()["status"] == "failed"
-    rows = await fetch(seeded_db, "SELECT o.status, p.status FROM orders o JOIN payments p ON p.order_id = o.id")
-    assert rows == [("failed", "error")]
+    assert response.json()["status"] == "pending"
+    assert await fetch(seeded_db, "SELECT status FROM orders") == [("pending",)]
+    assert await fetch(seeded_db, "SELECT count(*) FROM payments") == [(0,)]
 
 
 async def test_retried_charge_is_idempotent_and_settles_the_order_once(seeded_db, shop_client):

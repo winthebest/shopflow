@@ -1,13 +1,15 @@
 """orders service: `GET /products`, `POST /orders`, `GET /orders/{id}` on the shop database.
 
 Checkout = transaction 1 (order + items, `pending`) -> payments call (800ms deadline, retries and circuit breaker in
-`payments_client`) -> transaction 2 (payment row, order `paid | failed`, idempotent). A payments timeout or outage still
-settles the order as `failed`, then answers 504 / 502 so the caller sees the dependency failure. While the circuit is
-open, checkout answers 503 + `Retry-After` before creating anything. The answer is built from what the two
-transactions returned: a read after settling could fail and lose the acknowledgement of a paid order.
+`payments_client`) -> transaction 2 (payment row, order `paid | failed`, idempotent). No answer from payments does not
+mean no charge: the order stays `pending`, checkout answers 504 / 502 so the caller sees the dependency failure, and
+the stranded-order sweeper (`sweeper`) charges again (payments answers the same for the same order) and settles. While
+the circuit is open, checkout answers 503 + `Retry-After` before creating anything. The answer is built from what the
+two transactions returned: a read after settling could fail and lose the acknowledgement of a paid order.
 """
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -33,6 +35,7 @@ from orders.repository import (
     settle_order,
 )
 from orders.settings import Settings
+from orders.sweeper import Sweeper
 from shopflow_common.log import AccessLogMiddleware, configure_logging
 from shopflow_common.schemas import MAX_ID, CheckoutRequest
 from shopflow_common.server import serve
@@ -68,7 +71,25 @@ def create_app(settings: Settings | None = None, payments_transport: httpx.Async
                 app.state.payments = PaymentsClient(
                     payments, settings.retry_policy(), settings.breaker_config(), retry_http=retries
                 )
-                yield
+                sweeper = None
+                if settings.sweep_interval_s > 0:
+                    sweeper = asyncio.create_task(
+                        Sweeper(
+                            app.state.sessionmaker,
+                            app.state.payments,
+                            interval_s=settings.sweep_interval_s,
+                            stale_after_s=settings.sweep_stale_after_s,
+                            batch=settings.sweep_batch,
+                        ).run(),
+                        name="stranded-order-sweeper",
+                    )
+                try:
+                    yield
+                finally:
+                    if sweeper is not None:
+                        sweeper.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await sweeper
         finally:
             await engine.dispose()
 
@@ -116,6 +137,12 @@ def create_app(settings: Settings | None = None, payments_transport: httpx.Async
             raise
 
         outcome = await payments.charge(pending.id, pending.total, permit)
+        if outcome.error is not None:
+            # A timeout may come after payments charged: leave the order `pending` for the sweeper to settle with the
+            # real answer, instead of recording `failed` for a charge that may have happened.
+            log.warning("payments did not answer, order left pending", extra={"order_id": pending.id})
+            code, detail = (504, "payments timed out") if outcome.error == "timeout" else (502, "payments unavailable")
+            return JSONResponse({"detail": detail, "order_id": pending.id, "status": "pending"}, status_code=code)
         try:
             settled = await settle_order(sessionmaker, pending.id, pending.total, outcome)
         except Exception:
@@ -129,10 +156,6 @@ def create_app(settings: Settings | None = None, payments_transport: httpx.Async
             "order settled" if settled.settled_now else "order already settled",
             extra={"order_id": pending.id, "order_status": settled.status, "payment_status": outcome.status},
         )
-        if settled.settled_now and outcome.error is not None:
-            code, detail = (504, "payments timed out") if outcome.error == "timeout" else (502, "payments unavailable")
-            return JSONResponse({"detail": detail, "order_id": pending.id, "status": settled.status}, status_code=code)
-
         return OrderOut(
             id=pending.id,
             customer_id=pending.customer_id,
