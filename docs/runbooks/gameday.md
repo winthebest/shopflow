@@ -37,7 +37,7 @@ Chaos Mesh exists in the cluster only during the game day ([ADR 0303](../adr/030
 | # | File / steps | Where | Hypothesis (short) |
 |---|---|---|---|
 | 1 | `chaos/gd1-payments-latency.yaml` (payments +800ms on every pod, 15m) | local | before the fix: nearly every checkout times out (504), availability page by +5m, latency page by +10m; after the fix (retry + circuit breaker): fast 503s cut the latency burn, availability still pages (no pod can answer in time) |
-| 1b | `chaos/gd1b-payments-partial.yaml` (1 of 2 payments pods +800ms, 15m), after the fix, payments at 2 replicas | local | retries reach the healthy pod: availability stays near the SLO where a single call would fail about half the checkouts; the retried checkouts are slower (latency burn) |
+| 1b | `chaos/gd1b-payments-partial.yaml` (1 of 2 payments pods +800ms, 15m), with the resilience fix (ADR 0102) | local | one retry reaches the healthy pod: errors ~50% → ~25%, circuit stays closed, retried checkouts ~550–600ms (latency burns); tickets but no page after 2h20m of steady load. The pool favours the healthy pod: compare measured numbers |
 | 2 | `chaos/gd2-kill-postgres-primary.yaml` (shop-db with 2 instances) | local | failover < 30s; 5xx only during the switch; Debezium's logical slot is lost → re-snapshot with a new epoch (`scripts/cdc-epoch.sh`) |
 | 3 | `chaos/gd3-debezium-stopped.yaml` (Kafka Connect down 30m) | local | WAL retained by `debezium_shop` grows; the WAL-retained alert fires before `max_slot_wal_keep_size` |
 | 4 | Manual: apply a schema-breaking migration outside CI (simulated) | local | silver/dbt break; time to detect is measured; the data-contract gate prevents it |

@@ -162,6 +162,56 @@ tests:
             value: 1
 
   # No checkout series at all (Collector down / never received a checkout): the guard fires after 15m.
+  # Game day 1b with the resilience fix (chaos/gd1b-payments-partial.yaml, ADR 0102): one of two payments pods slow
+  # for 15 minutes; one retry rescues about half of the failures, so ~25% of checkouts return 5xx and ~50% take more
+  # than 300ms. After the 2h20m of steady load the game-day runbook asks for, both SLOs raise a ticket but neither
+  # pages: the 1h pair needs ~17 min at these ratios (6.25% < 7.2% availability, 12.5% < 14.4% latency after 15) and
+  # the 6h pair stays under 6× (2.4% < 3%, 4.8% < 6%). gd1, every checkout failing, pages within ~5 minutes.
+  - name: game day 1b (25% 5xx, 50% slow for 15 minutes after 140 minutes of history) raises tickets, no page
+    interval: 1m
+    input_series:
+      - series: 'traces_span_metrics_duration_seconds_count{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/checkout"}'
+        values: '0+6000x195'
+      - series: 'traces_span_metrics_duration_seconds_bucket{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/checkout",le="0.3"}'
+        values: '0+6000x140 843000+3000x14 891000+6000x40'
+      - series: 'traces_span_metrics_calls_total{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/checkout",http_response_status_code="200"}'
+        values: '0+6000x140 844500+4500x14 913500+6000x40'
+      - series: 'traces_span_metrics_calls_total{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/checkout",http_response_status_code="504"}'
+        values: '0x140 1500+1500x14 22500x40'
+    alert_rule_test:
+      - eval_time: 155m
+        alertname: CheckoutAvailabilityBurn
+        exp_alerts:
+          - exp_labels: {severity: ticket, sloth_id: checkout-availability, sloth_service: checkout, sloth_severity: ticket, sloth_slo: availability, team: sf-sre}
+            exp_annotations:
+              summary: "Checkout is returning 5xx faster than the 99.5% SLO allows."
+              title: "(ticket) checkout availability SLO error budget burn rate is too fast."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/checkout-availability.md
+      - eval_time: 155m
+        alertname: CheckoutLatencyBurn
+        exp_alerts:
+          - exp_labels: {severity: ticket, sloth_id: checkout-latency, sloth_service: checkout, sloth_severity: ticket, sloth_slo: latency, team: sf-sre}
+            exp_annotations:
+              summary: "Checkout requests are slower than 300ms faster than the 99% SLO allows."
+              title: "(ticket) checkout latency SLO error budget burn rate is too fast."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/checkout-latency.md
+      - eval_time: 170m
+        alertname: CheckoutAvailabilityBurn
+        exp_alerts:
+          - exp_labels: {severity: ticket, sloth_id: checkout-availability, sloth_service: checkout, sloth_severity: ticket, sloth_slo: availability, team: sf-sre}
+            exp_annotations:
+              summary: "Checkout is returning 5xx faster than the 99.5% SLO allows."
+              title: "(ticket) checkout availability SLO error budget burn rate is too fast."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/checkout-availability.md
+      - eval_time: 170m
+        alertname: CheckoutLatencyBurn
+        exp_alerts:
+          - exp_labels: {severity: ticket, sloth_id: checkout-latency, sloth_service: checkout, sloth_severity: ticket, sloth_slo: latency, team: sf-sre}
+            exp_annotations:
+              summary: "Checkout requests are slower than 300ms faster than the 99% SLO allows."
+              title: "(ticket) checkout latency SLO error budget burn rate is too fast."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/checkout-latency.md
+
   - name: missing SLI data raises a ticket
     interval: 1m
     input_series:
