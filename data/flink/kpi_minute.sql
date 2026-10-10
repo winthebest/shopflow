@@ -5,6 +5,10 @@
 -- make the KPIs jump. Event time is created_at with a 30 s watermark; rows later than that are dropped (window TVF).
 -- A partition without records for 1 minute is marked idle (scan.watermark.idle-timeout), so it does not hold the
 -- watermark back: shop.public.orders has 6 partitions and a quiet shop leaves most of them empty.
+-- When every order and payment partition is idle the watermark would stop, and the last minutes would stay open until
+-- the next order. The heartbeat row (updated every 10 s by Debezium's heartbeat.action.query) is a third input that
+-- never goes idle: it counts nothing, but it moves the watermark, so a minute closes 30-40 s after it ends even in
+-- a quiet shop, and a minute without orders is written with zero orders instead of no row.
 -- The sink upserts by window_start, so a replay rewrites the same rows.
 -- Run by io.shopflow.flink.SqlRunner: placeholders come from the environment, statements end with ';' at line end.
 
@@ -63,6 +67,28 @@ CREATE TABLE payments_cdc (
     'json.ignore-parse-errors' = 'false'
 );
 
+CREATE TABLE heartbeat_cdc (
+    beat_at STRING,
+    event_time AS CAST(REPLACE(REPLACE(beat_at, 'T', ' '), 'Z', '') AS TIMESTAMP(3)),
+    WATERMARK FOR event_time AS event_time - INTERVAL '30' SECOND
+) WITH (
+    'connector' = 'kafka',
+    'topic' = 'shop.public.heartbeat',
+    'properties.bootstrap.servers' = 'shopflow-kafka-bootstrap.kafka.svc:9093',
+    'properties.group.id' = 'flink-kpi-minute-${CDC_EPOCH}',
+    'properties.security.protocol' = 'SASL_SSL',
+    'properties.sasl.mechanism' = 'SCRAM-SHA-512',
+    'properties.sasl.jaas.config' = 'org.apache.flink.kafka.shaded.org.apache.kafka.common.security.scram.ScramLoginModule required username="${KAFKA_USER}" password="${KAFKA_PASSWORD}";',
+    'properties.ssl.truststore.type' = 'PEM',
+    'properties.ssl.truststore.location' = '/etc/kafka-ca/ca.crt',
+    'scan.startup.mode' = 'group-offsets',
+    'properties.auto.offset.reset' = 'earliest',
+    'scan.watermark.idle-timeout' = '1 min',
+    'format' = 'json',
+    'json.fail-on-missing-field' = 'false',
+    'json.ignore-parse-errors' = 'false'
+);
+
 CREATE TABLE kpi_minute (
     window_start TIMESTAMP(3),
     window_end TIMESTAMP(3),
@@ -87,7 +113,10 @@ WHERE `_op` = 'c'
 UNION ALL
 SELECT event_time, 0, CAST(0 AS DECIMAL(12, 2)), 1, CASE WHEN status <> 'succeeded' THEN 1 ELSE 0 END
 FROM payments_cdc
-WHERE `_op` = 'c';
+WHERE `_op` = 'c'
+UNION ALL
+SELECT event_time, 0, CAST(0 AS DECIMAL(12, 2)), 0, 0
+FROM heartbeat_cdc;
 
 INSERT INTO kpi_minute
 SELECT
