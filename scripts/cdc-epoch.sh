@@ -11,7 +11,8 @@
 #       iceberg-control-<N> (the Iceberg sink's control topic for this epoch). Needs only the Strimzi CRDs, not a
 #       running Kafka. Default N = unix time in seconds: an int4 until 2038, above every earlier local epoch.
 #       Prints N. Connectors already running keep their old epoch until restarted (the re-snapshot runbook
-#       restarts them). On AWS, ESO writes the Secret from SSM and only `wait` is used.
+#       restarts them). With profile rt it also deletes FlinkDeployment flink/kpi-minute, which Argo CD recreates for
+#       the new epoch from fresh state. On AWS, ESO writes the Secret from SSM and only `wait` is used.
 # wait  Inserts N into meta.cdc_epochs (as shop_app), waits until Debezium reports the snapshot as completed
 #       (debezium_metrics_snapshotcompleted{context="snapshot",name="shop"} == 1 on the Connect metrics port),
 #       then sets snapshot_completed_at. Use it only for an epoch that snapshots (new Kafka or deleted offsets):
@@ -28,6 +29,8 @@ CONNECT_NAMESPACE=kafka
 CONNECT_CLUSTER=cdc          # KafkaConnect name (deploy/platform/kafka-connect)
 KAFKA_CLUSTER=shopflow       # Kafka name (deploy/platform/kafka)
 DEBEZIUM_SERVER=shop         # Debezium topic.prefix, the `name` label of its metrics
+FLINK_NAMESPACE=flink
+FLINK_JOB=kpi-minute        # FlinkDeployment (deploy/platform/flink), profile rt
 DB_NAMESPACE=shop
 DB_CLUSTER=shop-db           # CNPG Cluster; shop_app's password is in Secret shop-db-app
 
@@ -130,6 +133,14 @@ spec:
   partitions: 1
 YAML
   log "epoch $epoch: Secret $CONNECT_NAMESPACE/cdc-epoch and KafkaTopic iceberg-control-$epoch applied ($KUBE_CONTEXT)"
+  # Profile rt: the Flink KPI job must start the new epoch from fresh state, never from the previous epoch's
+  # checkpoint (docs/adr/0415). Deleting the FlinkDeployment drops its HA state; Argo CD recreates it, and that sync
+  # copies the new epoch into namespace flink first.
+  if kc get crd flinkdeployments.flink.apache.org > /dev/null 2>&1 \
+    && kc -n "$FLINK_NAMESPACE" get flinkdeployment "$FLINK_JOB" > /dev/null 2>&1; then
+    kc -n "$FLINK_NAMESPACE" delete flinkdeployment "$FLINK_JOB" --wait=false > /dev/null
+    log "epoch $epoch: FlinkDeployment $FLINK_NAMESPACE/$FLINK_JOB deleted, Argo CD recreates it for this epoch"
+  fi
   echo "$epoch"
 }
 

@@ -7,6 +7,7 @@
 #   iceberg-sink   Read, List, Write on lake  (bronze data files)
 #   trino-lake     Read, List, Write on lake  (dbt: silver/gold; maintenance procedures)
 #   trino-lake-ro  Read, List on lake         (lake_ro: exporter, metabase, planner; cannot delete files)
+#   flink          Read, Write below lake/flink-ckpt/, List on lake  (Flink checkpoints and HA state, profile rt)
 apiVersion: v1
 kind: Service
 metadata:

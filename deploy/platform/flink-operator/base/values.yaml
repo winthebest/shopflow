@@ -1,0 +1,22 @@
+# Flink Kubernetes Operator 1.16 (docs/adr/0415), profile rt. Watches namespace flink only; the chart creates the
+# ServiceAccount `flink` (and its RBAC) that the FlinkDeployments in that namespace run as. The validating/mutating
+# webhook gets its certificate from cert-manager (chart default; cert-manager is in profile core).
+image:
+  repository: ghcr.io/apache/flink-kubernetes-operator
+  tag: "1c895a3"  # the chart's appVersion 1.16.1 image
+  digest: sha256:94b91ea6e9d83996f12d7360ca74e49264057cf3ce697636d81677611651d142
+watchNamespaces: [flink]
+webhook:
+  create: true
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 9999
+  runAsGroup: 9999
+  seccompProfile:
+    type: RuntimeDefault
+operatorSecurityContext: &container
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+webhookSecurityContext: *container

@@ -15,9 +15,12 @@ on:
       - deploy/platform/iceberg-catalog/**
       - deploy/platform/trino/**
       - deploy/platform/freshness-exporter/**
+      - deploy/platform/flink-operator/**
+      - deploy/platform/flink/**
       - deploy/argocd/apps/**
       - deploy/argocd/profiles/data/**
       - deploy/argocd/profiles/batch/**
+      - deploy/argocd/profiles/rt/**
       - data/contracts/**  # the CDC table list and bronze columns are checked against them
       - data/dbt/**
       - data/airflow/**

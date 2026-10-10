@@ -1,0 +1,16 @@
+# Profile `rt` (sf-data): realtime KPIs with Flink (operator + job). Shape fixed by docs/contracts/gitops.md section 4.
+# Needs profile `data` in the same PROFILES: the job reads the CDC topics, writes serving.kpi_minute in shop-db and
+# checkpoints to SeaweedFS.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../apps/flink-operator
+  - ../../apps/flink
+components:
+  - ../_common
+replacements:
+  - source: {kind: ConfigMap, name: git-revision, fieldPath: data.revision}
+    targets:
+      - select: {kind: Application}
+        fieldPaths:
+          - spec.sources.[repoURL=https://github.com/winthebest/shopflow.git].targetRevision

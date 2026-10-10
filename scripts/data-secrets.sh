@@ -4,7 +4,7 @@
 # needs the public age recipient in .sops.yaml; this script never decrypts and never reads the age key.
 # Secrets come in groups whose values must change together (the S3 identities and their client copies; the Trino
 # users and their bcrypt file): a group is generated when none of its files exist, kept when all exist, and refused
-# when only some do. ROTATE=1 regenerates every group.
+# when only some do. ROTATE=1 regenerates every group, ROTATE=<group> only that one (lakehouse, airflow).
 # Credentials owned by other lanes (CNPG role passwords) are copied in the cluster instead (secret-copy.yaml).
 # Needs: sops, openssl, htpasswd (bcrypt for Trino's password file).
 #
@@ -35,6 +35,7 @@ LAKEHOUSE_FILES=(
   deploy/platform/trino/local/secrets/trino-exporter.enc.yaml
   deploy/platform/trino/local/secrets/trino-password-db.enc.yaml
   deploy/platform/kafka-connect/local/secrets/lake-s3-iceberg-sink.enc.yaml
+  deploy/platform/flink/local/secrets/flink-s3.enc.yaml
 )
 # Airflow keys fixed outside the chart, so a restored metadata database stays readable (Fernet) and sessions/tokens
 # survive restarts (API secret key, JWT secret); plus the admin login created at deploy.
@@ -103,6 +104,7 @@ generate_lakehouse() {
   # themselves but are generated with their secret keys.
   polaris_key="$(hex 10)" polaris_secret="$(hex 20)"
   sink_key="$(hex 10)" sink_secret="$(hex 20)"
+  flink_key="$(hex 10)" flink_secret="$(hex 20)"
   trino_key="$(hex 10)" trino_secret="$(hex 20)"
   trino_ro_key="$(hex 10)" trino_ro_secret="$(hex 20)"
 
@@ -115,7 +117,9 @@ generate_lakehouse() {
   {"name": "trino-lake", "credentials": [{"accessKey": "$trino_key", "secretKey": "$trino_secret"}],
    "actions": ["Read:lake", "List:lake", "Write:lake"]},
   {"name": "trino-lake-ro", "credentials": [{"accessKey": "$trino_ro_key", "secretKey": "$trino_ro_secret"}],
-   "actions": ["Read:lake", "List:lake"]}
+   "actions": ["Read:lake", "List:lake"]},
+  {"name": "flink", "credentials": [{"accessKey": "$flink_key", "secretKey": "$flink_secret"}],
+   "actions": ["Read:lake/flink-ckpt/*", "Write:lake/flink-ckpt/*", "List:lake"]}
 ]}
 JSON
   )"
@@ -136,6 +140,8 @@ JSON
 
   secret kafka lake-s3-iceberg-sink access-key-id "$sink_key" secret-access-key "$sink_secret" \
     | encrypt "${LAKEHOUSE_FILES[9]}"
+  # Flink checkpoints (deploy/platform/flink): only below lake/flink-ckpt/ (SeaweedFS wildcard actions).
+  secret flink flink-s3 access-key-id "$flink_key" secret-access-key "$flink_secret" | encrypt "${LAKEHOUSE_FILES[10]}"
 }
 
 # Fernet key: url-safe base64 of 32 random bytes (what cryptography.fernet expects).
@@ -152,12 +158,12 @@ generate_group() {
   local name="$1" present=0 f
   shift
   for f in "$@"; do [[ -e "$f" ]] && present=$((present + 1)); done
-  if [[ "${ROTATE:-0}" == "1" || "$present" == 0 ]]; then
+  if [[ "${ROTATE:-0}" == "1" || "${ROTATE:-0}" == "$name" || "$present" == 0 ]]; then
     "generate_$name"
   elif [[ "$present" == "$#" ]]; then
-    echo "$name: all $# files exist, kept (ROTATE=1 regenerates every group)"
+    echo "$name: all $# files exist, kept (ROTATE=$name regenerates this group)"
   else
-    echo "$name: only $present of $# files exist; restore them from git or run with ROTATE=1" >&2
+    echo "$name: only $present of $# files exist; restore them from git or run with ROTATE=$name" >&2
     return 1
   fi
 }

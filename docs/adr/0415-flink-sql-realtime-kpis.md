@@ -37,11 +37,34 @@ epoch.
     `shop.public.orders` has 6 partitions (Phase 7 fulfillment worker) and a quiet shop leaves most of them empty.
   - 1-minute tumbling windows over a union of order and payment inserts.
   - The JDBC sink upserts on `window_start`, so replays rewrite the same rows.
+- **Offsets:** `scan.startup.mode = group-offsets` with `properties.auto.offset.reset = earliest` on both sources.
+  For group-offsets, connector 5.0.0 reads the reset strategy from `auto.offset.reset` and defaults to `NONE`
+  (`KafkaDynamicSource`, `case GROUP_OFFSETS`), so a group without committed offsets would fail the job. A new group
+  replays the retained topics (the CDC topics are shared by all epochs, only the Iceberg control topic is per epoch):
+  snapshot rows are filtered out and the upsert rewrites earlier minutes with the same values, except the oldest
+  retained minute. Retention deletes whole log segments, so that minute may be only partly left, and the upsert then
+  overwrites its complete value with a smaller one. Locally and on AWS each session starts with a new Kafka, so this
+  does not happen in the demo; it would matter for a long-lived Kafka.
 - **Epochs:** the Kafka consumer group (`flink-kpi-minute-<epoch>`), the job name and the checkpoint directory
   (`SET 'execution.checkpointing.dir' = 's3://lake/flink-ckpt/<epoch>'`, applied by SqlRunner to the job's
   configuration) all carry the CDC epoch. On a new epoch, `scripts/cdc-epoch.sh new` deletes the FlinkDeployment
   (the operator drops its HA state with it) and Argo CD recreates it: the job starts from fresh state and never
   restores another epoch's checkpoint.
+- **Deployment (profile `rt`):**
+  - App `flink-operator` (wave 0): the operator chart from `dlcdn.apache.org`, watching namespace `flink` only.
+  - App `flink` (wave 1), `deploy/platform/flink/`:
+    - an in-cluster copy Job (`copy-secret.py`, as in the other data components) brings the Kafka user, the cluster
+      CA, the CDC epoch and the `flink_serving` role into namespace `flink`;
+    - a DDL Job creates `serving.kpi_minute` as `flink_serving` and grants `SELECT` to `grafana_serving`;
+    - FlinkDeployment `kpi-minute` (`upgradeMode: last-state`).
+  - Checkpoints and HA state go to SeaweedFS under `lake/flink-ckpt/`, with S3 identity `flink`, which can write
+    only below that prefix.
+  - Grafana: the same copy Job writes Secret `observability/grafana-serving-datasource` (label
+    `grafana_datasource=1`, one key `serving.yaml`, datasource uid `serving` as `grafana_serving`, `sslmode:
+    require`). The password is filled into the provisioning file as a JSON string (`DERIVED_ENCODING=json`). The
+    sidecar then loads the datasource once, complete, at the moment the password exists; a `$__file{}` reference
+    to an optional mount could be read while still empty on the first `rt` sync. Dashboard "Shopflow / KPI –
+    realtime" (folder Shopflow, refresh 30s, every query bounded by `$__timeFilter`).
 
 ## Alternatives considered
 
@@ -62,5 +85,8 @@ epoch.
     at runtime.
   - Counting by insert assumes orders and payments get their final amount and status at insert, which is how the
     shop writes them (services/orders).
+  - Argo CD does not manage the datasource Secret: it stays in `observability` when profile `rt` is removed (a
+    read-only datasource whose dashboard is empty). A new `grafana_serving` password reaches Grafana on the next
+    run of the copy Job, i.e. a sync with hooks of app `flink` (docs/runbooks/data-setup-hooks.md, step 4).
 - When to revisit: a JDBC connector release for 2.2 without the lineage dependency, or KPIs that need updates and
   deletes (would require a changelog source instead of filtering inserts).
