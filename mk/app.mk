@@ -2,7 +2,7 @@
 # Prefixed with `app-` (except `dev*`) so they never collide with other lanes' mk files.
 COMPOSE ?= docker compose
 
-.PHONY: dev dev-down dev-reset dev-logs app-sync app-lint app-fmt app-test app-test-unit app-hooks app-loadtest
+.PHONY: dev dev-down dev-reset dev-logs app-sync app-lint app-fmt app-test app-test-unit app-hooks app-loadtest app-worker-check
 
 dev: ## Build and start postgres + migrate + seed + 3 services on compose (gateway: http://localhost:8000)
 	$(COMPOSE) up --build --detach --wait
@@ -48,3 +48,6 @@ app-loadtest: ## k6 browse+checkout on the gateway (LOADTEST_PROFILE=constant|ra
 		--summary-export out/k6-summary-$(LOADTEST_STAMP).json \
 		-e PROFILE=$(LOADTEST_PROFILE) -e RATE=$(LOADTEST_RATE) -e DURATION=$(LOADTEST_DURATION) \
 		loadtest/checkout.js
+
+app-worker-check: ## fulfillment-worker on a cluster (CLUSTER=sf-main): copies, SASL_SSL group, KEDA 1->N->min under k6, 0 duplicate shipments (SKIP_LOAD=1: no load)
+	scripts/app-worker-check.sh
