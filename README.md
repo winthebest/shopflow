@@ -80,7 +80,7 @@ flowchart LR
 
 | Claim | Evidence |
 |---|---|
-| Gate 2, run on 2026-10-10 from `main`: `make up` on a fresh k3d cluster ready in 301 s (`core,obs`) and 314 s (`core,obs-lite,data`); k6 at 10 checkouts/s with 0 errors, p95 72–77 ms; CDC `c,u,d` into bronze in 34–68 s; NetworkPolicy probe 34/34; Tempo peak memory at 26% of its limit | Fixes the gate found: [#141](https://github.com/winthebest/shopflow/pull/141), [#143](https://github.com/winthebest/shopflow/pull/143). Raw output not published yet |
+| Gate 2, run on 2026-10-10 from `main`: `make up` on a fresh k3d cluster (warm image caches) ready in 301 s (`core,obs`) and 314 s (`core,obs-lite,data`); k6 at 10 checkouts/s with 0 errors, p95 72–77 ms; CDC `c,u,d` into bronze in 34–68 s; NetworkPolicy probe 34/34; Tempo peak memory at 26% of its limit | [Gate 2 record](docs/gates/2026-10-10-gate-2.md) |
 | Checkout p95 **72 ms** at 20 checkouts/s on docker compose; 0 HTTP errors; every acknowledged order found in Postgres, none left pending | [docs/perf-baseline.md](docs/perf-baseline.md) |
 | Checkout SLOs as code: **99.5%** availability and **99% under 300 ms** over 28 days, with multi-window burn-rate pages and tickets | [docs/slo/checkout.md](docs/slo/checkout.md), [slo/checkout.yaml](slo/checkout.yaml) |
 | Detection times proven by promtool unit tests: a page about 9 minutes after every checkout turns slow, no NaN when the lab is idle, a ticket when the SLI goes missing | [slo/tests/checkout.test.yaml](slo/tests/checkout.test.yaml) |
