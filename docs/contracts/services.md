@@ -68,6 +68,10 @@ every gateway 5xx as bad).
 - `updated_at` is the writing transaction's `now()`, not commit order: time-based cutoffs on it need a lookback window.
 - Schema is owned by Alembic in `services/orders/migrations/` (only owner of the schema).
 - Migration runs as a Kubernetes Job before the services roll out: image = orders image, command `["migrate"]` (wraps `alembic upgrade head`).
+- A merged migration reaches clusters only through the shop chart's image pins (`deploy/charts/shop/values.yaml`). Once
+  the migration commit's images are published, the next step is a PR bumping the three shop images to that `sha-<commit>`,
+  before any cluster test relies on the schema. `platform-validate.sh` fails on `main` (and on PRs touching the chart)
+  while the pinned orders image is older than the newest migration.
 - `wal_level=logical` from day 1 (CDC in Phase 4).
 
 ### CDC source objects (Phase 4; consumers: sf-data)
