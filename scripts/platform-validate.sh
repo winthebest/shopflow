@@ -5,7 +5,9 @@
 #      plus the Argo CD bootstrap chart;
 #   3. the rendered manifests pass kubeconform (Kubernetes schemas + CRDs-catalog);
 #   4. no rendered workload uses an image without a digest;
-#   5. the image of the shop migration Job (tag sha-<commit>) contains the newest commit under
+#   5. no NetworkPolicy opens egress to any destination beyond the API server port 6443, unless it says why
+#      (annotation shopflow.io/any-destination); the AWS API server CIDR matches the VPC of infra/tofu/network;
+#   6. the image of the shop migration Job (tag sha-<commit>) contains the newest commit under
 #      services/<service>/migrations, so a chart bump cannot ship an image without a migration (needs full Git history).
 #      SHOP_MIGRATION_CHECK=fail (default) exits on a stale image; warn prints a GitHub annotation and goes on.
 #      Every shop service must run the same tag (always fails otherwise).
@@ -201,7 +203,24 @@ undigested="$(yq -N 'select(.kind != "CustomResourceDefinition" and .kind != "Ap
 [[ -z "$undigested" ]] || fail "images without a digest:"$'\n'"$undigested"
 echo "images: all pinned by digest"
 
-# 5. The migration Job runs the image of services.<migration.service>; the commit in its tag must contain the newest
+# 5. A NetworkPolicy egress rule without `to` reaches every address, the internet included. Only the API server rule
+#    may do that (port 6443: k3s matches after the Service DNAT); anything else names its reason in the annotation
+#    shopflow.io/any-destination (docs/adr/0208-psa-and-network-policies.md).
+open_egress="$(yq -N 'select(.kind == "NetworkPolicy")
+  | select((.metadata.annotations["shopflow.io/any-destination"] // "") == "")
+  | select((.spec.egress // []) | map(select(has("to") | not) | select(([.ports[]?.port] | join(",")) != "6443"))
+      | length > 0)
+  | .metadata.namespace + "/" + .metadata.name' "$OUT_DIR"/*.yaml | sort -u)"
+[[ -z "$open_egress" ]] || fail "egress to any destination (add a peer, or annotate shopflow.io/any-destination with the" \
+  "reason):"$'\n'"$open_egress"
+apiserver_aws="$ROOT_DIR/deploy/platform/network-policies/components/apiserver-aws/kustomization.yaml"
+vpc_cidr="$(sed -n '/^variable "vpc_cidr"/,/^}/s/^ *default *= *"\(.*\)"$/\1/p' "$ROOT_DIR/infra/tofu/network/variables.tf")"
+if [[ -z "$vpc_cidr" ]] || ! grep -qF "{cidr: $vpc_cidr}" "$apiserver_aws"; then
+  fail "components/apiserver-aws must allow the VPC CIDR of infra/tofu/network (vpc_cidr = ${vpc_cidr:-unset})"
+fi
+echo "network policies: no unexplained egress to any destination; AWS API server CIDR = VPC $vpc_cidr"
+
+# 6. The migration Job runs the image of services.<migration.service>; the commit in its tag must contain the newest
 #    migration, otherwise the release deploys a schema older than what the rest of deploy/ relies on (e.g. the CDC
 #    publication that Debezium reads). platform-ci fails on main and on PRs that change the shop chart, and only warns
 #    on other PRs, so a pending bump after a migration does not block every lane.

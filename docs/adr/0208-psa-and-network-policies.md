@@ -38,9 +38,21 @@ NetworkPolicy with its embedded controller (kube-router); on EKS the VPC CNI net
   - Then one policy per workload with exactly the contract's flows: edge → gateway → orders → payments/Postgres;
     consumers in kafka/lakehouse/airflow/flink/observability → Postgres; Prometheus → metrics; CNPG operator →
     instance manager.
-  - Pods that talk to the API server get an egress rule by port (TCP 6443 on k3s, where the API is the node IP;
-    443 on EKS, which also covers S3 for the backup plugin). A pod selector cannot match the host-network API
-    server.
+  - API server egress lives in its own policies, labelled `shopflow.io/egress=apiserver`. They select only the
+    pods that need it where those have stable labels (`shop`: CNPG instances and the worker's copy Jobs;
+    `envoy-gateway-system`: controller and certgen). In `observability`, `kafka`, `lakehouse` and `airflow` they
+    select the whole namespace, because operators, Connect, sidecars and copy Jobs all need the API.
+    - A pod selector cannot match the host-network API server, so the rule names a port or an address:
+      - k3s: TCP 6443 to any address. Egress is matched after the Service DNAT (`kubernetes.default:443` →
+        node IP:6443), so 443 stays closed.
+      - EKS (overlay `aws`, component `components/apiserver-aws`): TCP 443 to the VPC CIDR (control-plane ENIs) and
+        to the `kubernetes` Service IP (172.20.0.1, in case the policy agent matches before DNAT). The CIDR must
+        equal `vpc_cidr` in `infra/tofu/network`; `platform-validate` checks it.
+  - Any other egress rule without a peer reaches every address, the internet included. `platform-validate` refuses
+    it unless the policy names its reason in the annotation `shopflow.io/any-destination`:
+    - Alertmanager's chat webhook (HTTPS);
+    - Prometheus → node-exporter and kubelet on the host network;
+    - on AWS, shop-db → S3 for the backup plugin (`aws/shop-db-backup.yaml`, with the Pod Identity agent).
 - Platform controller namespaces (`argocd`, `cert-manager`, `cnpg-system`) are `restricted` but have no
   default-deny yet. They need webhook calls from the API server and egress to Git/Helm registries; Argo CD's chart
   ships its own policies. Revisit in Phase 8 with Kyverno.
@@ -63,7 +75,11 @@ NetworkPolicy with its embedded controller (kube-router); on EKS the VPC CNI net
   - Privileged pods are rejected at admission.
 - Negative / risks:
   - Every new flow needs a policy change (that is the point: add the row to the contract, then the policy).
-  - The API server rule is port-based, not address-based.
+  - Locally the API server rule is port-based (6443 to any address); on AWS it is address-based. The first
+    version opened 443 by port, which let every selected pod reach the internet over HTTPS. The probe on sf-data
+    (trino, Connect, an Airflow pod → 1.1.1.1:443 open) caught it, and `platform-validate` now rejects that shape.
+  - Not yet measured: the post-DNAT match on k3s (probe rows "apiserver open" for the API clients) and on EKS
+    (first AWS session).
   - Measured on k3s: a brand-new pod is not isolated for its first few seconds. The policy controller adds it to
     its rule sets shortly after start, so an immediate connection to the internet succeeded. Only stealing data in
     the first seconds of a pod's life gets past this. The EKS network policy agent has a strict mode that closes

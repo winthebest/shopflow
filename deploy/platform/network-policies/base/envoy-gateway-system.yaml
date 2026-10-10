@@ -71,7 +71,7 @@ metadata:
 spec:
   podSelector:
     matchLabels: {control-plane: envoy-gateway}
-  policyTypes: [Ingress, Egress]
+  policyTypes: [Ingress]
   ingress:
     - from:
         - podSelector:
@@ -88,11 +88,23 @@ spec:
             matchLabels: {app.kubernetes.io/name: prometheus}
       ports:
         - {protocol: TCP, port: 19001}
+---
+# The controller watches the API server. k3s matches egress after the Service DNAT (kubernetes.default -> node
+# IP:6443), so 443 stays closed; the aws overlay swaps this rule for 443 to the VPC (components/apiserver-aws).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: envoy-gateway-apiserver
+  namespace: envoy-gateway-system
+  labels:
+    shopflow.io/egress: apiserver
+spec:
+  podSelector:
+    matchLabels: {control-plane: envoy-gateway}
+  policyTypes: [Egress]
   egress:
-    # API server (k3s: node IP:6443; EKS: 443).
     - ports:
         - {protocol: TCP, port: 6443}
-        - {protocol: TCP, port: 443}
 ---
 # The chart's certgen Job (install hook) writes the controller's TLS Secret through the API server.
 apiVersion: networking.k8s.io/v1
@@ -100,6 +112,8 @@ kind: NetworkPolicy
 metadata:
   name: certgen
   namespace: envoy-gateway-system
+  labels:
+    shopflow.io/egress: apiserver
 spec:
   podSelector:
     matchLabels: {app: certgen}
@@ -107,4 +121,3 @@ spec:
   egress:
     - ports:
         - {protocol: TCP, port: 6443}
-        - {protocol: TCP, port: 443}

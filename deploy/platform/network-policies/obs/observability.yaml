@@ -82,6 +82,8 @@ kind: NetworkPolicy
 metadata:
   name: prometheus-scrape
   namespace: observability
+  annotations:
+    shopflow.io/any-destination: node-exporter and the kubelet listen on the host network (9100, 10250)
 spec:
   podSelector:
     matchLabels: {app.kubernetes.io/name: prometheus}
@@ -92,8 +94,6 @@ spec:
     - ports:
         - {protocol: TCP, port: 9100}
         - {protocol: TCP, port: 10250}
-        - {protocol: TCP, port: 6443}
-        - {protocol: TCP, port: 443}
 ---
 # Grafana's KPI datasource reads the serving database (grafana_serving, read-only).
 apiVersion: networking.k8s.io/v1
@@ -120,6 +120,8 @@ kind: NetworkPolicy
 metadata:
   name: alertmanager-webhook
   namespace: observability
+  annotations:
+    shopflow.io/any-destination: chat webhook over HTTPS on the internet
 spec:
   podSelector:
     matchLabels: {app.kubernetes.io/name: alertmanager}
@@ -134,11 +136,13 @@ kind: NetworkPolicy
 metadata:
   name: operators-apiserver
   namespace: observability
+  labels:
+    shopflow.io/egress: apiserver
 spec:
   podSelector: {}
   policyTypes: [Egress]
   egress:
-    # API server: k3s node IP:6443, EKS endpoint ENIs on 443 (no pod selector matches the host network).
+    # API server only: k3s matches egress after the Service DNAT (kubernetes.default -> node IP:6443), so 443 stays
+    # closed. The aws overlay swaps this rule for 443 to the VPC (components/apiserver-aws).
     - ports:
         - {protocol: TCP, port: 6443}
-        - {protocol: TCP, port: 443}

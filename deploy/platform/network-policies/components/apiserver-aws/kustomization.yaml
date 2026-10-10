@@ -1,0 +1,20 @@
+# EKS: API server egress for every policy labelled shopflow.io/egress=apiserver (docs/adr/0208-psa-and-network-policies.md).
+# The control plane answers on 443 through ENIs inside the VPC; the `kubernetes` Service IP is listed too, in case the
+# network policy agent matches before the Service DNAT. Internet HTTPS stays closed.
+# vpc: must equal `vpc_cidr` in infra/tofu/network/variables.tf (scripts/platform-validate.sh checks it).
+# service: first IP of the EKS service CIDR, 172.20.0.0/16 for a VPC inside 10.0.0.0/8.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target:
+      kind: NetworkPolicy
+      labelSelector: shopflow.io/egress=apiserver
+    patch: |-
+      - op: replace
+        path: /spec/egress
+        value:
+          - to:
+              - ipBlock: {cidr: 10.60.0.0/16}
+              - ipBlock: {cidr: 172.20.0.1/32}
+            ports:
+              - {protocol: TCP, port: 443}

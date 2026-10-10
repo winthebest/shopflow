@@ -5,7 +5,7 @@
 #
 #   scripts/platform-netpol-probe.sh                 run the probes, print a table, exit 1 on any mismatch
 #   scripts/platform-netpol-probe.sh --apply REV     first apply apps network-policies-{obs,data,batch} at Git revision REV
-#   scripts/platform-netpol-probe.sh --remove        delete those two apps and their policies (namespaces stay)
+#   scripts/platform-netpol-probe.sh --remove        delete those apps and their policies (namespaces stay)
 #
 # A probe whose source or target namespace/pod does not exist is reported as SKIP, not as a failure.
 # Cluster: CLUSTER (default sf-main) selects context k3d-<CLUSTER>; KUBE_CONTEXT overrides it.
@@ -40,9 +40,9 @@ PROBES=(
   "lakehouse|app.kubernetes.io/name=probe|lakehouse|app.kubernetes.io/name=trino|8443|open"
   "default|app.kubernetes.io/name=probe|lakehouse|app.kubernetes.io/name=polaris|8181|blocked"
   # Kafka brokers (TLS listener): the fulfillment-worker and KEDA may read, other shop pods may not
-  "shop|app.kubernetes.io/name=fulfillment-worker|kafka|strimzi.io/kind=Kafka|9093|open"
-  "keda|app.kubernetes.io/name=keda-operator|kafka|strimzi.io/kind=Kafka|9093|open"
-  "shop|app.kubernetes.io/name=orders|kafka|strimzi.io/kind=Kafka|9093|blocked"
+  "shop|app.kubernetes.io/name=fulfillment-worker|kafka|strimzi.io/broker-role=true|9093|open"
+  "keda|app.kubernetes.io/name=keda-operator|kafka|strimzi.io/broker-role=true|9093|open"
+  "shop|app.kubernetes.io/name=orders|kafka|strimzi.io/broker-role=true|9093|blocked"
   # batch (airflow)
   "airflow|app.kubernetes.io/name=probe|shop|cnpg.io/cluster=shop-db|5432|open"
   "airflow|app.kubernetes.io/name=probe|lakehouse|app.kubernetes.io/name=trino|8443|open"
@@ -56,12 +56,27 @@ PROBES=(
   "observability|app.kubernetes.io/name=grafana|kafka|strimzi.io/kind=KafkaConnect|9404|blocked"
   "default|app.kubernetes.io/name=probe|observability|app.kubernetes.io/instance=otel-gateway|4317|blocked"
 )
-# Egress to the internet must be closed for workloads (1.1.1.1:443 as the stand-in).
+# Egress to the internet must be closed for workloads (1.1.1.1:443 as the stand-in), including the pods that may reach
+# the API server: their rule is TCP 6443 on k3s, never a bare 443.
 INTERNET_PROBES=(
   "shop|app.kubernetes.io/name=orders"
+  "shop|app.kubernetes.io/name=fulfillment-worker-kafka-copy"
+  "envoy-gateway-system|app=certgen"
+  "observability|app.kubernetes.io/name=probe"
   "lakehouse|app.kubernetes.io/name=trino"
   "kafka|strimzi.io/kind=KafkaConnect"
   "airflow|app.kubernetes.io/name=probe"
+)
+# API server through the kubernetes Service (443, DNAT to the node's 6443 on k3s): source | labels | expected.
+API_HOST="kubernetes.default.svc.cluster.local"
+API_PROBES=(
+  "shop|app.kubernetes.io/name=fulfillment-worker-kafka-copy|open"
+  "shop|app.kubernetes.io/name=orders|blocked"
+  "envoy-gateway-system|app=certgen|open"
+  "observability|app.kubernetes.io/name=probe|open"
+  "kafka|app.kubernetes.io/name=probe|open"
+  "lakehouse|app.kubernetes.io/name=probe|open"
+  "airflow|app.kubernetes.io/name=probe|open"
 )
 
 apply_apps() {
@@ -158,6 +173,16 @@ run_probes() {
       got="-" status=SKIP
     fi
     printf '%-14s %-38s %-14s %-40s %-5s %-8s %-8s %s\n' "$src" "$labels" internet 1.1.1.1 443 blocked "$got" "$status"
+  done
+  for entry in "${API_PROBES[@]}"; do
+    IFS='|' read -r src labels want <<<"$entry"
+    if ns_exists "$src"; then
+      got="$(probe "$src" "$labels" "$API_HOST" 443)"
+      if [[ "$got" == "$want" ]]; then status=PASS; else status=FAIL; fails=$((fails + 1)); fi
+    else
+      got="-" status=SKIP
+    fi
+    printf '%-14s %-38s %-14s %-40s %-5s %-8s %-8s %s\n' "$src" "$labels" apiserver "$API_HOST" 443 "$want" "$got" "$status"
   done
   ((fails == 0)) || die "$fails probe(s) did not match the policy"
   log "all probes match"
