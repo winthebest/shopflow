@@ -97,7 +97,7 @@ every gateway 5xx as bad).
   | `airflow` | `shop-db-airflow` | owns Database `airflow` (metadata); no access to other databases | Airflow (sf-data) |
   | `flink_serving` | `shop-db-flink-serving` | owns Database `serving`; creates and upserts `kpi_minute` (DDL by sf-data's init Job) | Flink (sf-data) |
   | `grafana_serving` | `shop-db-grafana-serving` | `CONNECT` on `serving` + `SELECT` on its tables (granted by `flink_serving`); read-only | Grafana KPI datasource (sf-data) |
-  | `fulfillment_worker` | `shop-db-fulfillment-worker` | Alembic (sf-app, 0004): `USAGE` on `public`; `INSERT` on `shipments` (+ the `SELECT` its upsert needs); nothing else | fulfillment-worker (sf-app, Phase 7) |
+  | `fulfillment_worker` | `shop-db-fulfillment-worker` | Alembic (sf-app, 0004): `USAGE` on `public`; `INSERT` on `shipments`; column `SELECT (id)` on `orders` (skip events whose order is gone after a restore); nothing else | fulfillment-worker (sf-app, Phase 7) |
 - `pg_hba` confines each role above to its own database (as for `debezium`/`trino_pg`/`polaris`). Consumers in other
   namespaces get their copies through copy Jobs (gitops.md §5). The serving datasource and KPI dashboard are
   sf-data objects in `observability` (sf-sre reviews).
