@@ -58,6 +58,24 @@ stack plus Trino 483.
 - Negative / risks:
   - Any DAG or dbt change needs an image publish and a digest bump.
   - LocalExecutor runs tasks inside the scheduler pod, so it is sized for the parallel dbt processes.
-  - Chart 1.22.0 ships Airflow 3.2.2 as its default; running 3.3.2 with it must be confirmed on the cluster.
+  - Every k3d cluster is new, so Airflow sees every DAG for the first time; `core.dags_are_paused_at_creation` is
+    False (#175), otherwise nothing runs until someone unpauses it.
+  - The chart comes from an index in this repo (`deploy/platform/airflow/helm-repo`, #173/#174) that points at
+    dlcdn.apache.org: the official index points at archive.apache.org, which the local network cannot reach.
+    dlcdn keeps only current releases, so a chart bump needs that index updated too.
+- Verified on the cluster (batch slot, 2026-10-10, `core,obs-lite,data,batch`, k3d):
+  - Chart 1.22.0 runs Airflow 3.3.2 (migrations, create-user, scheduler, dag-processor, api-server).
+  - `dbt_build` on Trino: 28/28 tasks, 5m42s for the first run on empty schemas, 44-46 s for later runs.
+  - After 601 k6 checkouts, gold matches Postgres exactly. `fct_orders` 601 = `orders` 601; by status, paid 589
+    and failed 12 on both sides; paid revenue 52,844.70 on both sides. `mart_daily_revenue` is consistent and
+    `dim_customers` holds 100 rows. Three test orders inserted, updated and deleted in bronze are absent from
+    silver and gold, as intended.
+  - Every gold table's `$snapshots` shows `append` (dbt's CREATE OR REPLACE), which the freshness exporter
+    counts; `data_refresh_age_seconds` has a series for each of the 5 gold tables.
+  - Not yet measured on a cluster: the gold-freshness SLO, which counts only after namespace `airflow` is 2 hours
+    old. So far only its promtool tests cover it; a slot that keeps the cluster up for more than 2 hours (Gate 3,
+    game day A) will measure it.
+  - RAM: server 7.84 GB + agent 4.55 GB, about 12.4 GB; namespace `airflow` 0.85 GB. That is above the 11 GB
+    budget for shared slots, so `batch` runs as an exclusive slot, like `rt`.
 - When to revisit: tasks need isolation or more parallelism than one scheduler pod gives (KubernetesExecutor), or
   Cosmos breaks on an Airflow upgrade (fall back to `dbt build` in one BashOperator).
