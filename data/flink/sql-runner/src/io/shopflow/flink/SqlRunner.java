@@ -14,14 +14,16 @@ import org.apache.flink.table.api.TableEnvironment;
 /**
  * Runs a Flink SQL script as one streaming job (application mode, Flink Kubernetes Operator).
  *
- * <p>Statements end with ';' at the end of a line; lines starting with '--' are comments. Every INSERT goes into one
- * statement set, so the script is a single job. {@code ${NAME}} placeholders are replaced by environment variables
+ * <p>Statements end with ';' at the end of a line; lines starting with '--' are comments. {@code SET 'key' = 'value'}
+ * sets a job configuration option (for example the checkpoint directory of the current CDC epoch). Every INSERT goes
+ * into one statement set, so the script is a single job. {@code ${NAME}} placeholders are replaced by environment variables
  * (credentials, the CDC epoch), with single quotes doubled for SQL string literals; a missing variable is an error.
  * With {@code --explain}, the INSERTs are planned and the plan printed instead of submitted: a CI check that needs
  * neither Kafka nor Postgres.
  */
 public final class SqlRunner {
     private static final Pattern PLACEHOLDER = Pattern.compile("\\$\\{([A-Z0-9_]+)}");
+    private static final Pattern SET = Pattern.compile("(?is)SET\\s+'([^']+)'\\s*=\\s*'([^']*)'");
 
     private SqlRunner() {}
 
@@ -37,7 +39,11 @@ public final class SqlRunner {
         // Comments are dropped before substitution: they may mention placeholders that are not set.
         for (String raw : statements(Files.readString(Path.of(args[0])))) {
             String statement = substitute(raw, System.getenv());
-            if (statement.regionMatches(true, 0, "INSERT", 0, 6)) {
+            Matcher set = SET.matcher(statement);
+            if (set.matches()) {
+                tableEnv.getConfig().set(set.group(1), set.group(2));
+                System.out.println("SET " + set.group(1) + " = " + set.group(2));
+            } else if (statement.regionMatches(true, 0, "INSERT", 0, 6)) {
                 inserts.addInsertSql(statement);
                 insertCount++;
             } else {

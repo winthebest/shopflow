@@ -17,7 +17,8 @@ epoch.
 - **Image `shopflow-flink`** (`data/flink/Dockerfile`, built and planned in CI, published by `data-images.yml`):
   - the Kafka SQL connector 5.0.0-2.2 (shaded Kafka client: the SCRAM login module is the shaded class name);
   - the JDBC connector 4.0.0-2.0 with its Postgres dialect plus the Postgres driver;
-  - the Presto S3 filesystem plugin for checkpoints on SeaweedFS;
+  - the Hadoop S3A filesystem plugin for checkpoints on SeaweedFS (credentials from the pod environment, not the
+    Flink configuration);
   - a 70-line `SqlRunner`, compiled against Flink's own jars;
   - the SQL `data/flink/kpi_minute.sql`.
   Every jar is pinned by sha256, cross-checked against Maven Central's sha1. The SQL is baked in rather than mounted
@@ -36,9 +37,11 @@ epoch.
     `shop.public.orders` has 6 partitions (Phase 7 fulfillment worker) and a quiet shop leaves most of them empty.
   - 1-minute tumbling windows over a union of order and payment inserts.
   - The JDBC sink upserts on `window_start`, so replays rewrite the same rows.
-- **Epochs:** the Kafka consumer group carries the CDC epoch (`flink-kpi-minute-<epoch>`, in the SQL). The
-  deployment PR adds the per-epoch checkpoint directory (`flink-ckpt/<epoch>/`) and the switch to a new epoch, which
-  starts from fresh state and never restores another epoch's checkpoint.
+- **Epochs:** the Kafka consumer group (`flink-kpi-minute-<epoch>`), the job name and the checkpoint directory
+  (`SET 'execution.checkpointing.dir' = 's3://lake/flink-ckpt/<epoch>'`, applied by SqlRunner to the job's
+  configuration) all carry the CDC epoch. On a new epoch, `scripts/cdc-epoch.sh new` deletes the FlinkDeployment
+  (the operator drops its HA state with it) and Argo CD recreates it: the job starts from fresh state and never
+  restores another epoch's checkpoint.
 
 ## Alternatives considered
 

@@ -29,10 +29,11 @@ ADD --checksum=sha256:b59c29dc65cafe8ae398e69072b9f6022f4a978a09002fd06a05a1a8dd
     ${MAVEN}/org/apache/flink/flink-connector-jdbc-postgres/4.0.0-2.0/flink-connector-jdbc-postgres-4.0.0-2.0.jar /opt/flink/lib/
 ADD --checksum=sha256:73914527305a40cce504b0d3d90b23caf565136912d607ae8ae7c5895512332c --chmod=644 \
     ${MAVEN}/org/postgresql/postgresql/42.7.14/postgresql-42.7.14.jar /opt/flink/lib/
-# Checkpoints go to SeaweedFS (S3 API) through the Presto S3 plugin shipped in opt/. The job's directories are made
-# here (755): COPY --chmod would give the directories it creates the file mode too, and the flink user could not
-# enter them.
-RUN mkdir -p /opt/flink/plugins/s3-fs-presto /opt/flink/usrlib /opt/flink/sql \
-    && cp /opt/flink/opt/flink-s3-fs-presto-*.jar /opt/flink/plugins/s3-fs-presto/
+# Checkpoints go to SeaweedFS (S3 API) through the Hadoop S3A plugin shipped in opt/: its default credential chain
+# reads AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from the pod (a Secret), so no key is written into the Flink
+# configuration (a ConfigMap). The job's directories are made here (755): COPY --chmod would give the directories it
+# creates the file mode too, and the flink user could not enter them.
+RUN mkdir -p /opt/flink/plugins/s3-fs-hadoop /opt/flink/usrlib /opt/flink/sql \
+    && cp /opt/flink/opt/flink-s3-fs-hadoop-*.jar /opt/flink/plugins/s3-fs-hadoop/
 COPY --from=runner --chmod=644 /src/sql-runner.jar /opt/flink/usrlib/sql-runner.jar
 COPY --chmod=644 kpi_minute.sql /opt/flink/sql/kpi_minute.sql
