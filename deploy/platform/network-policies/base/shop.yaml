@@ -1,6 +1,6 @@
 # Namespace shop: default-deny, then exactly the flows of docs/contracts/environment.md "Network flows".
-# Pods: gateway/orders/payments/fulfillment-worker/shop-migrate/shop-seed (app.kubernetes.io/name), Postgres
-# (cnpg.io/cluster=shop-db).
+# Pods: gateway/orders/payments/fulfillment-worker/fulfillment-worker-kafka-copy/shop-migrate/shop-seed
+# (app.kubernetes.io/name), Postgres (cnpg.io/cluster=shop-db).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -142,6 +142,23 @@ spec:
             matchLabels: {cnpg.io/cluster: shop-db}
       ports:
         - {protocol: TCP, port: 5432}
+---
+# fulfillment-worker copy Jobs (Argo CD Sync hooks): copy the worker's KafkaUser Secret and the Kafka cluster CA from
+# namespace kafka into shop through the API server (docs/contracts/gitops.md §5). API server: k3s node IP:6443, EKS
+# endpoint ENIs on 443 (no pod selector matches the host network).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fulfillment-worker-kafka-copy
+  namespace: shop
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: fulfillment-worker-kafka-copy}
+  policyTypes: [Egress]
+  egress:
+    - ports:
+        - {protocol: TCP, port: 6443}
+        - {protocol: TCP, port: 443}
 ---
 # Migration and seed Jobs (orders image): Postgres only.
 apiVersion: networking.k8s.io/v1

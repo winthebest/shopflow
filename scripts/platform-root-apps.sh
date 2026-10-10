@@ -60,9 +60,10 @@ validate_profiles() {
   if has_profile data && ! has_profile obs && ! has_profile obs-lite; then
     die "profile data needs obs or obs-lite in the same PROFILES (e.g. PROFILES=core,obs-lite,data)"
   fi
-  # rt (Flink), batch (Airflow) and bi (Metabase) read Kafka, Trino or the lake that data deploys.
+  # rt (Flink), batch (Airflow), bi (Metabase) and ops (fulfillment-worker) read Kafka, Trino or the lake that data
+  # deploys.
   local dependent
-  for dependent in rt batch bi; do
+  for dependent in rt batch bi ops; do
     if has_profile "$dependent" && ! has_profile data; then
       die "profile $dependent needs data in the same PROFILES (e.g. PROFILES=core,obs-lite,data,$dependent)"
     fi
