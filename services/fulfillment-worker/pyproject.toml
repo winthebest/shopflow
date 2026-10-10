@@ -1,25 +1,22 @@
 [project]
-name = "shopflow-orders"
+name = "shopflow-fulfillment-worker"
 version = "0.1.0"
-description = "Orders service: owns the shop schema (Alembic), creates orders and settles them through payments"
+description = "Creates one shipment per paid order from the shop.public.orders CDC stream (Phase 7, KEDA-scaled)"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "shopflow-common[db]",
-    "alembic>=1.17",
-    "httpx>=0.28",
+    "aiokafka>=0.12",
     "opentelemetry-instrumentation-asyncpg>=0.59b0",
 ]
 
 [project.scripts]
-orders = "orders.main:main"
-migrate = "orders.migrate:main"
-seed = "orders.seed:main"
+fulfillment-worker = "fulfillment_worker.main:main"
 
 [tool.uv.sources]
 shopflow-common = { workspace = true }
 
 [tool.uv.build-backend]
-module-name = "orders"
+module-name = "fulfillment_worker"
 
 [build-system]
 requires = ["uv_build>=0.11,<0.12"]
