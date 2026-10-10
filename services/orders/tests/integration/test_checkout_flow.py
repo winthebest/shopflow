@@ -103,6 +103,46 @@ async def test_payments_failure_still_settles_order_as_failed(seeded_db, shop_cl
     assert rows == [("failed", "error")]
 
 
+async def test_retried_charge_is_idempotent_and_settles_the_order_once(seeded_db, shop_client):
+    """payments drops the first answer (503); the retry gets the charge, and the order has exactly one payment."""
+    from payments.main import Settings as PaymentsSettings
+    from payments.main import charge_id_for
+    from payments.main import create_app as create_payments
+
+    real = httpx.ASGITransport(app=create_payments(PaymentsSettings(payment_latency_ms=0, payment_failure_rate=0)))
+    attempts = []
+
+    class FlakyOnce(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            attempts.append(request.url.path)
+            return httpx.Response(503) if len(attempts) == 1 else await real.handle_async_request(request)
+
+    async with shop_client(seeded_db, payments_transport=FlakyOnce()) as client:
+        response = await client.post("/checkout", json=CHECKOUT)
+
+    assert response.status_code == 201
+    assert attempts == ["/charges", "/charges"]
+    rows = await fetch(
+        seeded_db,
+        "SELECT o.status, p.status, p.provider_ref FROM orders o JOIN payments p ON p.order_id = o.id WHERE o.id = :id",
+        id=response.json()["id"],
+    )
+    assert rows == [("paid", "succeeded", str(charge_id_for(response.json()["id"])))]
+
+
+async def test_open_circuit_answers_503_without_creating_an_order(seeded_db, shop_client):
+    async with shop_client(seeded_db, payments_transport=httpx.MockTransport(_unavailable)) as client:
+        for _ in range(7):  # 3 failed attempts per checkout; the 20th failed attempt opens the circuit (min_calls)
+            assert (await client.post("/checkout", json=CHECKOUT)).status_code == 502
+        orders_before = await fetch(seeded_db, "SELECT count(*) FROM orders")
+        refused = await client.post("/checkout", json=CHECKOUT)
+
+    assert refused.status_code == 503
+    assert int(refused.headers["retry-after"]) >= 1
+    assert refused.json() == {"detail": "payments unavailable (circuit open)"}
+    assert await fetch(seeded_db, "SELECT count(*) FROM orders") == orders_before  # nothing to clean up
+
+
 async def test_settle_failure_is_logged_for_reconciliation(seeded_db, shop_client, monkeypatch, caplog):
     async def broken_settle(*args, **kwargs):
         raise RuntimeError("database went away")

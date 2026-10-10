@@ -65,13 +65,15 @@ def test_log_line_carries_current_span_ids(capsys):
 def run_instrumented_app(env: dict[str, str]) -> tuple[dict, list[dict]]:
     """setup_telemetry() installs global providers, so run it in a fresh interpreter.
 
-    Returns (summary, log lines); the summary holds whether a provider was installed and the finished spans.
+    Returns (summary, log lines); the summary holds whether a provider was installed, the meter provider's type and
+    the finished spans.
     """
     script = textwrap.dedent(
         """
         import json
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
+        from opentelemetry import metrics
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
         from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
         from shopflow_common.log import AccessLogMiddleware, configure_logging
@@ -92,7 +94,8 @@ def run_instrumented_app(env: dict[str, str]) -> tuple[dict, list[dict]]:
         with TestClient(app) as client:
             client.get("/items/42")
         spans = [{"kind": s.kind.name, **s.attributes} for s in exporter.get_finished_spans()]
-        print(json.dumps({"summary": True, "provider": provider is not None, "spans": spans}))
+        meter = type(metrics.get_meter_provider()).__name__
+        print(json.dumps({"summary": True, "provider": provider is not None, "meter": meter, "spans": spans}))
         """
     )
     result = subprocess.run(  # noqa: S603 - fixed interpreter and script
@@ -109,12 +112,18 @@ def run_instrumented_app(env: dict[str, str]) -> tuple[dict, list[dict]]:
 
 def test_sdk_enabled_gives_trace_ids_in_logs_and_route_templates_on_spans():
     summary, logs = run_instrumented_app(
-        {"OTEL_SDK_DISABLED": "false", "OTEL_TRACES_EXPORTER": "none", "OTEL_SEMCONV_STABILITY_OPT_IN": "http"}
+        {
+            "OTEL_SDK_DISABLED": "false",
+            "OTEL_TRACES_EXPORTER": "none",
+            "OTEL_METRICS_EXPORTER": "none",
+            "OTEL_SEMCONV_STABILITY_OPT_IN": "http",
+        }
     )
     access = next(line for line in logs if line["logger"] == "access")
     server = next(span for span in summary["spans"] if span["kind"] == "SERVER")
 
     assert summary["provider"] is True
+    assert summary["meter"] == "MeterProvider"  # the SDK one: metrics such as orders' circuit state are recorded
     assert access["http_path"] == "/items/42"
     assert access["http_status"] == 200
     assert len(access["trace_id"]) == 32
@@ -127,6 +136,7 @@ def test_sdk_disabled_installs_nothing():
     summary, logs = run_instrumented_app({"OTEL_SDK_DISABLED": "true"})
     access = next(line for line in logs if line["logger"] == "access")
     assert summary["provider"] is False
+    assert summary["meter"] != "MeterProvider"  # API default: instruments are no-ops
     assert access["trace_id"] == ""
     assert access["span_id"] == ""
 

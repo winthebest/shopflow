@@ -95,6 +95,15 @@ async def test_orders_500_becomes_502():
     assert response.json()["upstream_status"] == 500
 
 
+async def test_open_payments_circuit_503_passes_through_with_retry_after():
+    body = {"detail": "payments unavailable (circuit open)"}
+    async with gateway_with(lambda request: httpx.Response(503, json=body, headers={"Retry-After": "4"})) as client:
+        response = await client.post("/checkout", json=CHECKOUT)
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "4"
+    assert response.json() == body
+
+
 @pytest.mark.parametrize("status", [502, 504])
 async def test_orders_dependency_errors_keep_status_and_body(status):
     body = {"detail": "payments timed out", "order_id": 9, "status": "failed"}

@@ -1,7 +1,7 @@
 """gateway service: the only public API (`GET /products`, `POST /checkout`, `GET /orders/{id}`).
 
-It validates input at the edge, forwards to `orders` with a 1s total deadline, and turns downstream failures into
-explicit 502 (unreachable or broken) / 504 (too slow) responses.
+It validates input at the edge, forwards to `orders` with a 1s total deadline (never retried: `POST /checkout` is not
+idempotent), and turns downstream failures into explicit 502 (unreachable or broken) / 504 (too slow) responses.
 """
 
 import asyncio
@@ -44,16 +44,19 @@ async def forward(request: Request, method: str, path: str, json: Any = None) ->
         log.warning("orders unreachable", extra={"upstream_path": path, "error": type(exc).__name__})
         return JSONResponse({"detail": "orders service unavailable"}, status_code=502)
 
-    if upstream.status_code >= 500 and upstream.status_code not in (502, 504):
+    if upstream.status_code >= 500 and upstream.status_code not in (502, 503, 504):
         log.error("orders failed", extra={"upstream_path": path, "upstream_status": upstream.status_code})
         return JSONResponse(
             {"detail": "orders service error", "upstream_status": upstream.status_code}, status_code=502
         )
-    # 2xx/4xx, and 502/504 that orders already mapped from its own dependency (payments), pass through as-is.
+    # 2xx/4xx, and 502/503/504 that orders already mapped from its own dependency (payments), pass through as-is;
+    # so does `Retry-After` (sent with 503 while the payments circuit is open).
+    retry_after = upstream.headers.get("retry-after")
     return Response(
         content=upstream.content,
         status_code=upstream.status_code,
         media_type=upstream.headers.get("content-type"),
+        headers={"Retry-After": retry_after} if retry_after else None,
     )
 
 

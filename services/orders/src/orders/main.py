@@ -1,8 +1,9 @@
 """orders service: `GET /products`, `POST /orders`, `GET /orders/{id}` on the shop database.
 
-Checkout = transaction 1 (order + items, `pending`) -> payments call (800ms deadline) -> transaction 2 (payment row,
-order `paid | failed`). A payments timeout or outage still settles the order as `failed`, then answers 504 / 502 so
-the caller sees the dependency failure.
+Checkout = transaction 1 (order + items, `pending`) -> payments call (800ms deadline, retries and circuit breaker in
+`payments_client`) -> transaction 2 (payment row, order `paid | failed`). A payments timeout or outage still settles
+the order as `failed`, then answers 504 / 502 so the caller sees the dependency failure. While the circuit is open,
+checkout answers 503 + `Retry-After` before creating anything.
 """
 
 import asyncio
@@ -19,7 +20,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from orders.db import create_engine
-from orders.payments_client import PAYMENTS_TIMEOUT_S, charge
+from orders.payments_client import PAYMENTS_TIMEOUT_S, PaymentsClient
 from orders.repository import (
     InvalidCheckoutError,
     OrderOut,
@@ -49,16 +50,22 @@ def create_app(settings: Settings | None = None, payments_transport: httpx.Async
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         engine = create_engine(settings.database_url.get_secret_value())
         try:
-            async with httpx.AsyncClient(
-                base_url=settings.payments_url,
-                timeout=PAYMENTS_TIMEOUT_S,
+            payments_http = {
+                "base_url": settings.payments_url,
+                "timeout": PAYMENTS_TIMEOUT_S,
+                "transport": payments_transport,
+            }
+            async with (
                 # Drop idle connections before uvicorn's 5s keep-alive timeout closes them under us.
-                limits=httpx.Limits(keepalive_expiry=2),
-                transport=payments_transport,
-            ) as payments:
+                httpx.AsyncClient(limits=httpx.Limits(keepalive_expiry=2), **payments_http) as payments,
+                # Retries: a new connection every time, so kube-proxy may pick another pod (payments_client).
+                httpx.AsyncClient(limits=httpx.Limits(max_keepalive_connections=0), **payments_http) as retries,
+            ):
                 app.state.engine = engine
                 app.state.sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
-                app.state.payments = payments
+                app.state.payments = PaymentsClient(
+                    payments, settings.retry_policy(), settings.breaker_config(), retry_http=retries
+                )
                 yield
         finally:
             await engine.dispose()
@@ -89,12 +96,24 @@ def create_app(settings: Settings | None = None, payments_transport: httpx.Async
     @app.post("/orders", status_code=201, response_model=OrderOut)
     async def create_order(body: CheckoutRequest, request: Request) -> Any:
         sessionmaker = request.app.state.sessionmaker
+        payments: PaymentsClient = request.app.state.payments
+        permit = payments.admit()
+        if permit is None:  # circuit open: refuse before creating an order that could only fail
+            return JSONResponse(
+                {"detail": "payments unavailable (circuit open)"},
+                status_code=503,
+                headers={"Retry-After": str(payments.breaker.retry_after_s())},
+            )
         try:
             order_id, total = await create_pending_order(sessionmaker, body)
         except InvalidCheckoutError as exc:
+            payments.release(permit)
             return JSONResponse({"detail": str(exc)}, status_code=422)
+        except BaseException:
+            payments.release(permit)
+            raise
 
-        outcome = await charge(request.app.state.payments, order_id, total)
+        outcome = await payments.charge(order_id, total, permit)
         try:
             status = await settle_order(sessionmaker, order_id, total, outcome)
         except Exception:
