@@ -1,9 +1,10 @@
 """orders service: `GET /products`, `POST /orders`, `GET /orders/{id}` on the shop database.
 
 Checkout = transaction 1 (order + items, `pending`) -> payments call (800ms deadline, retries and circuit breaker in
-`payments_client`) -> transaction 2 (payment row, order `paid | failed`). A payments timeout or outage still settles
-the order as `failed`, then answers 504 / 502 so the caller sees the dependency failure. While the circuit is open,
-checkout answers 503 + `Retry-After` before creating anything.
+`payments_client`) -> transaction 2 (payment row, order `paid | failed`, idempotent). A payments timeout or outage still
+settles the order as `failed`, then answers 504 / 502 so the caller sees the dependency failure. While the circuit is
+open, checkout answers 503 + `Retry-After` before creating anything. The answer is built from what the two
+transactions returned: a read after settling could fail and lose the acknowledgement of a paid order.
 """
 
 import asyncio
@@ -24,6 +25,7 @@ from orders.payments_client import PAYMENTS_TIMEOUT_S, PaymentsClient
 from orders.repository import (
     InvalidCheckoutError,
     OrderOut,
+    PendingOrder,
     ProductOut,
     create_pending_order,
     get_order,
@@ -105,7 +107,7 @@ def create_app(settings: Settings | None = None, payments_transport: httpx.Async
                 headers={"Retry-After": str(payments.breaker.retry_after_s())},
             )
         try:
-            order_id, total = await create_pending_order(sessionmaker, body)
+            pending: PendingOrder = await create_pending_order(sessionmaker, body)
         except InvalidCheckoutError as exc:
             payments.release(permit)
             return JSONResponse({"detail": str(exc)}, status_code=422)
@@ -113,26 +115,33 @@ def create_app(settings: Settings | None = None, payments_transport: httpx.Async
             payments.release(permit)
             raise
 
-        outcome = await payments.charge(order_id, total, permit)
+        outcome = await payments.charge(pending.id, pending.total, permit)
         try:
-            status = await settle_order(sessionmaker, order_id, total, outcome)
+            settled = await settle_order(sessionmaker, pending.id, pending.total, outcome)
         except Exception:
             # The order stays `pending` and the provider outcome lives only in this line: reconcile from it.
             log.exception(
                 "settle failed, order left pending",
-                extra={"order_id": order_id, "payment_status": outcome.status, "charge_id": outcome.charge_id},
+                extra={"order_id": pending.id, "payment_status": outcome.status, "charge_id": outcome.charge_id},
             )
             raise
         log.info(
-            "order settled",
-            extra={"order_id": order_id, "order_status": status, "payment_status": outcome.status},
+            "order settled" if settled.settled_now else "order already settled",
+            extra={"order_id": pending.id, "order_status": settled.status, "payment_status": outcome.status},
         )
-        if outcome.error is not None:
+        if settled.settled_now and outcome.error is not None:
             code, detail = (504, "payments timed out") if outcome.error == "timeout" else (502, "payments unavailable")
-            return JSONResponse({"detail": detail, "order_id": order_id, "status": status}, status_code=code)
+            return JSONResponse({"detail": detail, "order_id": pending.id, "status": settled.status}, status_code=code)
 
-        async with sessionmaker() as session:
-            return await get_order(session, order_id)
+        return OrderOut(
+            id=pending.id,
+            customer_id=pending.customer_id,
+            status=settled.status,
+            total=pending.total,
+            created_at=pending.created_at,
+            updated_at=settled.updated_at,
+            items=pending.items,
+        )
 
     @app.get("/orders/{order_id}", response_model=OrderOut)
     async def read_order(order_id: Annotated[int, Path(gt=0, le=MAX_ID)], request: Request) -> Any:

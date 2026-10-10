@@ -1,15 +1,19 @@
 """End-to-end checkout through gateway -> orders -> payments on real Postgres."""
 
 import asyncio
+import json
 import logging
 from decimal import Decimal
 
 import httpx
 import pytest
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 import orders.main
 from orders.db import create_engine
+from orders.payments_client import ChargeOutcome
+from orders.repository import settle_order
 from orders.seed import seed
 
 pytestmark = pytest.mark.integration
@@ -158,6 +162,44 @@ async def test_settle_failure_is_logged_for_reconciliation(seeded_db, shop_clien
     assert record.payment_status == "succeeded"
     assert record.charge_id
     assert await fetch(seeded_db, "SELECT status FROM orders") == [("pending",)]
+
+
+async def test_checkout_answer_does_not_read_the_order_back(seeded_db, shop_client, monkeypatch):
+    """A read after settling can fail (e.g. no free connection) and lose the acknowledgement of a paid order."""
+
+    async def no_reads(*args, **kwargs):
+        raise AssertionError("checkout must not read the order back after settling")
+
+    monkeypatch.setattr(orders.main, "get_order", no_reads)
+    async with shop_client(seeded_db) as client:
+        response = await client.post("/checkout", json=CHECKOUT)
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "paid"
+
+
+async def test_checkout_that_loses_the_settle_race_answers_the_winners_status(seeded_db, shop_client, caplog):
+    """Something else settled the order while the charge was in flight: the request writes nothing and reports it."""
+    engine = create_engine(seeded_db)
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+
+    class SettledMeanwhile(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            order_id = json.loads(request.read())["order_id"]
+            await settle_order(sessionmaker, order_id, Decimal("58.80"), ChargeOutcome("declined"))
+            return httpx.Response(201, json={"charge_id": "c-late", "status": "succeeded"})
+
+    try:
+        with caplog.at_level(logging.INFO, logger="orders"):
+            async with shop_client(seeded_db, payments_transport=SettledMeanwhile()) as client:
+                response = await client.post("/checkout", json=CHECKOUT)
+    finally:
+        await engine.dispose()
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "failed"
+    assert any(r.message == "order already settled" for r in caplog.records)
+    assert await fetch(seeded_db, "SELECT status, provider_ref FROM payments") == [("declined", None)]
 
 
 async def test_total_beyond_numeric_12_2_is_rejected(seeded_db, shop_client):
