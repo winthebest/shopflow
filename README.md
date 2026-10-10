@@ -49,14 +49,14 @@ flowchart LR
   end
   sink --> bronze
   gold --> trino[Trino] -.-> mb[Metabase<br/>planned]:::planned
-  kafka --> flink[Flink SQL KPIs<br/>in progress]:::wip --> kpi[(KPI table<br/>Postgres)] --> graf[Grafana]
+  kafka --> flink[Flink SQL KPIs<br/>not yet run]:::wip --> kpi[(KPI table<br/>Postgres)] --> graf[Grafana]
   classDef planned stroke-dasharray: 6 4
   classDef wip stroke-dasharray: 2 2
 ```
 
 Iceberg data lives in SeaweedFS behind an Apache Polaris REST catalog (S3 and AWS Glue on AWS). CDC into
 bronze is validated end to end on a local k3d cluster, not yet on AWS. dbt and Airflow are merged but not yet
-run on a cluster; the Flink deployment is in progress; Metabase is planned.
+run on a cluster; the same holds for the Flink KPI job (profile `rt`). Metabase is planned.
 
 **Platform and observability.** After the bootstrap, Git is the only deploy path. Every request is traced, and
 the SLIs come from those traces.
@@ -162,7 +162,7 @@ regenerated secrets; this is not scripted yet.
 | 2 | k3d + Argo CD, edge with TLS, CloudNativePG, SOPS, Pod Security, NetworkPolicies | Done (Gate 1 passed) |
 | 3 | OpenTelemetry, Prometheus/Loki/Tempo, checkout SLOs, soak, postmortem | Done (Gate 2 passed); page timing on the cluster moved to Phase 7 |
 | 4 | CDC: Debezium, Kafka, Iceberg, Polaris, Trino, CDC lag SLO | Done (Gate 2 passed, local k3d) |
-| 5 | dbt bronze → silver → gold, Airflow, Flink KPIs, Metabase, data quality | In progress: dbt and Airflow merged, Flink deploy in progress, Metabase planned |
+| 5 | dbt bronze → silver → gold, Airflow, Flink KPIs, Metabase, data quality | In progress: dbt, Airflow and the Flink KPI job merged, not yet run on a cluster; Metabase planned |
 | 6 | AWS: OpenTofu, EKS on spot, lease and reapers, cost guardrails, security baseline | In progress: offline checks pass in CI; no AWS session run yet |
 | 7 | Chaos game days, autoscaling, restore drills, page timing | In progress: Chaos Mesh (game-day-only profile), experiments and postmortem template merged; KEDA and the fulfillment worker merged (code and chart), not yet run on a cluster; game days not run yet |
 | 8 | Supply chain (signed images, SBOM, admission policy) and a short demo video | Planned |
