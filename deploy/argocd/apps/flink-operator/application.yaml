@@ -27,6 +27,14 @@ spec:
     - repoURL: https://github.com/winthebest/shopflow.git
       targetRevision: main
       ref: values
+  ignoreDifferences:
+    # The chart declares `priority: 0` on the printer columns of its four CRDs; the API server drops the zero value
+    # when it stores them, so the app would stay OutOfSync forever. The live CRDs and `helm show crds` 1.16.1 differ
+    # in nothing else (apart from fields the API server defaults, which the chart does not set).
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jqPathExpressions:
+        - .spec.versions[].additionalPrinterColumns[]?.priority
   syncPolicy:
     automated:
       prune: true
