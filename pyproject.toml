@@ -27,7 +27,7 @@ target-version = "py312"
 select = ["E", "F", "W", "I", "B", "UP", "S", "ASYNC", "SIM", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
-"**/tests/**" = ["S101", "S105", "S106", "S311"]
+"**/tests/**" = ["S101", "S105", "S106", "S311", "S608"]  # SQL in tests uses constants and ids we inserted
 "services/orders/migrations/**" = ["E501", "S608"]  # DDL built from module constants
 
 [tool.ruff.lint.isort]

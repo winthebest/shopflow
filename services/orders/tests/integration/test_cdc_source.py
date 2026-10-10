@@ -12,7 +12,7 @@ from orders.migrate import alembic_config, upgrade
 
 pytestmark = pytest.mark.integration
 
-PUBLISHED = {"customers", "products", "orders", "order_items", "payments", "heartbeat"}
+PUBLISHED = {"customers", "products", "orders", "order_items", "payments", "heartbeat", "shipments"}
 
 
 async def query(url: str, sql: str) -> list[tuple]:
@@ -24,7 +24,7 @@ async def query(url: str, sql: str) -> list[tuple]:
         await engine.dispose()
 
 
-async def test_publication_lists_exactly_the_six_source_tables(database_url):
+async def test_publication_lists_exactly_the_source_tables(database_url):
     tables = await query(
         database_url, "SELECT schemaname, tablename FROM pg_publication_tables WHERE pubname = 'shop_cdc'"
     )
@@ -50,7 +50,7 @@ async def test_debezium_role_is_replication_only(database_url):
 
 @pytest.mark.parametrize("table", sorted(PUBLISHED))
 async def test_debezium_can_read_every_published_table(cdc_url, table):
-    await query(cdc_url, f"SELECT * FROM {table} LIMIT 1")  # noqa: S608 - fixed table names
+    await query(cdc_url, f"SELECT * FROM {table} LIMIT 1")
 
 
 async def test_debezium_can_beat_the_heartbeat(cdc_url):

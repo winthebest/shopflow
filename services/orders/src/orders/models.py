@@ -1,10 +1,10 @@
 """ORM models for the shop schema.
 
 Alembic (services/orders/migrations) is the only owner of the schema: these models must match the migrations, which
-the integration tests enforce with `alembic check`. The five shop tables have a bigint identity primary key and
-`created_at` / `updated_at`; `updated_at` is maintained by a database trigger so any writer keeps it correct (CDC and
-the reconciliation cutoff in later phases rely on it). `heartbeat` and `meta.cdc_epochs` follow the CDC spec in
-docs/contracts/services.md instead.
+the integration tests enforce with `alembic check`. The shop tables (including `shipments`, written by
+fulfillment-worker) have a bigint identity primary key and `created_at` / `updated_at`; `updated_at` is maintained by
+a database trigger so any writer keeps it correct (CDC and the reconciliation cutoff in later phases rely on it).
+`heartbeat` and `meta.cdc_epochs` follow the CDC spec in docs/contracts/services.md instead.
 """
 
 from datetime import datetime
@@ -109,6 +109,20 @@ class Payment(StandardColumns, Base):
     amount: Mapped[Decimal] = mapped_column(Money)
     status: Mapped[str] = mapped_column(Text)
     provider_ref: Mapped[str | None] = mapped_column(Text)
+
+
+class Shipment(StandardColumns, Base):
+    """One shipment per paid order, created by fulfillment-worker from the `shop.public.orders` CDC stream.
+
+    `UNIQUE(order_id)` + `ON CONFLICT DO NOTHING` make re-delivery, rebalancing and re-snapshots idempotent;
+    `cdc_epoch` / `source_lsn` record which CDC event created the row.
+    """
+
+    __tablename__ = "shipments"
+
+    order_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("orders.id"), unique=True)
+    cdc_epoch: Mapped[int] = mapped_column(Integer)
+    source_lsn: Mapped[int] = mapped_column(BigInteger)
 
 
 class Heartbeat(Base):
