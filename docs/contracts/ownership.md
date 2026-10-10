@@ -6,7 +6,7 @@ makes the change. Shared root files are owned by the orchestrator.
 | Path | Owner lane | Phases |
 |---|---|---|
 | `README.md`, `docs/assets/` (diagrams, screenshots for the README) | sf-docs | all |
-| `LICENSE`, `Makefile`, `.gitignore`, `.github/CODEOWNERS`, `.github/pull_request_template.md`, `docs/contracts/`, `docs/adr/README.md`, `docs/adr/0000-*`, `docs/adr/0001-*` | orchestrator | 0 |
+| `LICENSE`, `Makefile`, `.gitignore`, `.github/CODEOWNERS`, `.github/pull_request_template.md`, `docs/contracts/`, `docs/gates/`, `docs/adr/README.md`, `docs/adr/0000-*`, `docs/adr/0001-*` | orchestrator | 0 |
 | `services/` (gateway, orders, payments, fulfillment-worker), `deploy/charts/shop/` and `deploy/argocd/apps/shop/` (from Phase 7: image bumps after migrations, the worker's ScaledObject), `docker-compose.yml`, `loadtest/`, `scripts/seed.py`, `scripts/app-*.sh`, `pyproject.toml`, `uv.lock`, `.pre-commit-config.yaml`, `.gitleaks.toml`, `.github/workflows/ci.yml`, `mk/app.mk`, `docs/perf-baseline.md` | sf-app | 1, 4–5 (migrations, contracts), 7 (app side) |
 | `data/contracts/`, `scripts/check_contracts.py` | sf-app | 5 |
 | `scripts/k3d-*.sh`, `scripts/platform-*.sh`, `deploy/argocd/root-app*.yaml` and app-of-apps mechanics, `deploy/argocd/apps/{envoy-gateway,cert-manager,cnpg,shop-db,network-policies}/`, `deploy/platform/{envoy-gateway,cert-manager,cnpg,shop-db,network-policies,storageclass}/`, `.sops.yaml`, `deploy/secrets/`, `.github/workflows/platform-ci.yml`, `mk/platform.mk` | sf-platform | 2, 6 (security baseline) |
