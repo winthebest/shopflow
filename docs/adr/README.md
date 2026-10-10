@@ -13,6 +13,7 @@ orchestrator adds rows when merging a PR that contains ADRs.
 | 0300–0399 | sf-sre |
 | 0400–0499 | sf-data |
 | 0500–0599 | sf-cloud |
+| 0600–0699 | sf-docs |
 
 ## Index
 
