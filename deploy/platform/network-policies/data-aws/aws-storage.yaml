@@ -1,0 +1,40 @@
+# AWS only (docs/contracts/environment.md "Network flows", ADR 0506): the Iceberg sink of cdc-connect and Trino read and
+# write Iceberg objects in S3 and the catalog in Glue. Both are reached over HTTPS at public addresses (public subnets,
+# no VPC endpoints), so the rule cannot name an address range. Credentials come from the EKS Pod Identity agent.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: connect-aws-storage
+  namespace: kafka
+  annotations:
+    shopflow.io/any-destination: S3 and Glue for the Iceberg sink (AWS only, public endpoints)
+spec:
+  podSelector:
+    matchLabels: {strimzi.io/kind: KafkaConnect}
+  policyTypes: [Egress]
+  egress:
+    - ports:
+        - {protocol: TCP, port: 443}
+    - to:
+        - ipBlock: {cidr: 169.254.170.23/32}
+      ports:
+        - {protocol: TCP, port: 80}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: trino-aws-storage
+  namespace: lakehouse
+  annotations:
+    shopflow.io/any-destination: S3 and Glue for the lake catalog (AWS only, public endpoints)
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: trino}
+  policyTypes: [Egress]
+  egress:
+    - ports:
+        - {protocol: TCP, port: 443}
+    - to:
+        - ipBlock: {cidr: 169.254.170.23/32}
+      ports:
+        - {protocol: TCP, port: 80}
