@@ -9,6 +9,7 @@
 #   WAIT_TIMEOUT       seconds to wait for every Application to be Synced + Healthy (default 900; 0 = no wait)
 #   SOPS_AGE_KEY_FILE  age private key (default ~/.config/sops/age/keys.txt); copied into the cluster, never printed
 #   PULL_CACHE         1 (default) = pull images through the shared caches (ADR 0207); 0 = straight from upstream
+#   CDC_WAIT_TIMEOUT   seconds for the CDC snapshot record with profile data (default 900; cdc-epoch.sh wait)
 #   PG_SERVER_NAME     shop-db backup chain when the profiles deploy the cnpg-barman-plugin app (default shop-db);
 #                      PG_RECOVERY_FROM / PG_RECOVERY_TARGET_TIME restore from a chain (restore drill, ADR 0203)
 set -euo pipefail
@@ -183,10 +184,27 @@ install_argocd() {
 # It waits for the Strimzi CRDs itself and prints the epoch number.
 start_cdc_epoch() {
   has_profile data || return 0
-  local epoch
-  epoch="$(CLUSTER="$CLUSTER" KUBE_CONTEXT="$KUBE_CONTEXT" "$ROOT_DIR/scripts/cdc-epoch.sh" ensure \
+  CDC_EPOCH="$(CLUSTER="$CLUSTER" KUBE_CONTEXT="$KUBE_CONTEXT" "$ROOT_DIR/scripts/cdc-epoch.sh" ensure \
     --timeout "$((WAIT_TIMEOUT > 600 ? WAIT_TIMEOUT : 600))")"
-  log "CDC epoch $epoch (kept if it already existed)"
+  log "CDC epoch $CDC_EPOCH (kept if it already existed)"
+}
+
+# Profile data: once every app is healthy, record the epoch's snapshot in meta.cdc_epochs (`cdc-epoch.sh wait`, as
+# cloud-up does). Silver reads only an epoch whose snapshot completed, so without this silver and gold stay empty on a
+# fresh cluster. `wait` returns at once for an epoch that is already complete (a rerun). A timeout fails `make up`.
+CDC_WAIT_TIMEOUT="${CDC_WAIT_TIMEOUT:-900}"
+wait_cdc_snapshot() {
+  has_profile data || return 0
+  if [[ "$WAIT_TIMEOUT" -eq 0 ]]; then
+    log "warning: WAIT_TIMEOUT=0 skips the CDC snapshot record; silver and gold stay empty until" \
+      "scripts/cdc-epoch.sh wait --epoch $CDC_EPOCH runs"
+    return 0
+  fi
+  log "waiting up to ${CDC_WAIT_TIMEOUT}s for the CDC snapshot of epoch $CDC_EPOCH (meta.cdc_epochs)"
+  CLUSTER="$CLUSTER" KUBE_CONTEXT="$KUBE_CONTEXT" "$ROOT_DIR/scripts/cdc-epoch.sh" wait \
+    --epoch "$CDC_EPOCH" --timeout "$CDC_WAIT_TIMEOUT" >&2 \
+    || die "CDC epoch $CDC_EPOCH: snapshot not recorded within ${CDC_WAIT_TIMEOUT}s, so silver and gold stay empty." \
+      "Check the Connect pods (kubectl -n kafka get pods) and rerun: scripts/cdc-epoch.sh wait --epoch $CDC_EPOCH"
 }
 
 # One root app per profile, through the mechanism cloud-up uses too (scripts/platform-root-apps.sh, ADR 0206).
@@ -268,7 +286,10 @@ main() {
   apply_root_apps
   start_cdc_epoch
   wait_for_apps
-  log "ready in ${SECONDS}s. Argo CD UI: make platform-argocd-ui CLUSTER=$CLUSTER (password: make platform-argocd-password)"
+  local apps_ready="$SECONDS"
+  wait_cdc_snapshot
+  log "ready in ${SECONDS}s$(has_profile data && echo " (apps ${apps_ready}s, CDC snapshot $((SECONDS - apps_ready))s)")." \
+    "Argo CD UI: make platform-argocd-ui CLUSTER=$CLUSTER (password: make platform-argocd-password)"
 }
 
 # Run only when executed, so tests can source the functions.

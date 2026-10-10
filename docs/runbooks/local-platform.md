@@ -35,6 +35,10 @@ Profile changes on an existing cluster:
 - With `data`: right after the root apps, `make up` runs `scripts/cdc-epoch.sh ensure` (sf-data, ADR 0406). A fresh
   cluster gets a new CDC epoch; rerunning `make up` on a cluster that has one keeps it (the running connectors stamp
   that epoch). A new epoch on purpose is the re-snapshot runbook's `cdc-epoch.sh new`.
+- Still with `data`: once every app is healthy, `make up` runs `scripts/cdc-epoch.sh wait`, which records the epoch's
+  snapshot in `meta.cdc_epochs`. Silver and gold read only a completed epoch. This adds about 1–2 minutes on a fresh
+  cluster; the `ready in` line shows apps and CDC snapshot time separately. A rerun returns at once. If it times out
+  (`CDC_WAIT_TIMEOUT`, default 900s), `make up` fails and names the epoch.
 
 ## Root apps and session parameters
 
