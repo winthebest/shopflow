@@ -121,10 +121,14 @@ Config that belongs to one controller may instead live inside that controller's 
 | Profile | Owner | Contents |
 |---|---|---|
 | `core` | sf-platform | Argo CD self-management (optional), Gateway API CRDs, Envoy Gateway, cert-manager, CNPG, shop, network policies |
-| `obs-lite` | sf-sre | kube-prometheus-stack, slo, grafana-dashboards, otel-collector-lite (only the `otel-gateway` Deployment: spanmetrics for SLIs, traces dropped after metrics, no log agent) |
-| `obs` | sf-sre | kube-prometheus-stack, slo, grafana-dashboards, loki, tempo, otel-collector (full: gateway → Tempo + log agent DaemonSet) |
-| `data` | sf-data | strimzi, kafka, kafka-connect, seaweedfs, iceberg-catalog, trino |
-| `rt`, `batch`, `bi` | sf-data | flink, airflow, metabase |
+| `obs-lite` | sf-sre | network-policies-obs (sf-platform), kube-prometheus-stack, slo, grafana-dashboards, otel-collector-lite (only the `otel-gateway` Deployment: spanmetrics for SLIs, traces dropped after metrics, no log agent) |
+| `obs` | sf-sre | network-policies-obs (sf-platform), kube-prometheus-stack, slo, grafana-dashboards, loki, tempo, otel-collector (full: gateway → Tempo + log agent DaemonSet) |
+| `data` | sf-data | network-policies-data (sf-platform), strimzi, kafka, kafka-connect, seaweedfs, iceberg-catalog, trino |
+| `rt`, `batch`, `bi` | sf-data | flink, airflow (+ network-policies-batch, sf-platform), metabase |
+
+Each profile that creates namespaces lists its `network-policies-*` app (sync wave −2: namespace with its Pod Security
+level and default-deny policies before any pod). AWS variants of the obs/data policies (443 to the VPC instead of
+6443, OpenCost → Prometheus) are pending; until then `profiles-aws` do not list them.
 | `ops` | sf-sre | keda (sf-sre) and fulfillment-worker (sf-app: a second Argo CD app of the shop chart that renders only the worker, sharing its image pins), always on from Phase 7; needs `data` |
 | `chaos` | sf-sre | chaos-mesh, **game days only**: added with the session, its root app deleted right after (CI fails if any other profile lists chaos-mesh); experiments may target only namespaces annotated `chaos-mesh.org/inject=enabled` (`enableFilterNamespace`) |
 
