@@ -1,0 +1,31 @@
+# Gold freshness SLI (sf-data). The SLO itself is slo/gold-freshness.yaml (Sloth → gold-freshness-slo.prometheusrule.yaml).
+#
+# SLI, one sample per minute: 1 = bad minute, 0 = good minute, no sample = not counted.
+#   bad   some gold mart's latest data commit is 90 minutes old or more (data_refresh_age_seconds >= 5400; dbt_build
+#         runs hourly), or its probe failed (the age sample is then removed), or the exporter is absent.
+#   none  without profile batch (namespace airflow absent), during its first 2 hours (the first hourly dbt run has
+#         not built gold yet), and during the first 15 minutes after the exporter (re)starts.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: gold-freshness-sli
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: shopflow
+spec:
+  groups:
+    - name: shopflow-gold-freshness-sli
+      interval: 1m
+      rules:
+        - record: gold:refresh_stale:minute
+          expr: |
+            (
+              max(
+                (data_refresh_age_seconds{table=~"gold\\..+"} >= bool 5400)
+                or
+                (1 - freshness_probe_success{table=~"gold\\..+"})
+              )
+              or on() vector(1)
+            )
+            and on() (time() - max(kube_namespace_created{namespace="airflow"}) > 7200)
+            unless on() (time() - max(process_start_time_seconds{job="freshness-exporter"}) < 900)

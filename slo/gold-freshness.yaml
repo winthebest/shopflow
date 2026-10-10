@@ -1,0 +1,38 @@
+# Gold freshness SLO (sf-data; plan phase 5). Sloth turns it into
+# deploy/platform/slo/base/gold-freshness-slo.prometheusrule.yaml with the repo's 28-day windows (slo/windows/).
+#
+# gold-freshness: 99% of minutes, every gold mart was refreshed (latest data commit) less than 90 minutes ago.
+# The SLI is the per-minute recording rule gold:refresh_stale:minute (gold-freshness-sli.prometheusrule.yaml):
+# 1 = bad (some mart's data commit is 90 minutes old or more, a probe failed, or the exporter is absent), 0 = good,
+# no sample = not counted (no profile batch, its first 2 hours, the exporter's first 15 minutes).
+# Measured from `$snapshots` without `replace` snapshots: the daily optimize/manifest rewrite is not a refresh.
+apiVersion: sloth.slok.dev/v1
+kind: PrometheusServiceLevel
+metadata:
+  name: gold-freshness
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: shopflow
+spec:
+  service: gold
+  labels:
+    team: sf-data
+  slos:
+    - name: freshness
+      objective: 99
+      description: "99% of minutes: every gold mart was refreshed by dbt less than 90 minutes ago."
+      sli:
+        events:
+          errorQuery: |
+            sum_over_time(gold:refresh_stale:minute[{{.window}}])
+          totalQuery: |
+            count_over_time(gold:refresh_stale:minute[{{.window}}])
+      alerting:
+        name: GoldFreshnessBurn
+        annotations:
+          summary: "Gold marts are going stale faster than the 99% gold-freshness SLO allows."
+          runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/gold-stale.md
+        pageAlert:
+          labels: {severity: page}
+        ticketAlert:
+          labels: {severity: ticket}

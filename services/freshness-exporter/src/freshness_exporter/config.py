@@ -20,18 +20,19 @@ class Config:
     trino_catalog: str
     trino_ca_file: str
     tables: tuple[str, ...]
+    refresh_tables: tuple[str, ...]
     probe_interval_seconds: float
     query_timeout_seconds: float
     metrics_port: int
 
 
-def parse_tables(raw: str) -> tuple[str, ...]:
+def parse_tables(raw: str, *, required: bool = True, name: str = "FRESHNESS_TABLES") -> tuple[str, ...]:
     tables = tuple(t.strip() for t in raw.split(",") if t.strip())
-    if not tables:
-        raise ValueError("FRESHNESS_TABLES must list at least one <schema>.<table>")
+    if required and not tables:
+        raise ValueError(f"{name} must list at least one <schema>.<table>")
     invalid = [t for t in tables if not _TABLE_NAME.fullmatch(t)]
     if invalid:
-        raise ValueError(f"invalid table names (expected <schema>.<table>, lowercase): {invalid}")
+        raise ValueError(f"{name}: invalid table names (expected <schema>.<table>, lowercase): {invalid}")
     return tables
 
 
@@ -50,6 +51,13 @@ def load(env: dict[str, str] | None = None) -> Config:
             raise ValueError(f"missing required environment variable {name}")
         return value
 
+    tables = parse_tables(required("FRESHNESS_TABLES"))
+    # Optional: tables measured by their latest data commit (gold, rebuilt by dbt) instead of the source time.
+    refresh_tables = parse_tables(env.get("REFRESH_TABLES", ""), required=False, name="REFRESH_TABLES")
+    # Both measures share freshness_probe_success{table}: one table cannot be in both lists.
+    if overlap := sorted(set(tables) & set(refresh_tables)):
+        raise ValueError(f"tables in both FRESHNESS_TABLES and REFRESH_TABLES: {overlap}")
+
     return Config(
         trino_host=required("TRINO_HOST"),
         trino_port=int(env.get("TRINO_PORT", "8443")),
@@ -57,7 +65,8 @@ def load(env: dict[str, str] | None = None) -> Config:
         trino_password=required("TRINO_PASSWORD"),
         trino_catalog=parse_catalog(env.get("TRINO_CATALOG", "lake_ro")),
         trino_ca_file=required("TRINO_CA_FILE"),
-        tables=parse_tables(required("FRESHNESS_TABLES")),
+        tables=tables,
+        refresh_tables=refresh_tables,
         probe_interval_seconds=float(env.get("PROBE_INTERVAL_SECONDS", "60")),
         query_timeout_seconds=float(env.get("QUERY_TIMEOUT_SECONDS", "30")),
         metrics_port=int(env.get("METRICS_PORT", "8080")),
