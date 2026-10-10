@@ -32,3 +32,4 @@ ADR numbering ranges (no collisions between parallel lanes):
 | 0300–0399 | sf-sre |
 | 0400–0499 | sf-data |
 | 0500–0599 | sf-cloud |
+| 0600–0699 | sf-docs |
