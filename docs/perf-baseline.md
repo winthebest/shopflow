@@ -83,3 +83,67 @@ read-back, the payments call over HTTP), ~1.4ms is the gateway hop, ~0.7ms is th
   (Phase 7, `docs/capacity.md`).
 - Compose is not the cluster: no Envoy, no network policies, one replica each. Phase 3 SLOs should be checked
   against k3d numbers, using this table only as the floor.
+
+## 2026-10-10: k3d, fulfillment-worker and KEDA (profiles core, obs-lite, data, ops)
+
+### Setup
+
+- Cluster `sf-app` (k3d, 1 server + 1 agent; Docker 15.8 GiB on the laptop), revision `e530e7c`, images `sha-c35f922`.
+  Local replicas: gateway 1, orders 1, payments 2; fulfillment-worker 1–3 (KEDA Kafka scaler, `lagThreshold` 50,
+  polling 15 s, scale-down stabilization 60 s), `SHIPMENT_LATENCY_MS` 20.
+- `make app-worker-check CLUSTER=sf-app [LOAD_RATE=… LOAD_DURATION=… SCALE_TARGET=…]`: k6 (`loadtest/checkout.js`)
+  through the gateway over HTTPS; replicas, consumer lag and committed offsets sampled every ~5 s. A lag record is one
+  change event of `orders`, about 2 per checkout (created `pending`, then `paid` or `failed`).
+
+### Worker scaling under load
+
+| | 80 checkouts/s, 3 min | 60 checkouts/s, 2 min |
+|---|---|---|
+| Scale-up | 1 → 3 ready replicas in 19 s | 1 → 2 in 19 s (peak 3) |
+| Max consumer lag | 449 records | 311 records |
+| Back to 1 replica after the load | 23 s | 41 s |
+| Throughput per replica under backlog | 103.5 records/s (2 busy intervals) | 87.8 records/s (1 interval) |
+| Shipments / duplicates after the run | 13,787 / 0 | 20,839 / 0 |
+
+During the 80/s run the replicas settled at 2 after ~70 s: ~144 records/s in (28,182 committed in 196 s) against
+2 × 103.5 out.
+
+### Checkout at the same time (k6, through the gateway)
+
+| | 80 checkouts/s | 60 checkouts/s |
+|---|---|---|
+| Checkout errors | 4.06 % | 0 % |
+| Checkout p95 / p99 | 746 / 1,007 ms | 244 / 509 ms |
+| All requests p50 / p95 / p99 | 65 / 576 / 1,003 ms | 61 / 129 / 410 ms |
+
+80/s is beyond what one local orders replica serves: its SQLAlchemy pool (10 + 10 overflow, 0.5 s wait) ran out, and
+426 requests failed waiting for a connection: 156 `GET /products`, 127 before the order was created, 94 at settle and
+49 at the read after settle. The gateway answered 504 (orders slower than 1 s) or 502. The payments circuit never
+opened. Two of those failure points lose correctness, not only availability:
+
+- **94 orders charged but left `pending`.** Payments answered `succeeded` for all of them, the settle transaction
+  could not get a connection, and nothing settles a `pending` order again: no payment row, no shipment.
+- **49 paid orders answered with a 5xx** (the read after settle failed): a client that retries creates a second order.
+
+Follow-ups (sf-app): idempotent settle plus a sweeper that re-settles stale `pending` orders (payments is idempotent
+per order, so re-charging is safe), no read after settle, then autoscaling and pool sizing for gateway/orders.
+
+### Idempotency under a full re-snapshot
+
+- Baseline: 21,339 orders, CDC epoch `1791633369`. New epoch `1791634107`: Debezium restarted without offsets
+  ("No previous offsets found") and snapshotted `orders` (21,339 rows) in under a second; `cdc-epoch.sh wait`
+  finished 90 s after the connector resumed.
+- `REPLAY_BASELINE`: all 21,339 orders came back as snapshot records (`_op = r`) with the new epoch and the worker
+  consumed them. Shipments before and after: 20,839; duplicates: 0. One replica throughout: an order that already has
+  a shipment costs no simulated carrier latency (`ON CONFLICT DO NOTHING`).
+- `make up` again on the same revision: the epoch was kept, no new snapshot, no connector restart; a checkout placed
+  afterwards carries the current epoch.
+
+### lagThreshold from the measurement (ADR 0304)
+
+- Per-replica rate under backlog: 103.5 records/s (80/s run, 2 busy intervals; the 60/s run's 87.8 rests on a
+  single interval).
+- `lagThreshold` = rate × target drain time per replica = 103.5 × 30 s ≈ **3,100** (the chart has 50).
+- KEDA asks for ceil(lag / `lagThreshold`) replicas. At 80 checkouts/s one replica falls behind by ~40 records/s, so
+  with 3,100 the second replica arrives after ~75 s (19 s with 50) and a third is never needed. A backlog like game
+  day 3's (Kafka Connect down 30 min at 10 checkouts/s ≈ 36,000 records) asks for 12, capped at 3, at once.
