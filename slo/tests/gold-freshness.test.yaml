@@ -1,0 +1,109 @@
+# promtool unit tests for the gold-freshness SLI and its burn alert (sf-data).
+# Rule files are the `.spec` of gold-freshness-slo / gold-freshness-sli in deploy/platform/slo/base/, extracted next to
+# this file by scripts/sre-check.sh. Namespace airflow was created and the exporter started at t=0 unless a test says
+# otherwise; 6000-minute histories (> 4 days) make the long windows behave as in a long-running system.
+rule_files:
+  - gold-freshness-slo.rules.yaml
+  - gold-freshness-sli.rules.yaml
+evaluation_interval: 1m
+
+tests:
+  - name: SLI is 0 when every mart is fresh, 1 when one is stale, failing or the exporter is gone
+    interval: 1m
+    input_series:
+      - series: 'kube_namespace_created{namespace="airflow"}'
+        values: '0x300'
+      - series: 'process_start_time_seconds{job="freshness-exporter"}'
+        values: '0x300'
+      # fct_orders: fresh until 179m, then 100 min old until 199m, then its probe fails (no age) until 219m.
+      - series: 'data_refresh_age_seconds{job="freshness-exporter",table="gold.fct_orders"}'
+        values: '1200x179 6000x20'
+      - series: 'freshness_probe_success{job="freshness-exporter",table="gold.fct_orders"}'
+        values: '1x199 0x20'
+      # dim_customers stays fresh while it is exported; from 220m the exporter is gone altogether.
+      - series: 'data_refresh_age_seconds{job="freshness-exporter",table="gold.dim_customers"}'
+        values: '600x219'
+      - series: 'freshness_probe_success{job="freshness-exporter",table="gold.dim_customers"}'
+        values: '1x219'
+    promql_expr_test:
+      - expr: gold:refresh_stale:minute
+        eval_time: 60m
+        exp_samples: []  # first 2 hours of profile batch: dbt has not built gold yet
+      - expr: gold:refresh_stale:minute
+        eval_time: 150m
+        exp_samples: [{labels: 'gold:refresh_stale:minute', value: 0}]
+      - expr: gold:refresh_stale:minute
+        eval_time: 190m
+        exp_samples: [{labels: 'gold:refresh_stale:minute', value: 1}]
+      - expr: gold:refresh_stale:minute
+        eval_time: 210m
+        exp_samples: [{labels: 'gold:refresh_stale:minute', value: 1}]
+      - expr: gold:refresh_stale:minute
+        eval_time: 240m
+        exp_samples: [{labels: 'gold:refresh_stale:minute', value: 1}]
+
+  - name: no SLI samples and no alert without profile batch, or during the exporter's first 15 minutes
+    interval: 1m
+    input_series:
+      - series: 'process_start_time_seconds{job="freshness-exporter"}'
+        values: '0x200 12000x100'
+      - series: 'data_refresh_age_seconds{job="freshness-exporter",table="gold.fct_orders"}'
+        values: '9000x300'
+      - series: 'freshness_probe_success{job="freshness-exporter",table="gold.fct_orders"}'
+        values: '1x300'
+    promql_expr_test:
+      - expr: gold:refresh_stale:minute
+        eval_time: 180m
+        exp_samples: []
+    alert_rule_test:
+      - {eval_time: 180m, alertname: GoldFreshnessBurn, exp_alerts: []}
+
+  - name: an hourly dbt run keeps gold green for days
+    interval: 1m
+    input_series:
+      - series: 'kube_namespace_created{namespace="airflow"}'
+        values: '0x6100'
+      - series: 'process_start_time_seconds{job="freshness-exporter"}'
+        values: '0x6100'
+      # Hourly rebuilds keep the age between 0 and 60 minutes; 30 minutes stands for it.
+      - series: 'data_refresh_age_seconds{job="freshness-exporter",table="gold.fct_orders"}'
+        values: '1800x6100'
+      - series: 'freshness_probe_success{job="freshness-exporter",table="gold.fct_orders"}'
+        values: '1x6100'
+    alert_rule_test:
+      - {eval_time: 6050m, alertname: GoldFreshnessBurn, exp_alerts: []}
+
+  # Airflow paused at 6000m right after a run: gold ages 60s per minute and turns stale at 90 minutes (6090m). The 1h
+  # window passes 14.4% bad after 9 bad minutes (6098m), plus up to two evaluation intervals for the chained recording
+  # rules. Silent at +95m, page by +105m: pausing Airflow for 2 hours always pages, with shop traffic or without.
+  - name: Airflow paused for 2 hours pages within 105 minutes of the last refresh
+    interval: 1m
+    input_series:
+      - series: 'kube_namespace_created{namespace="airflow"}'
+        values: '0x6200'
+      - series: 'process_start_time_seconds{job="freshness-exporter"}'
+        values: '0x6200'
+      - series: 'data_refresh_age_seconds{job="freshness-exporter",table="gold.fct_orders"}'
+        values: '600x6000 60+60x200'
+      - series: 'freshness_probe_success{job="freshness-exporter",table="gold.fct_orders"}'
+        values: '1x6200'
+    alert_rule_test:
+      - {eval_time: 6095m, alertname: GoldFreshnessBurn, exp_alerts: []}
+      - eval_time: 6105m
+        alertname: GoldFreshnessBurn
+        exp_alerts:
+          - exp_labels:
+              {severity: page, sloth_id: gold-freshness, sloth_service: gold, sloth_severity: page, sloth_slo: freshness, team: sf-data}
+            exp_annotations:
+              summary: "Gold marts are going stale faster than the 99% gold-freshness SLO allows."
+              title: "(page) gold freshness SLO error budget burn rate is too fast."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/gold-stale.md
+      - eval_time: 6120m
+        alertname: GoldFreshnessBurn
+        exp_alerts:
+          - exp_labels:
+              {severity: page, sloth_id: gold-freshness, sloth_service: gold, sloth_severity: page, sloth_slo: freshness, team: sf-data}
+            exp_annotations:
+              summary: "Gold marts are going stale faster than the 99% gold-freshness SLO allows."
+              title: "(page) gold freshness SLO error budget burn rate is too fast."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/gold-stale.md

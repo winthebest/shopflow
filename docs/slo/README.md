@@ -3,6 +3,7 @@
 | SLO | Spec | Owner | Doc |
 |---|---|---|---|
 | checkout availability, checkout latency | [`slo/checkout.yaml`](../../slo/checkout.yaml) | sf-sre | [checkout.md](checkout.md) |
+| gold freshness | [`slo/gold-freshness.yaml`](../../slo/gold-freshness.yaml) | sf-data | [gold-freshness.md](gold-freshness.md) |
 
 Tooling: Sloth generates multi-window, multi-burn-rate rules at build time ([ADR 0300](../adr/0300-slo-tooling-sloth.md)).
 Every SLO uses the 28-day period and the plan's burn-rate factors (14.4/6/3/1) from
@@ -27,7 +28,7 @@ Every SLO uses the 28-day period and the plan's burn-rate factors (14.4/6/3/1) f
    the kustomization misses a rule file, if an alert has no existing runbook, or if a unit test fails.
 5. Add a row to the table above and a doc next to `checkout.md` (SLIs, thresholds, error budget policy).
 
-Ownership: files of the CDC SLOs (`slo/cdc*.yaml`, `slo/tests/cdc*.test.yaml`,
-`deploy/platform/slo/base/cdc-*.prometheusrule.yaml`) belong to sf-data; sf-sre owns the tooling and reviews them
+Ownership: files of the CDC and gold SLOs (`slo/{cdc,gold}*.yaml`, `slo/tests/{cdc,gold}*.test.yaml`,
+`deploy/platform/slo/base/{cdc,gold}-*.prometheusrule.yaml`) belong to sf-data; sf-sre owns the tooling and reviews them
 (`docs/contracts/ownership.md`). The rules `kustomization.yaml` is generated, so any lane may commit the output of
 `make sre-slo`.

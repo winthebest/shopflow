@@ -18,6 +18,21 @@ def test_defaults_match_the_lake_ro_contract() -> None:
     assert cfg.trino_port == 8443
     assert cfg.probe_interval_seconds == 60
     assert cfg.tables == ("bronze.orders", "bronze.payments")
+    assert cfg.refresh_tables == ()
+
+
+def test_refresh_tables_are_optional_and_validated() -> None:
+    cfg = config.load({**REQUIRED, "REFRESH_TABLES": "gold.fct_orders, gold.dim_customers"})
+
+    assert cfg.refresh_tables == ("gold.fct_orders", "gold.dim_customers")
+    with pytest.raises(ValueError, match="REFRESH_TABLES"):
+        config.load({**REQUIRED, "REFRESH_TABLES": "gold.Fct_orders"})
+
+
+def test_a_table_cannot_be_in_both_lists() -> None:
+    # Both measures share freshness_probe_success{table}.
+    with pytest.raises(ValueError, match="both"):
+        config.load({**REQUIRED, "REFRESH_TABLES": "bronze.orders"})
 
 
 @pytest.mark.parametrize("missing", sorted(REQUIRED))

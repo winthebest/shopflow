@@ -6,4 +6,6 @@ resources:
   - cdc-slo.prometheusrule.yaml
   - checkout-sli-guard.prometheusrule.yaml
   - checkout-slo.prometheusrule.yaml
+  - gold-freshness-sli.prometheusrule.yaml
+  - gold-freshness-slo.prometheusrule.yaml
   - wal-retained.prometheusrule.yaml

@@ -1,7 +1,8 @@
 # freshness-exporter (services/freshness-exporter, docs/adr/0402): every 60s, max(_source_ts_ms) per bronze table
 # through Trino catalog lake_ro as user exporter (HTTPS + password). Metrics on 8080, scraped by the ServiceMonitor.
 # bronze.heartbeat changes every 10s (Debezium heartbeat.action.query), so its freshness is the cdc-lag SLI
-# (slo/cdc.yaml) independent of shop traffic; the transactional tables are exported for dashboards.
+# (slo/cdc.yaml) independent of shop traffic; the transactional tables are exported for dashboards. Gold marts are
+# measured by their latest data commit instead (`$snapshots`, replace snapshots excluded): data_refresh_age_seconds.
 apiVersion: v1
 kind: Service
 metadata:
@@ -66,6 +67,9 @@ spec:
               value: /etc/trino-ca/ca.crt
             - name: FRESHNESS_TABLES
               value: bronze.heartbeat,bronze.orders,bronze.order_items,bronze.payments
+            # gold-freshness SLI (slo/gold-freshness.yaml): age of each mart's latest data commit (dbt, profile batch).
+            - name: REFRESH_TABLES
+              value: gold.fct_orders,gold.dim_customers,gold.mart_daily_revenue,gold.mart_payment_success_rate,gold.mart_customer_ltv
             - name: PROBE_INTERVAL_SECONDS
               value: "60"
           readinessProbe:
