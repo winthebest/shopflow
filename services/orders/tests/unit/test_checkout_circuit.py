@@ -17,7 +17,13 @@ UNREACHABLE_DB = "postgresql://shop_app:x@127.0.0.1:9/shop"
 @asynccontextmanager
 async def orders_app(**settings):
     app = create_app(
-        Settings(database_url=UNREACHABLE_DB, payments_url="http://payments", payments_breaker_min_calls=1, **settings),
+        Settings(
+            database_url=UNREACHABLE_DB,
+            payments_url="http://payments",
+            payments_breaker_min_calls=1,
+            sweep_interval_s=0,  # no background sweeps against the unreachable database
+            **settings,
+        ),
         payments_transport=httpx.MockTransport(lambda r: httpx.Response(503)),
     )
     async with (

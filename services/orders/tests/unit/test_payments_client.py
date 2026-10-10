@@ -251,7 +251,9 @@ async def test_retry_after_a_timeout_opens_a_new_connection(wired_retries):
     peers: list[tuple[str, int]] = []
     server = await serve_payments(hang_first_charge=True, peers=peers)
     url = f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}"
-    app = create_app(Settings(database_url=UNREACHABLE_DB, payments_url=url, payments_attempt_timeout_ms=200))
+    app = create_app(
+        Settings(database_url=UNREACHABLE_DB, payments_url=url, payments_attempt_timeout_ms=200, sweep_interval_s=0)
+    )
     async with server, app.router.lifespan_context(app):
         wired: PaymentsClient = app.state.payments
         await asyncio.gather(wired.http.get("/warm"), wired.http.get("/warm"))  # two idle pooled connections

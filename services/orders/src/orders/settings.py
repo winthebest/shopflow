@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     payments_breaker_failure_ratio: float = Field(default=0.75, gt=0, le=1)
     payments_breaker_open_s: float = Field(default=5.0, gt=0)
 
+    # Stranded-order sweeper (orders.sweeper): re-settles `pending` orders untouched for `sweep_stale_after_s`. A
+    # checkout settles in about a second; 0 for the interval turns the sweeper off.
+    sweep_interval_s: float = Field(default=10.0, ge=0)
+    sweep_stale_after_s: float = Field(default=30.0, ge=5)
+    sweep_batch: int = Field(default=50, ge=1, le=1000)
+
     def retry_policy(self) -> RetryPolicy:
         return RetryPolicy(attempts=self.payments_attempts, attempt_timeout_s=self.payments_attempt_timeout_ms / 1000)
 
