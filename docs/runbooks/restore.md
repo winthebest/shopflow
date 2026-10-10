@@ -32,9 +32,28 @@ Checks for the first drill slot, before `prepare`. Record the growth rate under 
       prints `True`.
 - [ ] Bucket `pg-backup` exists and receives WAL:
       `kubectl -n lakehouse exec deploy/seaweedfs -- sh -c 'echo "fs.du /buckets/pg-backup" | weed shell'`.
-- [ ] Growth rate: run `fs.du` again one hour later. With `archive_timeout: 60s`, an idle database still switches
-      WAL every minute. gzip shrinks the mostly empty segments, but 60 files an hour add up; the rate decides how
-      long a drill cluster can stay up.
+- [ ] Growth rate: run `fs.du` again one hour later, and write down **which profiles** were running.
+      `archive_timeout: 60s` only switches segment when WAL was written since the last switch:
+      - with `data`, the Debezium heartbeat writes every 10 s, so a segment goes out every minute;
+      - with `drill` alone, an idle shop may archive almost nothing, and only load (k6) makes it grow.
+      gzip shrinks the mostly empty segments. The rate decides how long a drill cluster can stay up.
+- [ ] Archive alerts (sf-sre, [wal-archive.md](wal-archive.md); needs `obs-lite`, so this slot runs
+      `PROFILES=core,obs-lite,drill`):
+      - healthy: `shopflow:pg_wal_archive_pending:segments` stays at 0–2;
+      - blocked: pause the Argo CD controller as in `run` (scaling SeaweedFS alone is undone by selfHeal), scale
+        `lakehouse/seaweedfs` to 0, and keep k6 writing every minute. Without WAL activity no segment is ready,
+        the archiver never fails, and the alert has nothing to see. The first archive attempt fails within about
+        a minute. Two outcomes are by design; record which one happened:
+        - the archiver fails fast (connection refused, no endpoint): `shopflow:pg_wal_archive_failing:bool` = 1
+          from about +1 min, so `ShopDbWalArchiveFailing` fires around +11–14 min;
+        - the archiver hangs (plugin retries, no error): `failing` stays 0, the pending segments pass 10 around
+          +11 min, so the alert fires around +21–24 min.
+      - Keep one log line of the sidecar at the failure, and confirm the container name (`plugin-barman-cloud`).
+      - Restore SeaweedFS and the controller **right after** the test (the pause stops reconciliation for the
+        whole cluster). Record the pause and resume times under Results.
+      - Check that pending returns to 0–2 and the alert resolves, and record how long the backlog took to drain.
+      - Evidence: `make sre-gameday-evidence SRE_GATE_CONTEXT=k3d-<slot> FROM=<block time, RFC 3339>` gives
+        alerts.tsv and the archive series.
 
 What `run` does:
 
@@ -82,7 +101,10 @@ Expectations:
 |---|---|---|---|---|---|---|---|
 | | | | | | | | |
 
-`pg-backup` growth (idle / under k6): _to measure in the first slot_.
+`pg-backup` growth (profiles; idle / under k6): _to measure in the first slot_.
+RAM of `core,obs-lite,drill` (`docker stats` of the k3d nodes): _to measure in the first slot_.
+Archive alert check: block / resume times, outcome (fast fail or hang), alert fired at, resolved at, backlog
+drained in: _to measure in the first slot_.
 
 ## When a recovery fails
 
