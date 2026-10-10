@@ -9,14 +9,18 @@
 #   4. ScaledObject fulfillment-worker is Ready (KEDA reached Kafka); its scaler protocol version is shown;
 #   5. scaling (skip with SKIP_LOAD=1): k6 drives checkouts above one replica's throughput (the chart's
 #      SHIPMENT_LATENCY_MS sets it: 20ms -> ~50 shipments/s), replicas reach SCALE_TARGET, then return to the
-#      ScaledObject's minReplicaCount after the load; both times are measured;
+#      ScaledObject's minReplicaCount after the load. Results for the PR / game day in out/app-worker-check-<UTC>/:
+#      timeline.csv (replicas, lag, committed offsets every ~5s), summary.json and a Markdown table on stdout with
+#      the scale-up/scale-down times, the measured records/s per replica and the lagThreshold it suggests (the
+#      backlog one replica clears in LAG_BUDGET_SECONDS; ADR 0304 sizes lagThreshold from this measurement);
 #   6. once the consumer lag is 0: no order has two shipments (HAVING count(*) > 1), every paid order has exactly one
 #      shipment, and no shipment belongs to an order that is not paid. Run it again after the re-snapshot runbook:
 #      a full replay of the topic must not create duplicates.
 # Postgres is read as shop_app (password on stdin, never on a command line); Kafka only through the worker pod.
 # Usage: CLUSTER=sf-main scripts/app-worker-check.sh   (or make app-worker-check CLUSTER=sf-main)
 #   KUBE_CONTEXT overrides k3d-<CLUSTER>; BASE_URL the gateway (default https://shop.127.0.0.1.sslip.io:<port>);
-#   LOAD_RATE (checkouts/s, 80), LOAD_DURATION (3m), SCALE_TARGET (3), SCALE_DOWN_TIMEOUT (600s), DRAIN_TIMEOUT (600s).
+#   LOAD_RATE (checkouts/s, 80), LOAD_DURATION (3m), SCALE_TARGET (3), SCALE_DOWN_TIMEOUT (600s), DRAIN_TIMEOUT (600s),
+#   LAG_BUDGET_SECONDS (30).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -37,6 +41,7 @@ LOAD_DURATION="${LOAD_DURATION:-3m}"
 SCALE_TARGET="${SCALE_TARGET:-3}"
 SCALE_DOWN_TIMEOUT="${SCALE_DOWN_TIMEOUT:-600}"
 DRAIN_TIMEOUT="${DRAIN_TIMEOUT:-600}"
+LAG_BUDGET_SECONDS="${LAG_BUDGET_SECONDS:-30}"
 NS=shop
 WORKER=fulfillment-worker
 
@@ -57,7 +62,8 @@ psql_shop() {
 }
 
 # Consumer group of the worker, seen with the worker's own credentials from inside its pod:
-# JSON {"state", "members", "clients", "lag"} (lag = end offset - committed offset, summed over partitions).
+# JSON {"state", "members", "clients", "partitions", "lag", "committed"}, summed over partitions: committed = the
+# group's committed offsets (the beginning of a partition it never committed), lag = end offsets - committed.
 group_probe() {
   kc -n "$NS" exec -i "deploy/$WORKER" -c "$WORKER" -- python -I - <<'PY'
 import asyncio, json, os
@@ -88,9 +94,9 @@ async def main():
         [described] = await admin.describe_topics([topic])
         partitions = sorted(TopicPartition(topic, p["partition"]) for p in described["partitions"])
         begin, end = await probe.beginning_offsets(partitions), await probe.end_offsets(partitions)
-        lag = sum(end[tp] - (committed[tp].offset if tp in committed else begin[tp]) for tp in partitions)
+        done = sum(committed[tp].offset if tp in committed else begin[tp] for tp in partitions)
         print(json.dumps({"state": state, "members": len(members), "clients": sorted({m[1] for m in members}),
-                          "partitions": len(partitions), "lag": lag}))
+                          "partitions": len(partitions), "lag": sum(end.values()) - done, "committed": done}))
     finally:
         await probe.stop()
         await admin.close()
@@ -104,6 +110,14 @@ replicas() {
   local value
   value="$(kc -n "$NS" get deploy "$WORKER" -o jsonpath="{.${1:-status.readyReplicas}}" 2> /dev/null || true)"
   echo "${value:-0}"
+}
+
+# lagThreshold of the ScaledObject's Kafka trigger (0 when unknown).
+lag_threshold() {
+  local value
+  value="$(kc -n "$NS" get scaledobject "$WORKER" -o jsonpath='{.spec.triggers[0].metadata.lagThreshold}' \
+    2> /dev/null || true)"
+  [[ "$value" =~ ^[0-9]+$ ]] && echo "$value" || echo 0
 }
 
 K6_PID=""
@@ -163,18 +177,31 @@ if [[ "${SKIP_LOAD:-0}" == 1 ]]; then
 else
   out="out/app-worker-check-$(date -u +%Y%m%dT%H%M%SZ)"
   mkdir -p "$out"
-  echo "== load: $LOAD_RATE checkouts/s for $LOAD_DURATION on $BASE_URL (k6 log in $out/)"
+  echo "== load: $LOAD_RATE checkouts/s for $LOAD_DURATION on $BASE_URL (results in $out/)"
   k6 run --quiet --insecure-skip-tls-verify --log-format raw --console-output "$out/acks.jsonl" \
     --summary-export "$out/k6-summary.json" -e BASE_URL="$BASE_URL" -e RATE="$LOAD_RATE" -e DURATION="$LOAD_DURATION" \
     loadtest/checkout.js > "$out/k6.log" 2>&1 &
   K6_PID=$!
   started=$SECONDS
-  peak=0
-  scaled_up_after=""
+  timeline="$out/timeline.csv"
+  echo "elapsed_s,phase,desired,ready,lag,committed" > "$timeline"
+  # Appends one timeline row and prints "desired ready lag"; lag and committed are -1 when the probe failed.
+  sample() {
+    local desired ready probe lag committed
+    desired="$(replicas spec.replicas)"
+    ready="$(replicas)"
+    probe="$(group_probe 2> /dev/null | jq -r '"\(.lag) \(.committed)"' 2> /dev/null || true)"
+    read -r lag committed <<< "$probe"
+    [[ "$lag" =~ ^[0-9]+$ && "$committed" =~ ^[0-9]+$ ]] || lag=-1 committed=-1
+    echo "$((SECONDS - started)),$1,$desired,$ready,$lag,$committed" >> "$timeline"
+    echo "$desired $ready $lag"
+  }
+  peak=0 max_lag=0 scaled_up_after=""
   while kill -0 "$K6_PID" 2> /dev/null; do
-    current="$(replicas)"
-    ((current > peak)) && peak=$current
-    if [[ -z "$scaled_up_after" ]] && ((current >= SCALE_TARGET)); then scaled_up_after=$((SECONDS - started)); fi
+    read -r _ ready lag < <(sample load)
+    ((ready > peak)) && peak=$ready
+    ((lag > max_lag)) && max_lag=$lag
+    if [[ -z "$scaled_up_after" ]] && ((ready >= SCALE_TARGET)); then scaled_up_after=$((SECONDS - started)); fi
     sleep 5
   done
   k6_status=0
@@ -187,20 +214,55 @@ else
   else
     result FAIL "scale up: peak $peak ready replicas, never $SCALE_TARGET (raise LOAD_RATE or the chart's latency)"
   fi
-  scaled_down_after=""
-  until [[ -n "$scaled_down_after" ]] || ((SECONDS - load_ended > SCALE_DOWN_TIMEOUT)); do
-    desired="$(replicas spec.replicas)"
-    if ((desired > 0 && desired <= min_replicas)); then
+
+  # After the load: sample until the lag is drained and the replicas are back to the minimum.
+  drained_after="" scaled_down_after=""
+  until [[ -n "$drained_after" && -n "$scaled_down_after" ]] || ((SECONDS - load_ended > SCALE_DOWN_TIMEOUT)); do
+    read -r desired _ lag < <(sample after)
+    if [[ -z "$drained_after" ]] && ((lag == 0)); then drained_after=$((SECONDS - load_ended)); fi
+    if [[ -z "$scaled_down_after" ]] && ((desired > 0 && desired <= min_replicas)); then
       scaled_down_after=$((SECONDS - load_ended))
-    else
-      sleep 10
     fi
+    [[ -n "$drained_after" && -n "$scaled_down_after" ]] || sleep 5
   done
   if [[ -n "$scaled_down_after" ]]; then
     result PASS "scale down: back to $min_replicas replica(s) ${scaled_down_after}s after the load ended"
   else
     result FAIL "scale down: still above $min_replicas replica(s) ${SCALE_DOWN_TIMEOUT}s after the load ended"
   fi
+
+  # Records/s one replica processes: median over the sample intervals where a backlog of at least 100 records
+  # remained at both ends (the replicas were busy the whole interval) of committed-offset growth / s / ready replicas.
+  # A lag record is one change event of orders (about 2 per checkout: created pending, then paid or failed).
+  jq -Rn --argjson rate "$LOAD_RATE" --arg duration "$LOAD_DURATION" --argjson target "$SCALE_TARGET" \
+    --argjson min "$min_replicas" --argjson up "${scaled_up_after:-null}" --argjson down "${scaled_down_after:-null}" \
+    --argjson drained "${drained_after:-null}" --argjson peak "$peak" --argjson max_lag "$max_lag" \
+    --argjson threshold "$(lag_threshold)" --argjson budget "$LAG_BUDGET_SECONDS" '
+    [inputs | split(",") | select(.[0] != "elapsed_s")
+     | {t: (.[0] | tonumber), ready: (.[3] | tonumber), lag: (.[4] | tonumber), committed: (.[5] | tonumber)}] as $rows
+    | [range(1; $rows | length) as $i | $rows[$i - 1] as $a | $rows[$i] as $b
+       | select($a.lag >= 100 and $b.lag >= 100 and $b.t > $a.t and $a.ready + $b.ready > 0)
+       | ($b.committed - $a.committed) / ($b.t - $a.t) / (($a.ready + $b.ready) / 2)] as $rates
+    | ($rates | sort | if length > 0 then .[length / 2 | floor] else null end) as $per_replica
+    | {load: {checkouts_per_s: $rate, duration: $duration}, scale_target: $target, min_replicas: $min,
+       scale_up_s: $up, peak_ready_replicas: $peak, max_lag: $max_lag, drained_s_after_load: $drained,
+       scale_down_s_after_load: $down, busy_intervals: ($rates | length),
+       records_per_s_per_replica: (if $per_replica then ($per_replica * 10 | round) / 10 else null end),
+       lag_threshold: $threshold, lag_budget_s: $budget,
+       suggested_lag_threshold: (if $per_replica then ([10, ($per_replica * $budget | round)] | max) else null end)}
+    ' < "$timeline" > "$out/summary.json"
+  echo "== results ($out/summary.json, timeline.csv); paste into the PR:"
+  jq -r '
+    def s: if . == null then "n/a" else "\(.) s" end;
+    "| Measure | Value |", "|---|---|",
+    "| Load | \(.load.checkouts_per_s) checkouts/s for \(.load.duration) |",
+    "| \(.min_replicas) → \(.scale_target) ready replicas | \(.scale_up_s | s) after the load started (peak \(.peak_ready_replicas)) |",
+    "| Max consumer lag | \(.max_lag) records |",
+    "| Lag drained | \(.drained_s_after_load | s) after the load ended |",
+    "| Back to \(.min_replicas) replica(s) | \(.scale_down_s_after_load | s) after the load ended |",
+    "| Throughput per replica | \(.records_per_s_per_replica // "n/a") records/s (\(.busy_intervals) busy intervals) |",
+    "| lagThreshold | \(.lag_threshold) now; \(.suggested_lag_threshold // "n/a") suggested (\(.lag_budget_s) s of work per replica) |"
+  ' "$out/summary.json"
 fi
 
 # 6. Idempotency, once the worker has caught up.
