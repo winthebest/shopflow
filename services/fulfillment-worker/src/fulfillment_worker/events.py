@@ -23,10 +23,13 @@ class OrderChange:
     op: str
     lsn: int
     epoch: int
+    # A delete carries defaults, not nulls, in its non-key columns (status "", customer_id 0, 1970 timestamps) and
+    # `__deleted: "true"`: decide on _op/__deleted, never on status.
+    deleted: bool = False
 
     @property
     def needs_shipment(self) -> bool:
-        return self.op in SHIPPING_OPS and self.status == "paid"
+        return self.op in SHIPPING_OPS and not self.deleted and self.status == "paid"
 
 
 def parse_order_change(value: bytes | None) -> OrderChange:
@@ -46,4 +49,5 @@ def parse_order_change(value: bytes | None) -> OrderChange:
     except (KeyError, TypeError, ValueError) as exc:
         raise MalformedEventError(f"missing or invalid field: {exc}") from exc
     status = data.get("status")
-    return OrderChange(order_id, status if isinstance(status, str) else None, op, lsn, epoch)
+    deleted = op == "d" or str(data.get("__deleted", "false")).lower() == "true"
+    return OrderChange(order_id, status if isinstance(status, str) else None, op, lsn, epoch, deleted)

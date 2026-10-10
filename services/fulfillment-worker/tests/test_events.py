@@ -56,6 +56,12 @@ def test_fields_are_typed():
     assert parse_order_change(record()) == OrderChange(order_id=42, status="paid", op="u", lsn=26_843_216, epoch=3)
 
 
+def test_deleted_flag_wins_even_if_status_looks_paid():
+    change = parse_order_change(record(_op="u", status="paid", __deleted="true"))
+    assert change.deleted
+    assert not change.needs_shipment
+
+
 def test_missing_lsn_defaults_to_zero():
     assert parse_order_change(record(_lsn=None)).lsn == 0
 

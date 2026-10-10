@@ -21,7 +21,7 @@ def test_real_create_update_delete():
     assert update == OrderChange(order_id=1, status="paid", op="u", lsn=201_457_248, epoch=EPOCH)
     assert update.needs_shipment
     # Debezium fills a delete's columns with defaults (status "", customer 0), not nulls: only _op tells.
-    assert delete.op == "d"
+    assert (delete.op, delete.deleted) == ("d", True)
     assert not delete.needs_shipment
 
 
