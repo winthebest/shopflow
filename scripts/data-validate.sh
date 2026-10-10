@@ -65,6 +65,8 @@ generate_schemas() {
   echo "$stamp" > "$SCHEMA_DIR/.stamp"
 }
 
+RAW_REPO_PREFIX=https://raw.githubusercontent.com/winthebest/shopflow/
+
 # Print the manifests Argo CD would apply for one component (local overlay).
 render() {
   local c="$1" app="deploy/argocd/apps/$1/application.yaml"
@@ -77,6 +79,13 @@ render() {
     namespace="$(yq '.spec.destination.namespace' "$app")"
     local ref=("oci://$repo/$chart") # Argo CD treats a repoURL without scheme as an OCI registry
     [[ "$repo" == *://* ]] && ref=(--repo "$repo" "$chart")
+    # A Helm index kept in this repo (raw URL of a branch): read it from the checkout, so a PR is validated with its
+    # own index, and render the tarball it points to.
+    if [[ "$repo" == "$RAW_REPO_PREFIX"* ]]; then
+      local index="${repo#"$RAW_REPO_PREFIX"}"
+      index="${index#*/}/index.yaml"
+      ref=("$(yq ".entries.${chart}[] | select(.version == \"$version\") | .urls[0]" "$index")")
+    fi
     helm template "$release" "${ref[@]}" --version "$version" --namespace "$namespace" \
       -f "deploy/platform/$c/base/values.yaml" -f "deploy/platform/$c/local/values.yaml"
   fi
