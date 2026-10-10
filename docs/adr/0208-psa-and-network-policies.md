@@ -48,6 +48,9 @@ NetworkPolicy with its embedded controller (kube-router); on EKS the VPC CNI net
       - EKS (overlay `aws`, component `components/apiserver-aws`): TCP 443 to the VPC CIDR (control-plane ENIs) and
         to the `kubernetes` Service IP (172.20.0.1, in case the policy agent matches before DNAT). The CIDR must
         equal `vpc_cidr` in `infra/tofu/network`; `platform-validate` checks it.
+      - Every policy app has an aws variant in `apps-aws/` built from the same component: `network-policies`
+        (dir `aws`), `network-policies-obs` (`obs-aws`, adding OpenCost → Prometheus 9090) and
+        `network-policies-data` (`data-aws`).
   - Any other egress rule without a peer reaches every address, the internet included. `platform-validate` refuses
     it unless the policy names its reason in the annotation `shopflow.io/any-destination`:
     - Alertmanager's chat webhook (HTTPS);
