@@ -163,7 +163,9 @@ check_secrets() {
     fi
   done < <(find deploy/platform/{strimzi,kafka,kafka-connect,seaweedfs,iceberg-catalog,trino,airflow} -name '*.enc.yaml' 2> /dev/null)
   local copy
-  for copy in deploy/platform/*/base/copy-secret.py; do
+  # Helm charts cannot read files outside the chart, so a chart keeps its own copy under files/.
+  for copy in deploy/platform/*/base/copy-secret.py deploy/charts/*/files/copy-secret.py; do
+    [[ -e "$copy" ]] || continue
     if ! cmp -s "$copy" deploy/platform/trino/base/copy-secret.py; then
       echo "FAIL $copy differs from deploy/platform/trino/base/copy-secret.py" >&2
       return 1

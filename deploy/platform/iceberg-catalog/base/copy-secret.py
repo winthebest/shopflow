@@ -48,8 +48,16 @@ def main() -> None:
     if status != 200:
         sys.exit(f"read {source_ref}: HTTP {status} {source.get('message')}")
     extra = json.loads(env.get("EXTRA_DATA", "{}"))
-    values = {k: urllib.parse.quote(base64.b64decode(v).decode(), safe="") for k, v in source.get("data", {}).items()}
-    extra.update({k: template.format_map(values) for k, template in json.loads(env.get("DERIVED_DATA", "{}")).items()})
+    derived = json.loads(env.get("DERIVED_DATA", "{}"))
+    # Only text keys can feed a template. Binary keys (e.g. ca.p12 of a Strimzi cluster CA) are copied as they are and
+    # never decoded; a template that names one fails with KeyError.
+    values = {}
+    for key, encoded in (source.get("data", {}).items() if derived else ()):
+        try:
+            values[key] = urllib.parse.quote(base64.b64decode(encoded).decode(), safe="")
+        except UnicodeDecodeError:
+            continue
+    extra.update({k: template.format_map(values) for k, template in derived.items()})
     target = {
         "apiVersion": "v1",
         "kind": "Secret",
