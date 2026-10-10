@@ -30,9 +30,10 @@ Chaos Mesh exists in the cluster only during the game day ([ADR 0303](../adr/030
    the Chaos Mesh Application. It fails unless no chaos CRD, daemon pod or webhook is left.
 2. Export the numbers the postmortem needs before the cluster goes away:
    `make sre-gameday-evidence SRE_GATE_CONTEXT=k3d-<cluster> FROM=<start, RFC 3339 or Unix> [TO=…]` writes
-   `out/gameday-<UTC>/alerts.tsv` (first/last firing time of every alert, UTC+7) and one CSV per key series
-   (checkout SLIs, error budgets, payments attempts and circuit, CDC staleness, WAL retained by the slot and its
-   growth, WAL waiting for the archive, worker replicas). Add Grafana screenshots where a graph tells it better.
+   `out/gameday-<UTC>/alerts.tsv` (first/last firing time of every alert, UTC+7) and one CSV per key series (checkout
+   SLIs, error budgets, payments attempts and circuit, pending orders and the sweeper, CDC staleness, WAL retained by
+   the slot and its growth, WAL waiting for the archive, worker replicas). Add Grafana screenshots where a graph
+   tells it better.
 3. Write the postmortem; open an action item for every fix; re-run the scenario after the fix and fill the
    before/after table.
 

@@ -1,0 +1,25 @@
+# Orders the checkout could not settle. A payment call without an answer (timeout, unreachable, circuit open) leaves
+# the order PENDING and the checkout answers 504/502 (status "pending"); the sweeper in each orders process charges
+# stale pending orders again every 10s (idempotent per order_id, same retries and circuit breaker) and settles them
+# (docs/contracts/services.md, ADR 0102). orders_pending_oldest_age_seconds is the age of the oldest pending order
+# at the last sweep, the same value from every orders process. Runbook: docs/runbooks/checkout-pending-orders.md.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: orders-pending
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: shopflow
+spec:
+  groups:
+    - name: shopflow-orders-pending
+      rules:
+        - alert: OrdersPendingTooOld
+          expr: max by (job) (orders_pending_oldest_age_seconds) > 300
+          for: 5m
+          labels:
+            severity: ticket
+            team: sf-sre
+          annotations:
+            summary: "The oldest pending order is {{ $value | humanizeDuration }} old: orders are not being settled."
+            runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/checkout-pending-orders.md
