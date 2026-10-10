@@ -78,8 +78,9 @@ NetworkPolicy with its embedded controller (kube-router); on EKS the VPC CNI net
   - Locally the API server rule is port-based (6443 to any address); on AWS it is address-based. The first
     version opened 443 by port, which let every selected pod reach the internet over HTTPS. The probe on sf-data
     (trino, Connect, an Airflow pod → 1.1.1.1:443 open) caught it, and `platform-validate` now rejects that shape.
-  - Not yet measured: the post-DNAT match on k3s (probe rows "apiserver open" for the API clients) and on EKS
-    (first AWS session).
+  - Measured on k3s (core, 2026-10-10): with only 6443 allowed, the copy-Job and certgen probe pods reach
+    `kubernetes.default:443` but not 1.1.1.1:443, and orders reaches neither. Egress is matched after the DNAT.
+    EKS is still to measure (first AWS session: keep the address that matches, drop the other).
   - Measured on k3s: a brand-new pod is not isolated for its first few seconds. The policy controller adds it to
     its rule sets shortly after start, so an immediate connection to the internet succeeded. Only stealing data in
     the first seconds of a pod's life gets past this. The EKS network policy agent has a strict mode that closes
