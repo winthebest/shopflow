@@ -26,7 +26,8 @@ Per-minute recording rule `gold:refresh_stale:minute` (1 = bad, 0 = good, no sam
   `operation` is not `replace`. The daily Iceberg maintenance (`optimize`, `optimize_manifests`) commits `replace`
   snapshots that change no rows; counting them would make gold look refreshed every day at 03:30 while dbt is
   stopped. (`_source_ts_ms` is the wrong clock here: a mart can be rebuilt from old data and still be fresh.)
-- **Bad** when any mart is 90 minutes old or more (two missed hourly runs minus margin), when a mart's probe fails
+- **Bad** when any mart is 90 minutes old or more (the next hourly run is due 60 minutes after the last commit, so
+  one missed run plus a 30-minute margin), when a mart's probe fails
   (the age sample is then removed), or when the exporter is absent (`or on() vector(1)`). A blind SLI never looks
   green.
 - **Not counted** without profile `batch` (namespace `airflow` absent), during its first 2 hours (the first hourly

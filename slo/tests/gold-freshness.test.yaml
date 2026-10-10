@@ -20,7 +20,7 @@ tests:
         values: '1200x179 6000x20'
       - series: 'freshness_probe_success{job="freshness-exporter",table="gold.fct_orders"}'
         values: '1x199 0x20'
-      # dim_customers stays fresh while it is exported; from 220m the exporter is gone altogether.
+      # dim_customers stays fresh while it is exported; from 220m the exporter is up but exports no gold series.
       - series: 'data_refresh_age_seconds{job="freshness-exporter",table="gold.dim_customers"}'
         values: '600x219'
       - series: 'freshness_probe_success{job="freshness-exporter",table="gold.dim_customers"}'
@@ -42,7 +42,7 @@ tests:
         eval_time: 240m
         exp_samples: [{labels: 'gold:refresh_stale:minute', value: 1}]
 
-  - name: no SLI samples and no alert without profile batch, or during the exporter's first 15 minutes
+  - name: no SLI samples and no alert without profile batch
     interval: 1m
     input_series:
       - series: 'process_start_time_seconds{job="freshness-exporter"}'
@@ -57,6 +57,31 @@ tests:
         exp_samples: []
     alert_rule_test:
       - {eval_time: 180m, alertname: GoldFreshnessBurn, exp_alerts: []}
+
+  # sf-sre review: the exporter restart guard on its own (profile batch older than 2 hours).
+  - name: exporter restart guard alone (airflow older than 2h)
+    interval: 1m
+    input_series:
+      - series: 'kube_namespace_created{namespace="airflow"}'
+        values: '0x300'
+      - series: 'process_start_time_seconds{job="freshness-exporter"}'
+        values: '0x199 12000x100'
+      - series: 'data_refresh_age_seconds{job="freshness-exporter",table="gold.fct_orders"}'
+        values: '9000x300'
+      - series: 'freshness_probe_success{job="freshness-exporter",table="gold.fct_orders"}'
+        values: '1x300'
+    promql_expr_test:
+      - {expr: 'gold:refresh_stale:minute', eval_time: 190m, exp_samples: [{labels: 'gold:refresh_stale:minute', value: 1}]}
+      - {expr: 'gold:refresh_stale:minute', eval_time: 205m, exp_samples: []}
+      - {expr: 'gold:refresh_stale:minute', eval_time: 220m, exp_samples: [{labels: 'gold:refresh_stale:minute', value: 1}]}
+
+  - name: exporter target gone entirely counts as bad
+    interval: 1m
+    input_series:
+      - series: 'kube_namespace_created{namespace="airflow"}'
+        values: '0x300'
+    promql_expr_test:
+      - {expr: 'gold:refresh_stale:minute', eval_time: 180m, exp_samples: [{labels: 'gold:refresh_stale:minute', value: 1}]}
 
   - name: an hourly dbt run keeps gold green for days
     interval: 1m

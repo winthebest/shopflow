@@ -3,6 +3,7 @@
 | SLO | Spec | Owner | Doc |
 |---|---|---|---|
 | checkout availability, checkout latency | [`slo/checkout.yaml`](../../slo/checkout.yaml) | sf-sre | [checkout.md](checkout.md) |
+| cdc lag | [`slo/cdc.yaml`](../../slo/cdc.yaml) | sf-data | [runbooks/cdc-lag.md](../runbooks/cdc-lag.md) |
 | gold freshness | [`slo/gold-freshness.yaml`](../../slo/gold-freshness.yaml) | sf-data | [gold-freshness.md](gold-freshness.md) |
 
 Tooling: Sloth generates multi-window, multi-burn-rate rules at build time ([ADR 0300](../adr/0300-slo-tooling-sloth.md)).
