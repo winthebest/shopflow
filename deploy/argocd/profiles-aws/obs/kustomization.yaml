@@ -1,9 +1,12 @@
 # Profile `obs` on AWS (owner: sf-sre; docs/contracts/gitops.md §1b): full telemetry (aws variants) plus OpenCost
 # (sf-cloud, AWS-only; needs Prometheus). slo and grafana-dashboards are identical to local. Mutually exclusive
 # with `obs-lite` (same otel-gateway release).
+# network-policies-obs (sf-platform, sync wave -2): namespace observability with its Pod Security level and the
+# default-deny NetworkPolicies (API server on 443 in the VPC, OpenCost → Prometheus) before any pod of the profile.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
+  - ../../apps-aws/network-policies-obs
   - ../../apps-aws/kube-prometheus-stack
   - ../../apps/slo
   - ../../apps/grafana-dashboards
