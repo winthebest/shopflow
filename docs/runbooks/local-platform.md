@@ -139,6 +139,8 @@ scripts/platform-secrets.sh --aws-json | scripts/aws-seed-params.sh
 |---|---|
 | `address already in use` on 655x/84xx/50xx | A stale cluster or process owns the port: `docker ps`, `k3d cluster list`, stop the owner. Do not pick another port. |
 | `revision ... not found on origin` | Push the branch first. |
+| `failed to get ready: error waiting for log line \`successfully registered node\`` (agent) | Docker/k3d start-up race; k3d rolls back and `make up` retries the create once by itself. A second failure stops: check `docker info` and free memory, then `make down` and `make up`. |
+| `revision '<short sha>' not found on origin` | A commit pin must be the full 40-character SHA (`git rev-parse <sha>`). |
 | App `ComparisonError ... ksops` | `sops-age` Secret missing or wrong key: rerun `make up`; check `age-keygen -y <key>` matches the recipient in `.sops.yaml`. |
 | App stuck `OutOfSync` on a CR | CRD from an earlier wave not ready: check that wave's app; CRs carry `SkipDryRunOnMissingResource=true`. |
 | Pods `ContainerCreating` for minutes | Image pulls are slow on a cold cache; `kubectl describe pod` shows `Pulling`. |

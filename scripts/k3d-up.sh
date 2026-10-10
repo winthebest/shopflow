@@ -81,6 +81,32 @@ cache_args() {
   printf '%s\n' --registry-config "$ROOT_DIR/scripts/k3d-registries.yaml"
 }
 
+# `k3d cluster create`, retried once when the agent did not register in time. That is a Docker/k3d start-up race
+# (seen at Gate 2; the retry registered after ~9s), and k3d has already rolled the cluster back. Any other failure,
+# or a second one, stops `make up`.
+k3d_create() {
+  local out
+  out="$(mktemp)"
+  if k3d cluster create "$@" 2>&1 | tee "$out"; then
+    rm -f "$out"
+    return 0
+  fi
+  if grep -qi 'failed to get ready: error waiting for log line .successfully registered node.' "$out" \
+    && grep -qi 'rolled back' "$out"; then
+    rm -f "$out"
+    log "the agent did not register in time (k3d/Docker start-up race, cluster rolled back): retrying the create once"
+    # k3d rolls the nodes back; drop a registry the failed attempt may have left behind, as k3d-down.sh does.
+    if docker container inspect "$REGISTRY_NAME" >/dev/null 2>&1; then
+      log "deleting leftover registry $REGISTRY_NAME before the retry"
+      k3d registry delete "$REGISTRY_NAME" >/dev/null
+    fi
+    k3d cluster create "$@" || die "k3d cluster create failed again; see the k3d output above"
+    return 0
+  fi
+  rm -f "$out"
+  die "k3d cluster create failed; see the k3d output above"
+}
+
 create_cluster() {
   if cluster_exists; then
     log "cluster exists; making sure it is running"
@@ -92,7 +118,7 @@ create_cluster() {
     while IFS= read -r arg; do extra_args+=("$arg"); done < <(cache_args)
     # 1 server + 1 agent to save RAM; Traefik off (Envoy Gateway is the edge); servicelb (klipper) stays on and
     # backs the Gateway's LoadBalancer Service, which the k3d load balancer exposes on HTTPS_PORT.
-    k3d cluster create "$CLUSTER" \
+    k3d_create "$CLUSTER" \
       --image "$K3S_IMAGE" \
       --servers 1 --agents 1 \
       --api-port "127.0.0.1:$API_PORT" \
