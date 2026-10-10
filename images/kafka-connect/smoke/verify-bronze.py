@@ -1,6 +1,8 @@
 """Check what the Iceberg sink committed during the smoke test, reading as the read-only principal.
 
 Usage: verify-bronze.py <wait-seconds>
+       verify-bronze.py --snapshot-rows <epoch>   print the snapshot rows of that epoch in bronze.heartbeat (the
+                                                  CDC_EPOCH_BRONZE seam of scripts/cdc-epoch.sh wait)
 Connects to Polaris with the trino_lake_ro credentials written by polaris-setup.py and to SeaweedFS with the
 read-only S3 identity, polls until the expected change events are committed or the wait runs out, then checks that
 the read-only principal cannot write to the catalog. Exit code 0 = pass.
@@ -86,8 +88,15 @@ def check(cat: RestCatalog, epoch: int) -> list[str]:
     return problems
 
 
+def snapshot_rows(cat: RestCatalog, epoch: int) -> int:
+    return sum(1 for row in rows(cat, "heartbeat") if row["_op"] == "r" and row["_cdc_epoch"] == epoch)
+
+
 def main() -> int:
     cat = catalog()
+    if sys.argv[1] == "--snapshot-rows":
+        print(snapshot_rows(cat, int(sys.argv[2])))
+        return 0
     epoch = int(os.environ["CDC_EPOCH"])
     deadline = time.monotonic() + float(sys.argv[1])
     while True:

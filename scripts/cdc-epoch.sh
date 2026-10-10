@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
-# CDC epoch tooling (docs/adr/0406). An epoch is one "life" of the CDC pipeline: every `make up`, restore or
+# CDC epoch tooling (docs/adr/0406). An epoch is one "life" of the CDC pipeline: every new cluster, restore or
 # re-snapshot starts a new one, bronze rows carry it in _cdc_epoch, and silver reads only the newest epoch whose
 # snapshot completed.
 #
 # Usage:
-#   scripts/cdc-epoch.sh new  [--epoch N] [--timeout S]  before the connectors sync (make up, after the root apps)
+#   scripts/cdc-epoch.sh ensure [--timeout S]             make up: keep the current epoch, or start one (fresh cluster)
+#   scripts/cdc-epoch.sh new  [--epoch N] [--timeout S]  re-snapshot runbook: start a new epoch, before restarting
 #   scripts/cdc-epoch.sh wait [--epoch N] [--timeout S]  once Postgres and Connect run: record N in meta.cdc_epochs
 #
+# ensure  Prints the epoch in Secret kafka/cdc-epoch when it exists and changes nothing: on a running cluster the
+#         connectors already stamp that epoch, and a new one would only take effect after a restart (re-running
+#         `make up` used to rotate it, so bronze kept the old epoch while silver switched to an empty new one).
+#         Without the Secret (fresh cluster) it does what `new` does. Only the epoch goes to stdout.
 # new   Writes Secret kafka/cdc-epoch (key epoch, read by the connectors at task start) and KafkaTopic
 #       iceberg-control-<N> (the Iceberg sink's control topic for this epoch). Needs only the Strimzi CRDs, not a
 #       running Kafka. Default N = unix time in seconds: an int4 until 2038, above every earlier local epoch.
@@ -14,14 +19,18 @@
 #       restarts them). With profile rt it also deletes FlinkDeployment flink/kpi-minute, which Argo CD recreates for
 #       the new epoch from fresh state. On AWS, ESO writes the Secret from SSM and only `wait` is used.
 # wait  Inserts N into meta.cdc_epochs (as shop_app), waits until Debezium reports the snapshot as completed
-#       (debezium_metrics_snapshotcompleted{context="snapshot",name="shop"} == 1 on the Connect metrics port),
-#       then sets snapshot_completed_at. Use it only for an epoch that snapshots (new Kafka or deleted offsets):
-#       with snapshot.mode=when_needed a restart with existing offsets never snapshots.
+#       (debezium_metrics_snapshotcompleted{context="snapshot",name="shop"} == 1 on the Connect metrics port) AND
+#       bronze holds snapshot rows of epoch N (bronze.heartbeat, _op = 'r', read through Trino as `exporter` on
+#       lake_ro), then sets snapshot_completed_at. The metric alone is not proof: a task that started before the
+#       epoch changed still reports its old snapshot, and silver would then switch to an epoch without rows. Use it
+#       only for an epoch that snapshots (new Kafka or deleted offsets): with snapshot.mode=when_needed a restart
+#       with existing offsets never snapshots, and wait times out.
 #       N defaults to the value in Secret kafka/cdc-epoch.
 #
 # Cluster: CLUSTER (default sf-main) selects context k3d-<CLUSTER>, like scripts/k3d-*.sh; KUBE_CONTEXT overrides
-# it (e.g. EKS). Test seam: CDC_EPOCH_PSQL (SQL on stdin, as shop_app in database shop) and CDC_EPOCH_METRICS
-# (prints the Connect metrics) replace the kubectl-based defaults; the Connect smoke test sets them to docker compose.
+# it (e.g. EKS). Test seam: CDC_EPOCH_PSQL (SQL on stdin, as shop_app in database shop), CDC_EPOCH_METRICS (prints
+# the Connect metrics) and CDC_EPOCH_BRONZE (prints the number of snapshot rows of epoch $epoch in bronze.heartbeat)
+# replace the kubectl-based defaults; the Connect smoke test sets them to docker compose.
 set -euo pipefail
 
 KUBE_CONTEXT="${KUBE_CONTEXT:-k3d-${CLUSTER:-sf-main}}"
@@ -33,17 +42,18 @@ FLINK_NAMESPACE=flink
 FLINK_JOB=kpi-minute        # FlinkDeployment (deploy/platform/flink), profile rt
 DB_NAMESPACE=shop
 DB_CLUSTER=shop-db           # CNPG Cluster; shop_app's password is in Secret shop-db-app
+LAKEHOUSE_NAMESPACE=lakehouse # Trino coordinator and Secret trino-exporter (bronze reads of `wait`)
 
 log() { printf '[cdc-epoch] %s\n' "$*" >&2; }
 die() {
   log "error: $*"
   exit 1
 }
-usage() { die "usage: $0 new|wait [--epoch N] [--timeout SECONDS]"; }
+usage() { die "usage: $0 ensure|new|wait [--epoch N] [--timeout SECONDS]"; }
 kc() { kubectl --context "$KUBE_CONTEXT" "$@"; }
 
 command="${1:-}"
-[[ "$command" == new || "$command" == wait ]] || usage
+[[ "$command" == ensure || "$command" == new || "$command" == wait ]] || usage
 shift
 epoch=""
 timeout=600
@@ -95,6 +105,30 @@ connect_metrics() {
   kc -n "$CONNECT_NAMESPACE" exec "$pod" -- curl -fsS http://localhost:9404/metrics
 }
 
+# Snapshot rows of epoch $epoch in bronze.heartbeat (one row per snapshot), through Trino as `exporter` on catalog
+# lake_ro; the password goes through stdin.
+bronze_snapshot_rows() {
+  if [[ -n "${CDC_EPOCH_BRONZE:-}" ]]; then
+    eval "$CDC_EPOCH_BRONZE"
+    return
+  fi
+  local pod
+  pod="$(kc -n "$LAKEHOUSE_NAMESPACE" get pod -l app.kubernetes.io/name=trino,app.kubernetes.io/component=coordinator \
+    -o name | head -1)"
+  [[ -n "$pod" ]] || return 1
+  # shellcheck disable=SC2016 # expanded by the pod's shell: the password from stdin, the query as $1
+  kc -n "$LAKEHOUSE_NAMESPACE" get secret trino-exporter -o jsonpath='{.data.password}' | base64 -d \
+    | kc -n "$LAKEHOUSE_NAMESPACE" exec -i "$pod" -- sh -c \
+      'IFS= read -r TRINO_PASSWORD; export TRINO_PASSWORD; exec trino --server https://localhost:8443 --insecure \
+        --user exporter --password --catalog lake_ro --output-format TSV --execute "$1"' sh \
+      "SELECT count(*) FROM bronze.heartbeat WHERE _op = 'r' AND _cdc_epoch = $epoch"
+}
+epoch_in_bronze() {
+  local rows
+  rows="$(bronze_snapshot_rows 2> /dev/null | tail -1)"
+  [[ "$rows" =~ ^[0-9]+$ ]] && ((rows > 0))
+}
+
 strimzi_crds_ready() { kc get crd kafkatopics.kafka.strimzi.io > /dev/null 2>&1; }
 cdc_epochs_table_ready() { run_sql <<< "SELECT count(*) FROM meta.cdc_epochs" > /dev/null 2>&1; }
 snapshot_completed() {
@@ -144,6 +178,23 @@ YAML
   echo "$epoch"
 }
 
+cmd_ensure() {
+  local current
+  # --ignore-not-found: only a missing Secret starts an epoch; any other API error stops here instead of rotating.
+  current="$(kc -n "$CONNECT_NAMESPACE" get secret cdc-epoch --ignore-not-found -o jsonpath='{.data.epoch}')" \
+    || die "cannot read Secret $CONNECT_NAMESPACE/cdc-epoch"
+  if [[ -z "$current" ]]; then
+    cmd_new
+    return
+  fi
+  current="$(base64 -d <<< "$current")"
+  valid_epoch "$current" || die "Secret $CONNECT_NAMESPACE/cdc-epoch holds '$current', not an epoch"
+  [[ -z "$epoch" || "$epoch" == "$current" ]] \
+    || die "epoch $current is current; starting $epoch needs the re-snapshot runbook (new, restart the connectors)"
+  log "epoch $current: Secret $CONNECT_NAMESPACE/cdc-epoch exists, kept (the running connectors stamp it)"
+  echo "$current"
+}
+
 cmd_wait() {
   if [[ -z "$epoch" ]]; then
     epoch="$(kc -n "$CONNECT_NAMESPACE" get secret cdc-epoch -o jsonpath='{.data.epoch}' | base64 -d)"
@@ -153,6 +204,7 @@ cmd_wait() {
   run_sql <<< "INSERT INTO meta.cdc_epochs (epoch) VALUES ($epoch) ON CONFLICT (epoch) DO NOTHING" > /dev/null
   log "epoch $epoch: recorded in meta.cdc_epochs, waiting for the Debezium snapshot"
   until_ok "the Debezium snapshot of epoch $epoch" snapshot_completed
+  until_ok "snapshot rows of epoch $epoch in bronze.heartbeat" epoch_in_bronze
   run_sql <<< "UPDATE meta.cdc_epochs SET snapshot_completed_at = now()
     WHERE epoch = $epoch AND snapshot_completed_at IS NULL" > /dev/null
   log "epoch $epoch: snapshot completed, meta.cdc_epochs.snapshot_completed_at set"
