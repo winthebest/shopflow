@@ -27,7 +27,7 @@ spec:
     - repoURL: https://github.com/winthebest/shopflow.git
       targetRevision: main
       ref: values
-  # The KEDA operator generates its certificates at runtime and writes the caBundle of its APIService and webhook.
+  # Certificates come from cert-manager (base values); its cainjector writes the caBundle of the APIService and webhook.
   ignoreDifferences:
     - group: apiregistration.k8s.io
       kind: APIService
@@ -36,6 +36,14 @@ spec:
       kind: ValidatingWebhookConfiguration
       jqPathExpressions: [".webhooks[].clientConfig.caBundle"]
   syncPolicy:
+    # Always-on namespace: Pod Security baseline `restricted` (docs/adr/0208-psa-and-network-policies.md). The chart's
+    # pods already comply (non-root, no privilege escalation, all capabilities dropped, RuntimeDefault seccomp,
+    # only projected/secret volumes, no host access).
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: restricted
+        pod-security.kubernetes.io/warn: restricted
+        pod-security.kubernetes.io/audit: restricted
     automated:
       prune: true
       selfHeal: true
