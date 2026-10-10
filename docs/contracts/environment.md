@@ -3,7 +3,10 @@
 ## Docker and clusters
 
 - Docker Desktop VM: 16GB. At most **2 k3d clusters at the same time**, and their profiles must fit ~11GB together
-  (measured: `core` ≈ 3.3GB; `obs` adds ≈ 2.5GB; `data` adds ≈ 5–6GB). `sf-main` (orchestrator, pinned to a `main`
+  (measured: `core` ≈ 3.3GB; `obs` adds ≈ 2.5GB; `data` adds ≈ 5–6GB; `core,obs-lite,data` ≈ 10.9GB at Gate 2).
+  Over the budget, so **exclusive slots** (no other cluster or heavy Docker work): `core,obs-lite,data,rt` ≈ 12.6GB
+  (namespace `flink` 1.5GB) and `core,obs-lite,data,batch` ≈ 12.4GB (Airflow 0.85GB), measured 2026-10-10.
+  `sf-main` (orchestrator, pinned to a `main`
   SHA) runs only during gates. Lane clusters hold **slots** assigned by the orchestrator; ask before `make up`,
   run `make down` when your cluster work is done.
 - Measurement windows (soak, perf baseline, page timing, gate runs) are announced by the orchestrator. During one,
