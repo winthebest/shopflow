@@ -76,6 +76,7 @@ Default-deny per namespace; these flows must be allowed. Owners add rows when th
 | `flink` operator | `flink` JobManager; kube-apiserver | 8081; 443/6443 | job lifecycle | sf-data |
 | `observability` Grafana | `shop` shop-db | 5432 | KPI datasource (`grafana_serving`, read-only) | sf-data |
 | `lakehouse` polaris-db-copy, trino-pg-copy Jobs | kube-apiserver | 443/6443 | copy `shop/shop-db-{polaris,trino-pg}` into `lakehouse` (gitops.md §5) | sf-data |
+| `shop` fulfillment-worker copy Job | kube-apiserver | 443/6443 | copy the `fulfillment-worker` KafkaUser Secret and the cluster CA from `kafka` into `shop` (gitops.md §5) | sf-app |
 
 ## Trino catalogs and identities (Phase 4 onwards)
 
