@@ -88,6 +88,10 @@ NetworkPolicy with its embedded controller (kube-router); on EKS the VPC CNI net
     its rule sets shortly after start, so an immediate connection to the internet succeeded. Only stealing data in
     the first seconds of a pod's life gets past this. The EKS network policy agent has a strict mode that closes
     the window; revisit in Phase 6.
+  - The reverse also happens on k3s: an allowed connection from a brand-new pod can be rejected by the target. The
+    policy controller adds the new pod's IP to the target's ingress allow-list (ipset) a few seconds late. Seen at
+    Gate 2: polaris-setup rejected by Polaris at start. **Rule: every short-lived client (Jobs, hooks, init
+    containers) retries its first connections for about 60s** instead of failing on the first refusal.
   - Proof: `scripts/platform-netpol-probe.sh` runs labelled probe pods (positive and negative, waiting for the
     policy sync) and exits non-zero on any mismatch.
   - Policies for namespaces of later profiles must land with or before those profiles.

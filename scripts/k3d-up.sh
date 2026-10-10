@@ -163,18 +163,21 @@ apply_root_apps() {
   KUBE_CONTEXT="$KUBE_CONTEXT" "$ROOT_APPS" --overlay local --revision "$GIT_REVISION" --profiles "$PROFILES"
 }
 
-# name, sync, health, and whether the app has synced TARGET_SHA or a later commit (stale status from the
-# previous revision must not count as ready; a branch that moves on while we wait must not cause a timeout).
+# name, sync, health, phase of the last sync operation, and whether the app has synced TARGET_SHA or a later commit
+# (stale status from the previous revision must not count as ready; a branch that moves on while we wait must not
+# cause a timeout). An app reports Synced/Healthy while its PostSync hooks (e.g. shop-seed) still run, so the
+# operation phase must be Succeeded too.
 app_table() {
-  local name sync health revisions rev state
-  while IFS=$'\t' read -r name sync health revisions; do
+  local name sync health phase revisions rev state
+  while IFS=$'\t' read -r name sync health phase revisions; do
     state="old-revision"
     for rev in ${revisions//,/ }; do
       if [[ "$rev" == "$TARGET_SHA" ]] || is_descendant "$rev"; then state="current"; break; fi
     done
-    printf '%s\t%s\t%s\t%s\n' "$name" "$sync" "$health" "$state"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$name" "$sync" "$health" "$phase" "$state"
   done < <(kc -n argocd get applications.argoproj.io -o json | jq -r '
     .items[] | [.metadata.name, (.status.sync.status // "Unknown"), (.status.health.status // "Unknown"),
+      (.status.operationState.phase // "None"),
       ([.status.sync.revision // empty] + (.status.sync.revisions // []) | join(","))] | @tsv')
 }
 
@@ -188,11 +191,12 @@ is_descendant() {
 
 wait_for_apps() {
   [[ "$WAIT_TIMEOUT" -gt 0 ]] || return 0
-  log "waiting up to ${WAIT_TIMEOUT}s for all Applications to be Synced + Healthy at ${TARGET_SHA:0:12}"
+  log "waiting up to ${WAIT_TIMEOUT}s for all Applications to be Synced + Healthy at ${TARGET_SHA:0:12}, hooks done"
   local deadline=$((SECONDS + WAIT_TIMEOUT)) table pending
   while :; do
     table="$(app_table)"
-    pending="$(awk -F'\t' '$2 != "Synced" || $3 != "Healthy" || $4 != "current"' <<<"$table")"
+    pending="$(awk -F'\t' '$2 != "Synced" || $3 != "Healthy" || ($4 != "Succeeded" && $4 != "None") || $5 != "current"' \
+      <<<"$table")"
     if [[ -n "$table" && -z "$pending" ]]; then
       column -t <<<"$table" >&2
       return 0
@@ -201,7 +205,7 @@ wait_for_apps() {
       column -t <<<"$table" >&2
       die "timed out; inspect with: make status CLUSTER=$CLUSTER"
     fi
-    log "pending: $(awk -F'\t' '{printf "%s(%s/%s/%s) ", $1, $2, $3, $4}' <<<"$pending")"
+    log "pending: $(awk -F'\t' '{printf "%s(%s/%s/%s/%s) ", $1, $2, $3, $4, $5}' <<<"$pending")"
     sleep 15
   done
 }
