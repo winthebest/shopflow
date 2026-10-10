@@ -28,7 +28,11 @@ Chaos Mesh exists in the cluster only during the game day ([ADR 0303](../adr/030
 
 1. `make sre-chaos-off CLUSTER=…`: deletes root-chaos, every experiment (while the controller still runs), then
    the Chaos Mesh Application. It fails unless no chaos CRD, daemon pod or webhook is left.
-2. Export the graphs/numbers the postmortem needs before the cluster goes away.
+2. Export the numbers the postmortem needs before the cluster goes away:
+   `make sre-gameday-evidence SRE_GATE_CONTEXT=k3d-<cluster> FROM=<start, RFC 3339 or Unix> [TO=…]` writes
+   `out/gameday-<UTC>/alerts.tsv` (first/last firing time of every alert, UTC+7) and one CSV per key series
+   (checkout SLIs, error budgets, payments attempts and circuit, CDC staleness, WAL retained and growth, worker
+   replicas). Add Grafana screenshots where a graph tells it better.
 3. Write the postmortem; open an action item for every fix; re-run the scenario after the fix and fill the
    before/after table.
 
