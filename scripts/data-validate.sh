@@ -209,6 +209,58 @@ SH
   echo "cdc-epoch.sh new: Secret + KafkaTopic valid (fake kubectl)"
 }
 
+# `cdc-epoch.sh ensure` (make up) keeps the epoch of a running cluster and starts one only without the Secret; `wait`
+# must not record a snapshot from Debezium's metric alone while bronze has no snapshot rows of the epoch.
+check_cdc_epoch_ensure_wait() {
+  local fake out
+  fake="$(mktemp -d)"
+  cat > "$fake/kubectl" << 'SH'
+#!/usr/bin/env bash
+echo "$*" >> "$FAKE_DIR/calls.log"
+case "$*" in
+  *"get secret cdc-epoch --ignore-not-found"*) [[ -z "${FAKE_EPOCH:-}" ]] || printf '%s' "$FAKE_EPOCH" | base64 ;;
+  *"create namespace"*) printf 'apiVersion: v1\nkind: Namespace\nmetadata:\n  name: kafka\n' ;;
+  *"apply -f -"*) cat > /dev/null ;;
+esac
+SH
+  chmod +x "$fake/kubectl"
+  local run=(env FAKE_DIR="$fake" PATH="$fake:$PATH" CLUSTER=sf-ci scripts/cdc-epoch.sh)
+  # Re-running make up: the Secret holds an epoch, so ensure prints it and changes nothing.
+  out="$(FAKE_EPOCH=1111111111 "${run[@]}" ensure --timeout 5)"
+  [[ "$out" == 1111111111 ]] || { echo "FAIL cdc-epoch.sh ensure did not keep the current epoch (got '$out')" >&2; return 1; }
+  if grep -qE ' (apply|delete) ' "$fake/calls.log"; then
+    echo "FAIL cdc-epoch.sh ensure changed a cluster that already has an epoch" >&2
+    return 1
+  fi
+  # A fresh cluster: no Secret, so ensure starts the epoch as new does.
+  : > "$fake/calls.log"
+  out="$("${run[@]}" ensure --epoch 1222222222 --timeout 5)"
+  if ! { [[ "$out" == 1222222222 ]] && grep -q 'apply -f -' "$fake/calls.log"; }; then
+    echo "FAIL cdc-epoch.sh ensure did not start an epoch on a fresh cluster" >&2
+    return 1
+  fi
+  # wait: Debezium reports a completed snapshot (a task older than the epoch) but bronze has no rows of it, so wait
+  # must time out without setting snapshot_completed_at; with bronze rows it records the snapshot.
+  # shellcheck disable=SC2016 # expanded by cdc-epoch.sh when it runs the seam commands
+  local seams=(CDC_EPOCH_PSQL='cat >> "$FAKE_DIR/sql.log"; echo 1'
+    CDC_EPOCH_METRICS='echo "debezium_metrics_snapshotcompleted{context=\"snapshot\",name=\"shop\",plugin=\"postgres\"} 1.0"')
+  if env "${seams[@]}" CDC_EPOCH_BRONZE='echo 0' "${run[@]}" wait --epoch 1333333333 --timeout 6 2> /dev/null; then
+    echo "FAIL cdc-epoch.sh wait accepted the Debezium metric without bronze rows of the epoch" >&2
+    return 1
+  fi
+  if grep -q snapshot_completed_at "$fake/sql.log"; then
+    echo "FAIL cdc-epoch.sh wait set snapshot_completed_at for an epoch without bronze rows" >&2
+    return 1
+  fi
+  if ! { env "${seams[@]}" CDC_EPOCH_BRONZE='echo 1' "${run[@]}" wait --epoch 1333333333 --timeout 30 2> /dev/null \
+    && grep -q 'SET snapshot_completed_at' "$fake/sql.log"; }; then
+    echo "FAIL cdc-epoch.sh wait did not record a snapshot that bronze shows" >&2
+    return 1
+  fi
+  rm -rf "$fake"
+  echo "cdc-epoch.sh ensure keeps a running cluster's epoch; wait needs bronze rows (fake kubectl)"
+}
+
 # `data-secrets.sh --aws-json` (input of scripts/aws-seed-params.sh): the Trino Secrets with the names and keys of the
 # local SOPS files, the Trino user group complete, and password.db holding bcrypt hashes of exactly those passwords.
 # Values stay in this process: never printed, never on a command line.
@@ -238,6 +290,7 @@ check_aws_json() {
 generate_schemas
 check_secrets
 check_cdc_epoch_new
+check_cdc_epoch_ensure_wait
 check_aws_json
 RENDER_DIR="$(mktemp -d)"
 trap 'rm -rf "$RENDER_DIR"' EXIT

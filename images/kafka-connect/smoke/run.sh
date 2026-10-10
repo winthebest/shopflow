@@ -150,12 +150,14 @@ wait_running shop-postgres
 connect_api PUT /connectors/iceberg-sink/config "$SMOKE_DIR/connectors/iceberg-sink.json" > /dev/null
 wait_running iceberg-sink
 
-echo "== scripts/cdc-epoch.sh wait (meta.cdc_epochs + Debezium SnapshotCompleted from the Connect metrics)"
-# Test seam of cdc-epoch.sh: SQL as shop_app and the metrics endpoint through docker compose instead of kubectl.
+echo "== scripts/cdc-epoch.sh wait (meta.cdc_epochs, Debezium SnapshotCompleted, snapshot rows of the epoch in bronze)"
+# Test seam of cdc-epoch.sh: SQL as shop_app, the metrics endpoint and the bronze read (PyIceberg as the read-only
+# principal, verify-bronze.py) through docker compose instead of kubectl and Trino.
 # shellcheck disable=SC2016 # expanded by cdc-epoch.sh when it runs the command, not here
 CDC_EPOCH_PSQL='docker compose exec -T -e PGPASSWORD="$SHOP_APP_PASSWORD" postgres psql -h 127.0.0.1 -U shop_app -d shop -v ON_ERROR_STOP=1 -qAt' \
   CDC_EPOCH_METRICS='docker compose exec -T connect curl -fsS http://localhost:9404/metrics' \
-  "$REPO/scripts/cdc-epoch.sh" wait --epoch "$CDC_EPOCH" --timeout 180
+  CDC_EPOCH_BRONZE='docker compose run --rm -T tools sh -c "pip install --quiet --root-user-action=ignore \"pyiceberg[pyarrow]==0.12.0\" \"pyarrow==25.0.1\" && python -I /smoke/verify-bronze.py --snapshot-rows $epoch"' \
+  "$REPO/scripts/cdc-epoch.sh" wait --epoch "$CDC_EPOCH" --timeout 300
 [[ "$(psql_shop -c "SELECT snapshot_completed_at IS NOT NULL FROM meta.cdc_epochs WHERE epoch = $CDC_EPOCH")" == t ]] \
   || { echo "meta.cdc_epochs: epoch $CDC_EPOCH has no snapshot_completed_at" >&2; exit 1; }
 echo "meta.cdc_epochs: epoch $CDC_EPOCH snapshot completed"

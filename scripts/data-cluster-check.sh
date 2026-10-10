@@ -47,7 +47,10 @@ trino_ro() {
 PROM_PORT="" PF_PID="" PF_LOG="$(mktemp)"
 trap 'if [[ -n "$PF_PID" ]]; then kill "$PF_PID" 2> /dev/null || true; fi; rm -f "$PF_LOG"' EXIT
 prom_forward() {
-  kc -n observability port-forward --address 127.0.0.1 svc/kps-prometheus :9090 > "$PF_LOG" 2>&1 &
+  # kubectl itself, not the kc function: `kc ... &` backgrounds a subshell, $! is that subshell, and killing it on
+  # exit left the kubectl child running (one orphaned port-forward per run).
+  kubectl --context "$KUBE_CONTEXT" -n observability port-forward --address 127.0.0.1 svc/kps-prometheus :9090 \
+    > "$PF_LOG" 2>&1 &
   PF_PID=$!
   for _ in $(seq 1 20); do
     PROM_PORT="$(sed -n 's/^Forwarding from 127\.0\.0\.1:\([0-9]*\) .*/\1/p' "$PF_LOG" | head -1)"
@@ -106,6 +109,10 @@ else
 fi
 
 queries=('freshness_probe_success{table="bronze.heartbeat"}' 'cdc:bronze_heartbeat_stale:minute')
+# The cdc SLI records nothing during its warm-up (deploy/platform/slo/base/cdc-sli.prometheusrule.yaml): the first
+# 15 minutes after namespace lakehouse is created or the exporter starts. No samples then is a SKIP, not a FAIL.
+warmup='(time() - max(process_start_time_seconds{job="freshness-exporter"}) < 900)
+  or (time() - max(kube_namespace_created{namespace="lakehouse"}) < 900)'
 if ! prom_forward; then
   for query in "${queries[@]}"; do result FAIL "Prometheus: $query not checked (Prometheus not reachable)"; done
   queries=()
@@ -116,6 +123,8 @@ for query in ${queries[@]+"${queries[@]}"}; do
     result FAIL "Prometheus: query $query failed"
   elif ((series > 0)); then
     result PASS "Prometheus: $query has $series series"
+  elif [[ "$query" == cdc:* ]] && (($(prom_series "$warmup" || echo 0) > 0)); then
+    echo "SKIP Prometheus: no samples of $query yet (SLI warm-up: lakehouse or the exporter is under 15 minutes old)"
   else
     result FAIL "Prometheus: no samples of $query"
   fi
