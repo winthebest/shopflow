@@ -12,8 +12,12 @@ from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
 import orders.payments_client as payments_client
 from orders.db import async_dsn
+from orders.main import create_app
 from orders.payments_client import ChargeOutcome, PaymentsClient
 from orders.resilience import BreakerConfig, CircuitState, RetryPolicy
+from orders.settings import Settings
+
+UNREACHABLE_DB = "postgresql://shop_app:x@127.0.0.1:9/shop"  # create_app needs one; these tests never query it
 
 
 async def no_sleep(seconds: float) -> None:
@@ -129,7 +133,7 @@ async def test_slow_attempt_is_cut_and_retried_within_the_deadline():
     start = time.monotonic()
     outcome = await charge_with(handler, policy=RetryPolicy(attempt_timeout_s=0.1))
     assert outcome == ChargeOutcome("succeeded", charge_id="c-3")
-    assert calls[1] - start == pytest.approx(0.1, abs=0.05)
+    assert 0.09 < calls[1] - start < 0.5  # cut at the attempt timeout, not after the 1s hang
 
 
 async def test_deadline_bounds_all_attempts_together(monkeypatch):
@@ -141,10 +145,12 @@ async def test_deadline_bounds_all_attempts_together(monkeypatch):
 
     handler = counting(handler)
     start = time.monotonic()
-    outcome = await charge_with(handler, policy=RetryPolicy(attempt_timeout_s=0.1, min_attempt_s=0.05))
+    policy = RetryPolicy(attempt_timeout_s=0.2, min_attempt_s=0.02, backoff_base_s=0.001)  # backoff out of the way
+    outcome = await charge_with(handler, policy=policy)
     assert outcome == ChargeOutcome("error", error="timeout")
-    assert time.monotonic() - start < 0.3  # never beyond the overall deadline
-    assert handler.calls == 2  # 0.1 + 0.1, then less than min_attempt_s is left for a third
+    # 0.2, then the second attempt is trimmed to the ~0.05 left (untrimmed it would run 0.2 more: 0.4 in total)
+    assert time.monotonic() - start < 0.32
+    assert handler.calls == 2
 
 
 async def test_uniformly_slow_payments_below_the_attempt_timeout_still_succeeds():
@@ -237,30 +243,28 @@ async def serve_payments(hang_first_charge: bool, peers: list[tuple[str, int]]):
     return await asyncio.start_server(handle, "127.0.0.1", 0)
 
 
-@pytest.mark.parametrize("fresh_retries", [True, False], ids=["retry-client-without-keepalive", "pooled-retries"])
-async def test_retry_after_a_timeout_opens_a_new_connection(fresh_retries):
-    """kube-proxy picks a pod per TCP connection: the retry must not reuse an idle pooled connection, which may lead
-    to the pod that just timed out. Control case: retrying over the pool does reuse one."""
+@pytest.mark.parametrize("wired_retries", [True, False], ids=["retry-client-of-create_app", "pooled-retries"])
+async def test_retry_after_a_timeout_opens_a_new_connection(wired_retries):
+    """kube-proxy picks a pod per TCP connection: the retry must not reuse an idle connection, which may lead to the
+    pod that just timed out. Uses create_app's own clients, both warmed first, so keep-alive on the retry client would
+    be caught too. Control case: retrying over the pool does reuse a warm connection."""
     peers: list[tuple[str, int]] = []
     server = await serve_payments(hang_first_charge=True, peers=peers)
     url = f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}"
-    async with (
-        server,
-        httpx.AsyncClient(base_url=url, limits=httpx.Limits(keepalive_expiry=30)) as pooled,
-        httpx.AsyncClient(base_url=url, limits=httpx.Limits(max_keepalive_connections=0)) as fresh,
-    ):
-        await asyncio.gather(pooled.get("/warm"), pooled.get("/warm"))  # two idle keep-alive connections
+    app = create_app(Settings(database_url=UNREACHABLE_DB, payments_url=url, payments_attempt_timeout_ms=200))
+    async with server, app.router.lifespan_context(app):
+        wired: PaymentsClient = app.state.payments
+        await asyncio.gather(wired.http.get("/warm"), wired.http.get("/warm"))  # two idle pooled connections
+        await wired.retry_http.get("/warm")  # would stay idle and be reused if the retry client kept connections
         warm = {port for path, port in peers if path == "/warm"}
-        assert len(warm) == 2
-        client = PaymentsClient(
-            pooled, RetryPolicy(attempt_timeout_s=0.2), retry_http=fresh if fresh_retries else None, sleep=no_sleep
-        )
+        assert len(warm) == 3
+        client = wired if wired_retries else PaymentsClient(wired.http, wired.policy, sleep=no_sleep)
         outcome = await client.charge(1, Decimal("9.90"), client.admit())
 
     assert outcome == ChargeOutcome("succeeded", charge_id="c-new")
     first, retry = [port for path, port in peers if path == "/charges"]
     assert first in warm  # the first attempt rides the pool
-    assert (retry not in warm) is fresh_retries
+    assert (retry not in warm) is wired_retries
 
 
 @pytest.mark.parametrize(

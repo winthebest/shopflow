@@ -73,7 +73,9 @@ class PaymentsClient:
             "orders.payments.attempts", unit="{attempt}", description="Calls to payments, by outcome and attempt"
         )
         self._rejected = meter.create_counter(
-            "orders.payments.circuit.rejected", unit="{call}", description="Calls refused by the open circuit"
+            "orders.payments.circuit.rejected",
+            unit="{checkout}",
+            description="Checkouts refused with 503 because the circuit is open",
         )
         self._transitions = meter.create_counter(
             "orders.payments.circuit.transitions", unit="{transition}", description="Circuit state changes"
@@ -85,7 +87,8 @@ class PaymentsClient:
         )
 
     def admit(self) -> Permit | None:
-        """Leave for the first attempt, taken before the order is created; None while the circuit is open."""
+        """Leave for the first attempt, taken before the order is created; None (the checkout gets a 503) while the
+        circuit is open."""
         permit = self.breaker.allow()
         if permit is None:
             self._rejected.add(1)
@@ -114,7 +117,9 @@ class PaymentsClient:
             if deadline - self._clock() - delay < self.policy.min_attempt_s:
                 return result.outcome
             await self._sleep(delay)
-            next_permit = self.admit()
+            if deadline - self._clock() < self.policy.min_attempt_s:  # the loop was slower than the backoff
+                return result.outcome
+            next_permit = self.breaker.allow()
             if next_permit is None:  # opened meanwhile: stop retrying, keep the last answer
                 return result.outcome
             permit, attempt = next_permit, attempt + 1
@@ -144,4 +149,4 @@ class PaymentsClient:
         log.log(level, "payments circuit %s", states["circuit_to"], extra=states)
 
     def _observe_state(self, _options: metrics.CallbackOptions) -> Iterable[metrics.Observation]:
-        yield metrics.Observation(int(self.breaker.state))
+        yield metrics.Observation(int(self.breaker.observed_state()))  # exporter thread: must not move the breaker

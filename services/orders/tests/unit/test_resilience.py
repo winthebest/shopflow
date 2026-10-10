@@ -82,6 +82,14 @@ def test_half_open_after_open_s_lets_exactly_one_probe_through():
     assert cb.allow() is None  # everyone else waits for the probe
 
 
+def test_observed_state_reports_half_open_without_moving_the_breaker():
+    clock, transitions = Clock(), []
+    cb = opened(clock, transitions)
+    clock.now += 5
+    assert cb.observed_state() is CircuitState.HALF_OPEN  # what the gauge reports, from the exporter thread
+    assert transitions == [(CircuitState.CLOSED, CircuitState.OPEN)]  # no transition logged or counted
+
+
 def test_successful_probe_closes_with_a_fresh_window():
     clock, transitions = Clock(), []
     cb = opened(clock, transitions)

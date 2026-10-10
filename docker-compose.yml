@@ -9,9 +9,10 @@ x-service: &service
   stop_grace_period: 25s     # services drain in-flight requests for up to 20s on SIGTERM
   environment: &service-env
     LOG_LEVEL: ${LOG_LEVEL:-INFO}
-    # Trace ids in logs without a collector: SDK on, exporter off (Phase 3 sets the OTLP endpoint instead).
+    # Trace ids in logs without a collector: SDK on, exporters off (Phase 3 sets the OTLP endpoint instead).
     OTEL_SDK_DISABLED: "false"
     OTEL_TRACES_EXPORTER: none
+    OTEL_METRICS_EXPORTER: none
     OTEL_SEMCONV_STABILITY_OPT_IN: http
 
 x-db-env: &db-env

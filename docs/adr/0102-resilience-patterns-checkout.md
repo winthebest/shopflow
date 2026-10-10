@@ -35,8 +35,8 @@ after a timeout (whose first attempt may have succeeded) could charge the same o
    gateway never retries `POST /checkout`: it is not idempotent and would create duplicate orders.
 6. **Metrics** (OTel, OTLP to the collector like the traces; `shopflow_common.telemetry` now installs a
    MeterProvider), low cardinality, never an order id: `orders.payments.attempts{outcome,attempt}`,
-   `orders.payments.circuit.rejected`, `orders.payments.circuit.transitions{to}`, `orders.payments.circuit.state`
-   (0 closed, 1 half-open, 2 open, per pod). A WARNING log line marks every opening. Every attempt is an httpx client
+   `orders.payments.circuit.rejected` (checkouts refused with 503), `orders.payments.circuit.transitions{to}`,
+   `orders.payments.circuit.state` (0 closed, 1 half-open, 2 open, per pod). A WARNING log line marks every opening. Every attempt is an httpx client
    span in the trace.
 
 All thresholds are environment settings of orders (`PAYMENTS_ATTEMPTS`, `PAYMENTS_ATTEMPT_TIMEOUT_MS`,
@@ -69,7 +69,10 @@ after ~20 attempts, within 1–2s.
   and re-opens it; other checkouts are refused while it runs).
   **Availability burn does not drop**: those checkouts are still 5xx. No client-side pattern can make a payments
   that never answers in time succeed.
-- **gd1b** (1 of 2 pods +800ms): checkout errors fall from ~50% (one 800ms call) to ~25%; the circuit stays closed.
+- **gd1b** (`chaos/gd1b-payments-partial.yaml`, 1 of 2 pods +800ms): checkout errors fall from ~50% (one 800ms
+  call) to ~25%; the circuit stays closed. Both figures assume each first attempt reaches a random pod; the pool
+  favours the healthy one (connections to the slow pod are closed when they time out, the others are reused), so
+  the measured first-attempt failure rate, before and after, will likely be lower. Compare measured numbers.
 
 ## Alternatives considered
 

@@ -49,7 +49,10 @@ def setup_telemetry(app: FastAPI, service: str) -> TracerProvider | None:
 
     readers = []
     if os.environ.get("OTEL_METRICS_EXPORTER", "otlp").strip().lower() != "none":
-        interval = float(os.environ.get("OTEL_METRIC_EXPORT_INTERVAL", METRIC_EXPORT_INTERVAL_MS))
+        try:
+            interval = float(os.environ.get("OTEL_METRIC_EXPORT_INTERVAL", METRIC_EXPORT_INTERVAL_MS))
+        except ValueError:  # like the SDK: a malformed value means the default, not a crash at startup
+            interval = METRIC_EXPORT_INTERVAL_MS
         readers.append(PeriodicExportingMetricReader(OTLPMetricExporter(), export_interval_millis=interval))
     metrics.set_meter_provider(MeterProvider(resource=resource, metric_readers=readers))
 

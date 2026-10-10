@@ -56,6 +56,7 @@ class CircuitBreaker:
         self._on_transition = on_transition
         self._state = CircuitState.CLOSED
         self._results: deque[tuple[float, bool]] = deque()  # (time, failed) of attempts while closed
+        self._failures = 0  # failed entries in _results
         self._opened_at = 0.0
         self._probe_running = False
 
@@ -64,6 +65,13 @@ class CircuitBreaker:
         if self._state is CircuitState.OPEN and self._clock() - self._opened_at >= self.config.open_s:
             self._move(CircuitState.HALF_OPEN)
         return self._state
+
+    def observed_state(self) -> CircuitState:
+        """The state without moving the breaker: safe from another thread (the metrics exporter)."""
+        state, opened_at = self._state, self._opened_at
+        if state is CircuitState.OPEN and self._clock() - opened_at >= self.config.open_s:
+            return CircuitState.HALF_OPEN
+        return state
 
     def allow(self) -> Permit | None:
         """A permit for one call, or None while the breaker refuses calls."""
@@ -87,10 +95,11 @@ class CircuitBreaker:
             return  # admitted before the breaker opened: the decision is already made
         now = self._clock()
         self._results.append((now, failed))
+        self._failures += failed
         while self._results and self._results[0][0] <= now - self.config.window_s:
-            self._results.popleft()
-        failures = sum(failed for _, failed in self._results)
-        if len(self._results) >= self.config.min_calls and failures >= self.config.failure_ratio * len(self._results):
+            self._failures -= self._results.popleft()[1]
+        calls = len(self._results)
+        if calls >= self.config.min_calls and self._failures >= self.config.failure_ratio * calls:
             self._move(CircuitState.OPEN)
 
     def release(self, permit: Permit) -> None:
@@ -106,11 +115,12 @@ class CircuitBreaker:
         return max(1, math.ceil(remaining))
 
     def _move(self, new: CircuitState) -> None:
-        old, self._state = self._state, new
         if new is CircuitState.OPEN:
-            self._opened_at = self._clock()
+            self._opened_at = self._clock()  # before the state: a reader never sees OPEN with a stale opening time
         if new is CircuitState.CLOSED:
             self._results.clear()
+            self._failures = 0
+        old, self._state = self._state, new
         if self._on_transition is not None and new is not old:
             self._on_transition(old, new)
 
