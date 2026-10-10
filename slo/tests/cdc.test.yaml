@@ -38,6 +38,50 @@ tests:
         eval_time: 100m
         exp_samples: [{labels: 'cdc:bronze_heartbeat_stale:minute', value: 1}]
 
+  # A fresh `make up`: namespace lakehouse is Active minutes before the exporter process starts and reports
+  # process_start_time_seconds, so the exporter's own start-up guard cannot cover that gap.
+  - name: no bad minutes and no page while the data profile is still coming up
+    interval: 1m
+    input_series:
+      - series: 'kube_namespace_status_phase{namespace="lakehouse",phase="Active"}'
+        values: '1x120'
+      - series: 'kube_namespace_created{namespace="lakehouse"}'
+        values: '0x120'
+      # The exporter process starts at minute 4; its first heartbeat measurement arrives at minute 6.
+      - series: 'process_start_time_seconds{job="freshness-exporter"}'
+        values: '_x4 240x116'
+      - series: 'data_freshness_seconds{job="freshness-exporter",table="bronze.heartbeat"}'
+        values: '_x6 20x114'
+      - series: 'freshness_probe_success{job="freshness-exporter",table="bronze.heartbeat"}'
+        values: '_x6 1x114'
+    promql_expr_test:
+      - {expr: 'cdc:bronze_heartbeat_stale:minute', eval_time: 2m, exp_samples: []}
+      - {expr: 'cdc:bronze_heartbeat_stale:minute', eval_time: 10m, exp_samples: []}
+      - expr: cdc:bronze_heartbeat_stale:minute
+        eval_time: 25m
+        exp_samples: [{labels: 'cdc:bronze_heartbeat_stale:minute', value: 0}]
+    alert_rule_test:
+      - {eval_time: 3m, alertname: CdcLagBurn, exp_alerts: []}
+      - {eval_time: 5m, alertname: CdcLagBurn, exp_alerts: []}
+      - {eval_time: 8m, alertname: CdcLagBurn, exp_alerts: []}
+      - {eval_time: 30m, alertname: CdcLagBurn, exp_alerts: []}
+      - {eval_time: 15m, alertname: CdcFreshnessProbeDown, exp_alerts: []}
+      - {eval_time: 30m, alertname: CdcFreshnessProbeDown, exp_alerts: []}
+
+  # The namespace guard only covers start-up: an exporter that never comes up counts as bad after 15 minutes.
+  - name: exporter never starts - bad once namespace lakehouse is 15 minutes old
+    interval: 1m
+    input_series:
+      - series: 'kube_namespace_status_phase{namespace="lakehouse",phase="Active"}'
+        values: '1x60'
+      - series: 'kube_namespace_created{namespace="lakehouse"}'
+        values: '0x60'
+    promql_expr_test:
+      - {expr: 'cdc:bronze_heartbeat_stale:minute', eval_time: 14m, exp_samples: []}
+      - expr: cdc:bronze_heartbeat_stale:minute
+        eval_time: 16m
+        exp_samples: [{labels: 'cdc:bronze_heartbeat_stale:minute', value: 1}]
+
   - name: no SLI samples and no alerts on a cluster without the data profile
     interval: 1m
     input_series:

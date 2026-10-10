@@ -4,8 +4,10 @@
 #   bad   bronze.heartbeat older than 5 minutes (data_freshness_seconds >= 300), or the probe failed
 #         (freshness_probe_success == 0; a failed probe removes data_freshness_seconds), or the exporter is
 #         absent while the data profile is deployed. A blind SLI never looks green.
-#   none  during the first 15 minutes after the exporter (re)starts (the pipeline is still coming up on a fresh
-#         `make up`), and on clusters without the data profile (namespace lakehouse absent).
+#   none  during the first 15 minutes after namespace lakehouse was created and the first 15 minutes after the
+#         exporter (re)starts (the pipeline is still coming up), and on clusters without the data profile (namespace
+#         lakehouse absent). Both guards are needed: on a fresh `make up` the namespace is Active minutes before the
+#         exporter process exists, and without process_start_time_seconds the exporter guard excludes nothing.
 # bronze.heartbeat changes every 10s (Debezium heartbeat.action.query), so an idle shop still yields good minutes.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
@@ -30,6 +32,7 @@ spec:
               or on() vector(1)
             )
             unless on() (time() - max(process_start_time_seconds{job="freshness-exporter"}) < 900)
+            unless on() (time() - max(kube_namespace_created{namespace="lakehouse"}) < 900)
             and on() (max(kube_namespace_status_phase{namespace="lakehouse", phase="Active"}) == 1)
 
     - name: shopflow-cdc-alerts
@@ -42,6 +45,7 @@ spec:
               or on() absent(freshness_probe_success{table="bronze.heartbeat"})
             )
             unless on() (time() - max(process_start_time_seconds{job="freshness-exporter"}) < 900)
+            unless on() (time() - max(kube_namespace_created{namespace="lakehouse"}) < 900)
             and on() (max(kube_namespace_status_phase{namespace="lakehouse", phase="Active"}) == 1)
           for: 10m
           labels:
