@@ -31,7 +31,9 @@ epoch.
     fail the PR.
 - **Semantics:**
   - Only inserts count (`_op = 'c'`; snapshot rows `r` never do).
-  - Event time is `created_at` with a 30-second watermark; late rows are dropped by the window TVF.
+  - Event time is `created_at` with a 30-second watermark; late rows are dropped by the window TVF. A partition
+    without records for 1 minute is idle (`scan.watermark.idle-timeout`) and does not hold the watermark back:
+    `shop.public.orders` has 6 partitions (Phase 7 fulfillment worker) and a quiet shop leaves most of them empty.
   - 1-minute tumbling windows over a union of order and payment inserts.
   - The JDBC sink upserts on `window_start`, so replays rewrite the same rows.
 - **Epochs:** the Kafka consumer group carries the CDC epoch (`flink-kpi-minute-<epoch>`, in the SQL). The

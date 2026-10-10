@@ -1,4 +1,8 @@
-# Topics Debezium writes to. Partitions: 1 per table keeps per-row ordering trivially (one task, low volume).
+# Topics Debezium writes to. Partitions: 1 per table (one task, low volume), except shop.public.orders: 6, so the
+# fulfillment worker (Phase 7) can scale to 6 consumers with KEDA. Records are keyed by the primary key, so the
+# changes of one order stay in order within its partition; bronze/silver order by _lsn, not by partition.
+# Partitions can only grow; on an existing Kafka, growing them moves keys to new partitions (a fresh Kafka per
+# `make up` / AWS session never sees that).
 # Retention 7d with delete (not compact): the topics carry change history; bronze is the long-term copy.
 # The Iceberg control topic is per CDC epoch, so it is created by the epoch tooling, not here (docs/adr/0406).
 # replicas is omitted: the broker's default.replication.factor (set per overlay) applies.
@@ -37,7 +41,7 @@ metadata:
     strimzi.io/cluster: shopflow
 spec:
   topicName: shop.public.orders
-  partitions: 1
+  partitions: 6
   config:
     cleanup.policy: delete
     retention.ms: 604800000

@@ -3,6 +3,8 @@
 --   payment_failure_rate:  failed (declined or error) / all payment inserts, by payment created_at
 -- Only inserts (_op = 'c') count: snapshot rows (_op = 'r') never do, so a re-snapshot into a new CDC epoch does not
 -- make the KPIs jump. Event time is created_at with a 30 s watermark; rows later than that are dropped (window TVF).
+-- A partition without records for 1 minute is marked idle (scan.watermark.idle-timeout), so it does not hold the
+-- watermark back: shop.public.orders has 6 partitions and a quiet shop leaves most of them empty.
 -- The sink upserts by window_start, so a replay rewrites the same rows.
 -- Run by io.shopflow.flink.SqlRunner: placeholders come from the environment, statements end with ';' at line end.
 
@@ -25,6 +27,7 @@ CREATE TABLE orders_cdc (
     'properties.ssl.truststore.location' = '/etc/kafka-ca/ca.crt',
     'scan.startup.mode' = 'group-offsets',
     'properties.auto.offset.reset' = 'earliest',
+    'scan.watermark.idle-timeout' = '1 min',
     'format' = 'json',
     'json.fail-on-missing-field' = 'false',
     'json.ignore-parse-errors' = 'false'
@@ -49,6 +52,7 @@ CREATE TABLE payments_cdc (
     'properties.ssl.truststore.location' = '/etc/kafka-ca/ca.crt',
     'scan.startup.mode' = 'group-offsets',
     'properties.auto.offset.reset' = 'earliest',
+    'scan.watermark.idle-timeout' = '1 min',
     'format' = 'json',
     'json.fail-on-missing-field' = 'false',
     'json.ignore-parse-errors' = 'false'
