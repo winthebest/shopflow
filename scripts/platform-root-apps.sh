@@ -60,6 +60,13 @@ validate_profiles() {
   if has_profile data && ! has_profile obs && ! has_profile obs-lite; then
     die "profile data needs obs or obs-lite in the same PROFILES (e.g. PROFILES=core,obs-lite,data)"
   fi
+  # drill (local restore drill) deploys its own SeaweedFS and the backup plugin, which data also deploys: one of them.
+  if has_profile drill && has_profile data; then
+    die "PROFILES cannot contain both drill and data; pick one (drill = core + backups only)"
+  fi
+  if has_profile drill && ! has_profile core; then
+    die "profile drill needs core in the same PROFILES (e.g. PROFILES=core,drill)"
+  fi
   # rt (Flink), batch (Airflow), bi (Metabase) and ops (fulfillment-worker) read Kafka, Trino or the lake that data
   # deploys.
   local dependent
@@ -96,12 +103,12 @@ profile_apps() {
   kubectl kustomize "$ROOT_DIR/$PROFILES_DIR/$1" | yq -N 'select(.kind == "Application") | .metadata.name'
 }
 
-# obs and obs-lite are exclusive. When PROFILES asks for one and the cluster still runs the other, delete the old
-# root app first (non-cascading, so it cannot re-create anything), then the child apps only it had (their own
+# obs/obs-lite and drill/data are exclusive. When PROFILES asks for one and the cluster still runs the other, delete
+# the old root app first (non-cascading, so it cannot re-create anything), then the child apps only it had (their own
 # finalizers remove their resources). Apps both profiles share stay running and are adopted by the new root app.
 remove_excluded_profiles() {
   local pair wanted excluded keep app p
-  for pair in "obs obs-lite" "obs-lite obs"; do
+  for pair in "obs obs-lite" "obs-lite obs" "drill data" "data drill"; do
     read -r wanted excluded <<<"$pair"
     has_profile "$wanted" || continue
     kc -n argocd get applications.argoproj.io "root-$excluded" >/dev/null 2>&1 || continue

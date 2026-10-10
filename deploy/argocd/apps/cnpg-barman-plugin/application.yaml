@@ -1,6 +1,8 @@
-# CNPG-I barman-cloud plugin (AWS only, listed in profiles-aws/core): WAL archiving, base backups and recovery for
-# shop-db to S3 (ADR 0203, contract with sf-cloud's cloud-up/cloud-down). Wave 0: it needs cert-manager (TLS between
-# operator and plugin) and the CNPG operator from wave -1.
+# CNPG-I barman-cloud plugin: WAL archiving, base backups and recovery for shop-db (ADR 0203). Wave 0: it needs
+# cert-manager (TLS between operator and plugin) and the CNPG operator from wave -1.
+# Local (listed by profile drill or data): backups go to SeaweedFS; the third source copies the credentials of sf-data's
+# identity cnpg-backup into shop/shop-db-backup-s3. AWS (apps-aws/cnpg-barman-plugin, profiles-aws/core): S3 through
+# the pod's IAM role, no copy.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -8,7 +10,7 @@ metadata:
   namespace: argocd
   labels:
     app.kubernetes.io/part-of: shopflow
-    shopflow.io/profile: core
+    shopflow.io/profile: drill
   annotations:
     argocd.argoproj.io/sync-wave: "0"
 spec:
@@ -20,10 +22,13 @@ spec:
       helm:
         releaseName: barman-cloud
         valueFiles:
-          - $values/deploy/platform/cnpg/aws/barman-plugin-values.yaml
+          - $values/deploy/platform/cnpg/base/barman-plugin-values.yaml
     - repoURL: https://github.com/winthebest/shopflow.git
       targetRevision: main
       ref: values
+    - repoURL: https://github.com/winthebest/shopflow.git
+      targetRevision: main
+      path: deploy/platform/cnpg/local-backup
   destination:
     server: https://kubernetes.default.svc
     namespace: cnpg-system

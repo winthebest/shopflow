@@ -6,3 +6,12 @@
 {{- end }}
 
 {{- define "shop-db.barmanObject" -}}shop-db-backup{{- end }}
+
+{{/* "true" when WAL archiving is on: backup.enabled, and with onlyWithServerName (local) also a serverName. */}}
+{{- define "shop-db.backupActive" -}}
+{{- if and .Values.backup.enabled (or (not .Values.backup.onlyWithServerName) .Values.backup.serverName) -}}
+true
+{{- else -}}
+false
+{{- end -}}
+{{- end }}

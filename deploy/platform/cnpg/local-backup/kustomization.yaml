@@ -1,0 +1,13 @@
+# Local only (third source of apps/cnpg-barman-plugin): credentials for shop-db backups to SeaweedFS.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - backup-credentials-copy.yaml
+configMapGenerator:
+  - name: shop-db-backup-copy-script
+    namespace: cnpg-system
+    files:
+      - copy-secret.py
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-2"

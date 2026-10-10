@@ -1,3 +1,13 @@
-# k3d: one instance on local-path storage, initdb, no backups. Role passwords come from SOPS through KSOPS
-# (second source of the shop-db app: deploy/platform/shop-db/local).
-{}
+# k3d: one instance on local-path storage, initdb. Role passwords come from SOPS through KSOPS (second source of the
+# shop-db app: deploy/platform/shop-db/local).
+# Backups only for the restore drill (profiles drill or data, docs/contracts/gitops.md §4): to SeaweedFS in lakehouse,
+# active while session param pg.serverName is set (make up sets it when the cnpg-barman-plugin app is deployed). The
+# plugin app copies the credentials of sf-data's identity cnpg-backup into shop/shop-db-backup-s3.
+backup:
+  enabled: true
+  onlyWithServerName: true
+  bucket: pg-backup
+  path: shop-db
+  endpointURL: http://seaweedfs.lakehouse.svc:8333
+  credentialsSecret: shop-db-backup-s3
+  retentionPolicy: 7d

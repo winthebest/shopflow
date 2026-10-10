@@ -234,6 +234,14 @@ spec:
             matchLabels: {kubernetes.io/metadata.name: flink}
       ports:
         - {protocol: TCP, port: 8333}
+    # shop-db's barman-cloud plugin: WAL archive and base backups to bucket pg-backup (local restore drill).
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: shop}
+          podSelector:
+            matchLabels: {cnpg.io/cluster: shop-db}
+      ports:
+        - {protocol: TCP, port: 8333}
     - from:
         - namespaceSelector:
             matchLabels: {kubernetes.io/metadata.name: observability}

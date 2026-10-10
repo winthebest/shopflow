@@ -1,0 +1,13 @@
+# AWS variant of cnpg-barman-plugin: S3 through the pod's IAM role, so no credentials copy (third source removed).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../apps/cnpg-barman-plugin
+patches:
+  - target: {kind: Application, name: cnpg-barman-plugin}
+    patch: |-
+      - op: remove
+        path: /spec/sources/2
+      - op: replace
+        path: /metadata/labels/shopflow.io~1profile
+        value: core

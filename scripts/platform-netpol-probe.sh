@@ -33,6 +33,9 @@ PROBES=(
   "kafka|strimzi.io/kind=KafkaConnect|lakehouse|app.kubernetes.io/name=polaris|8181|open"
   "kafka|strimzi.io/kind=KafkaConnect|lakehouse|app.kubernetes.io/name=seaweedfs|8333|open"
   "kafka|app.kubernetes.io/name=probe|shop|cnpg.io/cluster=shop-db|5432|blocked"
+  # shop-db backups to SeaweedFS (local restore drill); other shop pods may not reach it
+  "shop|cnpg.io/cluster=shop-db|lakehouse|app.kubernetes.io/name=seaweedfs|8333|open"
+  "shop|app.kubernetes.io/name=orders|lakehouse|app.kubernetes.io/name=seaweedfs|8333|blocked"
   "kafka|strimzi.io/kind=KafkaConnect|shop|app.kubernetes.io/name=gateway|8000|blocked"
   "lakehouse|app.kubernetes.io/name=trino|shop|cnpg.io/cluster=shop-db|5432|open"
   "lakehouse|app.kubernetes.io/name=polaris|shop|cnpg.io/cluster=shop-db|5432|open"
