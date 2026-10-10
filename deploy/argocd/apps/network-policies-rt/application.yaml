@@ -1,0 +1,32 @@
+# Security baseline for flink (profile rt): namespaces with their Pod Security level and default-deny
+# NetworkPolicies with the contract's allow-list (docs/adr/0208-psa-and-network-policies.md). Owner: sf-platform;
+# listed by the owner of each profile. Wave -2: before any pod of the profile.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: network-policies-rt
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: shopflow
+    shopflow.io/profile: rt
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  project: default
+  sources:
+    - repoURL: https://github.com/winthebest/shopflow.git
+      targetRevision: main
+      path: deploy/platform/network-policies/rt
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

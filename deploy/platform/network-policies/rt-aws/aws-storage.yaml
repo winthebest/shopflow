@@ -1,0 +1,21 @@
+# AWS only (docs/contracts/environment.md "Network flows", ADR 0506): the KPI job keeps checkpoints and HA state in S3
+# and reads the Iceberg catalog in Glue. Both are reached over HTTPS at public addresses (public subnets, no VPC
+# endpoints); credentials come from the EKS Pod Identity agent.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: flink-aws-storage
+  namespace: flink
+  annotations:
+    shopflow.io/any-destination: S3 and Glue for checkpoints and the lake catalog (AWS only, public endpoints)
+spec:
+  podSelector:
+    matchLabels: {type: flink-native-kubernetes}
+  policyTypes: [Egress]
+  egress:
+    - ports:
+        - {protocol: TCP, port: 443}
+    - to:
+        - ipBlock: {cidr: 169.254.170.23/32}
+      ports:
+        - {protocol: TCP, port: 80}

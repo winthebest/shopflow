@@ -29,6 +29,10 @@ NetworkPolicy with its embedded controller (kube-router); on EKS the VPC CNI net
     - `kafka`: **baseline**, until the Strimzi operator uses its restricted pod security provider.
     - `lakehouse`: **baseline**, until Trino sets runAsNonRoot and a seccomp profile.
     - For both, warn/audit run at restricted to show the gap.
+    - `airflow` (`network-policies-batch`): **baseline**, warn/audit restricted, until a dry-run of the chart.
+    - `flink` (`network-policies-rt`): **restricted**. The operator chart values, the FlinkDeployment pod template
+      and both Jobs set the restricted fields; checked on the rendered manifests, the live dry-run is the gate's
+      PSA step. Only the KPI job's pods (`type=flink-native-kubernetes`) reach Kafka, Postgres and SeaweedFS.
 - **NetworkPolicy** for the workload namespaces. Per-pod least privilege in `shop` and the edge
   (`envoy-gateway-system`). In `observability`, `kafka` and `lakehouse`, pods of one namespace trust each other and
   every cross-namespace flow of the contract is listed. Prometheus may scrape any port in the cluster and the node
