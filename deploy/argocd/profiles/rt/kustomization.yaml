@@ -6,6 +6,7 @@ kind: Kustomization
 resources:
   - ../../apps/flink-operator
   - ../../apps/flink
+  - ../../apps/network-policies-rt
 components:
   - ../_common
 replacements:
