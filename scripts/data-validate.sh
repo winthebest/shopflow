@@ -257,7 +257,7 @@ SH
     echo "FAIL cdc-epoch.sh wait accepted the Debezium metric without bronze rows of the epoch" >&2
     return 1
   fi
-  if grep -q snapshot_completed_at "$fake/sql.log"; then
+  if grep -q 'SET snapshot_completed_at' "$fake/sql.log"; then
     echo "FAIL cdc-epoch.sh wait set snapshot_completed_at for an epoch without bronze rows" >&2
     return 1
   fi
@@ -266,8 +266,32 @@ SH
     echo "FAIL cdc-epoch.sh wait did not record a snapshot that bronze shows" >&2
     return 1
   fi
+  # wait on an epoch already recorded (make up re-run after a Connect restart: metric 0, no new snapshot) returns at
+  # once and changes nothing.
+  : > "$fake/sql.log"
+  # shellcheck disable=SC2016 # expanded by cdc-epoch.sh when it runs the seam commands
+  if ! env CDC_EPOCH_PSQL='tee -a "$FAKE_DIR/sql.log" | grep -q "snapshot_completed_at IS NOT NULL" \
+      && echo "completed 2026-10-10 12:11:29+00" || echo 1' \
+    CDC_EPOCH_METRICS='echo "debezium_metrics_snapshotcompleted{context=\"snapshot\",name=\"shop\"} 0.0"' \
+    CDC_EPOCH_BRONZE='echo 0' "${run[@]}" wait --epoch 1333333333 --timeout 6 2> /dev/null; then
+    echo "FAIL cdc-epoch.sh wait did not return for an epoch already recorded" >&2
+    return 1
+  fi
+  if grep -qE 'INSERT|UPDATE' "$fake/sql.log"; then
+    echo "FAIL cdc-epoch.sh wait wrote to meta.cdc_epochs for an epoch already recorded" >&2
+    return 1
+  fi
+  # Timeout: a new epoch whose snapshot never completes (metric 0, no bronze rows) makes wait fail, so make up fails
+  # loudly instead of leaving silver and gold empty without notice.
+  # shellcheck disable=SC2016 # expanded by cdc-epoch.sh when it runs the seam commands
+  if env CDC_EPOCH_PSQL='cat >> "$FAKE_DIR/sql.log"; echo 1' \
+    CDC_EPOCH_METRICS='echo "debezium_metrics_snapshotcompleted{context=\"snapshot\",name=\"shop\"} 0.0"' \
+    CDC_EPOCH_BRONZE='echo 0' "${run[@]}" wait --epoch 1444444444 --timeout 6 2> /dev/null; then
+    echo "FAIL cdc-epoch.sh wait succeeded for a snapshot that never completed" >&2
+    return 1
+  fi
   rm -rf "$fake"
-  echo "cdc-epoch.sh ensure keeps a running cluster's epoch; wait needs bronze rows (fake kubectl)"
+  echo "cdc-epoch.sh ensure keeps a running cluster's epoch; wait needs bronze rows, skips a completed epoch, times out otherwise (fake kubectl)"
 }
 
 # `data-secrets.sh --aws-json` (input of scripts/aws-seed-params.sh): the Trino Secrets with the names and keys of the
