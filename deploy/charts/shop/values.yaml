@@ -1,6 +1,10 @@
 # Shop chart defaults (environment-neutral). Runtime contract: docs/contracts/services.md.
 # Overlays: values-local.yaml (k3d); an aws file is added in Phase 6.
 
+# Which block this release renders: `web` (app `shop`: API services, migration, seed, route) or `worker` (app
+# `fulfillment-worker`, profile ops). Both apps read this file, so one image bump covers both.
+component: web
+
 # deployment.environment resource attribute for telemetry.
 environment: ""
 logLevel: INFO
@@ -54,6 +58,32 @@ services:
       requests: {cpu: 50m, memory: 96Mi}
       limits: {memory: 256Mi}
 
+  # CDC consumer: one shipment per paid order (component worker only; no Service, scaled by KEDA on consumer lag).
+  fulfillment-worker:
+    kind: worker
+    image:
+      repository: ghcr.io/winthebest/shopflow-fulfillment-worker
+      tag: ""      # first image: the publish after the worker PR merges
+      digest: ""
+    port: 8003
+    env:
+      DATABASE_HOST: shop-db-rw.shop.svc
+      DATABASE_SSLMODE: require
+      SHIPMENT_LATENCY_MS: "20"   # simulated carrier call per shipment (raise it to produce lag in a demo)
+    # CNPG managed role fulfillment_worker: INSERT on shipments, SELECT on orders.id (docs/contracts/services.md).
+    secretEnv:
+      DATABASE_USER: {name: shop-db-fulfillment-worker, key: username}
+      DATABASE_PASSWORD: {name: shop-db-fulfillment-worker, key: password}
+    autoscaling:                  # KEDA Kafka scaler (docs/adr/0304)
+      minReplicaCount: 1
+      maxReplicaCount: 6          # = partitions of shop.public.orders; more consumers would idle
+      lagThreshold: 50            # records per replica; re-measure with k6 before the game day
+      pollingInterval: 15
+      cooldownPeriod: 120
+    resources:
+      requests: {cpu: 50m, memory: 96Mi}
+      limits: {memory: 256Mi}
+
 # Schema migration: Argo CD PreSync hook, so it finishes before any pod of the new release rolls out.
 migration:
   enabled: true
@@ -88,3 +118,18 @@ probes:
   readiness: {periodSeconds: 5, timeoutSeconds: 2, failureThreshold: 3}
   liveness: {periodSeconds: 10, timeoutSeconds: 2, failureThreshold: 3}
   startup: {periodSeconds: 2, timeoutSeconds: 2, failureThreshold: 30}
+
+# Worker wiring (component worker). The KafkaUser and its ACL are sf-data's (deploy/platform/kafka/base/users.yaml);
+# the copy Jobs write `credentialsSecret` (password + username) and `caSecret` (cluster CA) into this namespace.
+worker:
+  kafka:
+    namespace: kafka
+    cluster: shopflow
+    bootstrapServers: shopflow-kafka-bootstrap.kafka.svc:9093
+    topic: shop.public.orders
+    consumerGroup: fulfillment-worker
+    user: fulfillment-worker
+    credentialsSecret: fulfillment-worker-kafka
+    caSecret: fulfillment-worker-kafka-ca
+  # Same pinned image as the other copy-secret Jobs (deploy/platform/*/base/secret-copy.yaml).
+  copyImage: python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4

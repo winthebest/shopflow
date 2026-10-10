@@ -11,6 +11,9 @@ services:
     replicas: 1
   payments:
     replicas: 1
+  fulfillment-worker:
+    autoscaling:
+      maxReplicaCount: 3   # laptop RAM; the topic has 6 partitions
 seed:
   enabled: true
 route:

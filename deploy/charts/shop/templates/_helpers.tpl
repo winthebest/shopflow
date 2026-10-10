@@ -99,3 +99,52 @@ volumes:
     emptyDir:
       sizeLimit: 64Mi
 {{- end }}
+
+{{/* Which block this release renders (`component` value): `web` = app `shop` (API services, migration, seed,
+     route); `worker` = app `fulfillment-worker` in profile ops (the KEDA-scaled CDC consumer, its Kafka credential
+     copies and ScaledObject). Both apps read values.yaml, so one image bump covers both. */}}
+{{- define "shop.renders" -}}
+{{- $component := required "component must be web or worker" .root.Values.component -}}
+{{- if eq (.svc.kind | default "api") "worker" -}}
+{{- if eq $component "worker" }}true{{ end -}}
+{{- else if eq $component "web" -}}
+true
+{{- end -}}
+{{- end }}
+
+{{- define "shop.serviceAccountName" -}}
+{{- if eq .Values.component "worker" }}fulfillment-worker{{ else }}shop{{ end -}}
+{{- end }}
+
+{{/* Env from Secrets (`secretEnv: {VAR: {name, key}}`), e.g. CNPG managed-role and copied Kafka credentials. */}}
+{{- define "shop.secretEnv" -}}
+{{- range $var, $ref := .svc.secretEnv }}
+- name: {{ $var }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ $ref.name }}
+      key: {{ $ref.key }}
+{{- end }}
+{{- end }}
+
+{{/* Kafka connection of the worker, one source for the Deployment env and the KEDA trigger (values: worker.kafka). */}}
+{{- define "shop.workerKafkaEnv" -}}
+{{- $kafka := .Values.worker.kafka -}}
+- name: KAFKA_BOOTSTRAP_SERVERS
+  value: {{ $kafka.bootstrapServers | quote }}
+- name: KAFKA_TOPIC
+  value: {{ $kafka.topic | quote }}
+- name: KAFKA_GROUP_ID
+  value: {{ $kafka.consumerGroup | quote }}
+- name: KAFKA_SECURITY_PROTOCOL
+  value: SASL_SSL
+- name: KAFKA_USERNAME
+  value: {{ $kafka.user | quote }}
+- name: KAFKA_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ $kafka.credentialsSecret }}
+      key: password
+- name: KAFKA_CA_FILE
+  value: /etc/kafka-ca/ca.crt
+{{- end }}
