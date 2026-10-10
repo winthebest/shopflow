@@ -39,6 +39,10 @@ PROBES=(
   "lakehouse|app.kubernetes.io/name=probe|shop|cnpg.io/cluster=shop-db|5432|blocked"
   "lakehouse|app.kubernetes.io/name=probe|lakehouse|app.kubernetes.io/name=trino|8443|open"
   "default|app.kubernetes.io/name=probe|lakehouse|app.kubernetes.io/name=polaris|8181|blocked"
+  # Kafka brokers (TLS listener): the fulfillment-worker and KEDA may read, other shop pods may not
+  "shop|app.kubernetes.io/name=fulfillment-worker|kafka|strimzi.io/kind=Kafka|9093|open"
+  "keda|app.kubernetes.io/name=keda-operator|kafka|strimzi.io/kind=Kafka|9093|open"
+  "shop|app.kubernetes.io/name=orders|kafka|strimzi.io/kind=Kafka|9093|blocked"
   # batch (airflow)
   "airflow|app.kubernetes.io/name=probe|shop|cnpg.io/cluster=shop-db|5432|open"
   "airflow|app.kubernetes.io/name=probe|lakehouse|app.kubernetes.io/name=trino|8443|open"
