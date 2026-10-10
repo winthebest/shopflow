@@ -1,0 +1,102 @@
+# promtool unit tests for the Debezium slot WAL alerts (run by `make sre-rules`).
+# shop-db caps slot WAL at max_slot_wal_keep_size = 2048MB (pg_settings reports MB). Growth rates: 1 MiB/s
+# (62914560 B/min; the cap is hit at minute 34) and 0.1 MiB/s (6291456 B/min; cap hit at minute ~341). Every
+# alert must fire well before the cap. Alerts may lag their recording rules by one evaluation (promtool does
+# not order rule groups), hence "silent at T-2, firing by T+1".
+rule_files:
+  - wal-retained.rules.yaml
+evaluation_interval: 1m
+
+tests:
+  # Debezium stopped while the shop writes fast: predicted to hit the cap within the hour → page at ~14m
+  # (20 minutes before the slot is invalidated); the 50% ticket follows at ~23m.
+  - name: fast WAL growth pages long before the slot is invalidated
+    interval: 1m
+    input_series:
+      - series: 'cnpg_pg_replication_slots_pg_wal_lsn_diff{namespace="shop",pod="shop-db-1",slot_name="debezium_shop",slot_type="logical",database="shop"}'
+        values: '0+62914560x40'
+      - series: 'cnpg_pg_settings_setting{namespace="shop",pod="shop-db-1",name="max_slot_wal_keep_size"}'
+        values: '2048+0x40'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: PostgresSlotWALRetainedCritical
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: PostgresSlotWALRetainedCritical
+        exp_alerts:
+          - exp_labels: {severity: page, team: sf-sre, namespace: shop, pod: shop-db-1, slot_name: debezium_shop}
+            exp_annotations:
+              summary: "Slot debezium_shop will hit max_slot_wal_keep_size within the hour (or is past 80%): the slot is about to be invalidated."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/wal-retained.md
+      - eval_time: 21m
+        alertname: PostgresSlotWALRetainedHigh
+        exp_alerts: []
+      - eval_time: 24m
+        alertname: PostgresSlotWALRetainedHigh
+        exp_alerts:
+          - exp_labels: {severity: ticket, team: sf-sre, namespace: shop, pod: shop-db-1, slot_name: debezium_shop}
+            exp_annotations:
+              summary: "Slot debezium_shop holds more than half of max_slot_wal_keep_size on shop-db-1."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/wal-retained.md
+
+  # Slow growth: the ticket comes first (~177m) and the page only past 80% (~280m), still ~1h before the cap.
+  - name: slow WAL growth opens a ticket hours before the page
+    interval: 1m
+    input_series:
+      - series: 'cnpg_pg_replication_slots_pg_wal_lsn_diff{namespace="shop",pod="shop-db-1",slot_name="debezium_shop",slot_type="logical",database="shop"}'
+        values: '0+6291456x300'
+      - series: 'cnpg_pg_settings_setting{namespace="shop",pod="shop-db-1",name="max_slot_wal_keep_size"}'
+        values: '2048+0x300'
+    alert_rule_test:
+      - eval_time: 175m
+        alertname: PostgresSlotWALRetainedHigh
+        exp_alerts: []
+      - eval_time: 178m
+        alertname: PostgresSlotWALRetainedHigh
+        exp_alerts:
+          - exp_labels: {severity: ticket, team: sf-sre, namespace: shop, pod: shop-db-1, slot_name: debezium_shop}
+            exp_annotations:
+              summary: "Slot debezium_shop holds more than half of max_slot_wal_keep_size on shop-db-1."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/wal-retained.md
+      - eval_time: 178m
+        alertname: PostgresSlotWALRetainedCritical
+        exp_alerts: []
+
+  # Normal operation: Debezium's 10s heartbeat keeps the slot advancing, so retained WAL stays small and flat.
+  - name: a healthy slot raises nothing
+    interval: 1m
+    input_series:
+      - series: 'cnpg_pg_replication_slots_pg_wal_lsn_diff{namespace="shop",pod="shop-db-1",slot_name="debezium_shop",slot_type="logical",database="shop"}'
+        values: '16777216+0x90'
+      - series: 'cnpg_pg_settings_setting{namespace="shop",pod="shop-db-1",name="max_slot_wal_keep_size"}'
+        values: '2048+0x90'
+      - series: 'cnpg_pg_replication_slots_active{namespace="shop",pod="shop-db-1",slot_name="debezium_shop",slot_type="logical",database="shop"}'
+        values: '1+0x90'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: PostgresSlotWALRetainedHigh
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: PostgresSlotWALRetainedCritical
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: PostgresSlotInactive
+        exp_alerts: []
+
+  # Nobody reads the slot (Kafka Connect down): flagged after 10 minutes, before WAL becomes a problem.
+  - name: an inactive slot is flagged after 10 minutes
+    interval: 1m
+    input_series:
+      - series: 'cnpg_pg_replication_slots_active{namespace="shop",pod="shop-db-1",slot_name="debezium_shop",slot_type="logical",database="shop"}'
+        values: '0+0x20'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: PostgresSlotInactive
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: PostgresSlotInactive
+        exp_alerts:
+          - exp_labels: {severity: ticket, team: sf-sre, namespace: shop, pod: shop-db-1, slot_name: debezium_shop}
+            exp_annotations:
+              summary: "Nothing reads slot debezium_shop on shop-db-1 for 10m: WAL is accumulating."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/wal-retained.md

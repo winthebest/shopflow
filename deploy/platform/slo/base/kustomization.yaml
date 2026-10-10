@@ -6,3 +6,4 @@ resources:
   - cdc-slo.prometheusrule.yaml
   - checkout-sli-guard.prometheusrule.yaml
   - checkout-slo.prometheusrule.yaml
+  - wal-retained.prometheusrule.yaml
