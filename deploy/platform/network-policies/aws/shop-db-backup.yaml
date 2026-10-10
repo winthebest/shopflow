@@ -1,0 +1,20 @@
+# AWS only: the barman-cloud plugin in the shop-db pods writes WAL and base backups to S3 (no fixed address range,
+# so HTTPS to any address) with credentials from the EKS Pod Identity agent.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: shop-db-backup
+  namespace: shop
+  annotations:
+    shopflow.io/any-destination: S3 for the barman-cloud backup plugin (AWS only)
+spec:
+  podSelector:
+    matchLabels: {cnpg.io/cluster: shop-db}
+  policyTypes: [Egress]
+  egress:
+    - ports:
+        - {protocol: TCP, port: 443}
+    - to:
+        - ipBlock: {cidr: 169.254.170.23/32}
+      ports:
+        - {protocol: TCP, port: 80}

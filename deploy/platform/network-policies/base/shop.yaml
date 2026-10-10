@@ -144,13 +144,16 @@ spec:
         - {protocol: TCP, port: 5432}
 ---
 # fulfillment-worker copy Jobs (Argo CD Sync hooks): copy the worker's KafkaUser Secret and the Kafka cluster CA from
-# namespace kafka into shop through the API server (docs/contracts/gitops.md §5). API server: k3s node IP:6443, EKS
-# endpoint ENIs on 443 (no pod selector matches the host network).
+# namespace kafka into shop through the API server (docs/contracts/gitops.md §5). API server egress only: k3s matches
+# after the Service DNAT (node IP:6443), so 443 stays closed; the AWS overlay swaps this rule for 443 to the VPC
+# (label shopflow.io/egress=apiserver, docs/adr/0208-psa-and-network-policies.md).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: fulfillment-worker-kafka-copy
   namespace: shop
+  labels:
+    shopflow.io/egress: apiserver
 spec:
   podSelector:
     matchLabels: {app.kubernetes.io/name: fulfillment-worker-kafka-copy}
@@ -158,7 +161,6 @@ spec:
   egress:
     - ports:
         - {protocol: TCP, port: 6443}
-        - {protocol: TCP, port: 443}
 ---
 # Migration and seed Jobs (orders image): Postgres only.
 apiVersion: networking.k8s.io/v1
@@ -179,7 +181,7 @@ spec:
         - {protocol: TCP, port: 5432}
 ---
 # Postgres: the shop and the consumers listed in the flows table; metrics for Prometheus; the CNPG operator talks to
-# the instance manager. Instances reach the API server (instance manager), each other (replication), and on AWS S3.
+# the instance manager. Instances reach each other (replication); API server and AWS egress are separate policies.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -234,12 +236,21 @@ spec:
       ports:
         - {protocol: TCP, port: 5432}
         - {protocol: TCP, port: 8000}
-    # API server (k3s: node IP:6443; EKS: endpoint ENIs on 443) and, on AWS, S3 for the barman-cloud plugin.
+---
+# The CNPG instance manager talks to the API server. On AWS the aws overlay swaps this rule for 443 to the VPC and adds
+# S3 + Pod Identity for the backup plugin (aws/shop-db-backup.yaml).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: shop-db-apiserver
+  namespace: shop
+  labels:
+    shopflow.io/egress: apiserver
+spec:
+  podSelector:
+    matchLabels: {cnpg.io/cluster: shop-db}
+  policyTypes: [Egress]
+  egress:
+    # k3s matches egress after the Service DNAT (kubernetes.default -> node IP:6443), so 443 stays closed.
     - ports:
         - {protocol: TCP, port: 6443}
-        - {protocol: TCP, port: 443}
-    # AWS: the EKS Pod Identity agent hands out the S3 credentials of the backup plugin (unused locally).
-    - to:
-        - ipBlock: {cidr: 169.254.170.23/32}
-      ports:
-        - {protocol: TCP, port: 80}

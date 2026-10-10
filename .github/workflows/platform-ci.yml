@@ -6,6 +6,7 @@ on:
   pull_request:
     paths:
       - "deploy/**"
+      - "infra/tofu/network/variables.tf"   # VPC CIDR used by the AWS API server egress rule
       - "scripts/k3d-*.sh"
       - "scripts/platform-*.sh"
       - ".sops.yaml"
@@ -15,6 +16,7 @@ on:
     branches: [main]
     paths:
       - "deploy/**"
+      - "infra/tofu/network/variables.tf"   # VPC CIDR used by the AWS API server egress rule
       - "services/*/migrations/**"   # a merged migration turns main red until the shop chart runs it
       - "scripts/k3d-*.sh"
       - "scripts/platform-*.sh"

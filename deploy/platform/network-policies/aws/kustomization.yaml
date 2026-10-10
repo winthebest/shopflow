@@ -1,0 +1,8 @@
+# AWS overlay: base policies with API server egress on 443 to the VPC, plus the shop-db backup flows.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base
+  - shop-db-backup.yaml
+components:
+  - ../components/apiserver-aws

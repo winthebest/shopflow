@@ -1,0 +1,11 @@
+# AWS variant of network-policies: the aws overlay (API server egress on 443 to the VPC, S3 for shop-db backups).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../apps/network-policies
+patches:
+  - target: {kind: Application, name: network-policies}
+    patch: |-
+      - op: replace
+        path: /spec/sources/0/path
+        value: deploy/platform/network-policies/aws

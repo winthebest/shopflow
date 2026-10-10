@@ -1,0 +1,148 @@
+# Profile obs / obs-lite: namespace observability (docs/adr/0208-psa-and-network-policies.md, flows: docs/contracts/environment.md "Network flows").
+# privileged: node-exporter needs hostNetwork, hostPID and hostPath (/proc, /sys); the OTel agent reads pod logs
+# through hostPath. warn/audit at baseline surface anything else that needs host access.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/audit: baseline
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: observability
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: observability
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+# Components of one namespace trust each other; flows that cross namespaces are listed one by one.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: observability
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+---
+# OTLP into the collector from the namespaces that export telemetry.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: otlp-ingress
+  namespace: observability
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/instance: otel-gateway}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchExpressions:
+              - {key: kubernetes.io/metadata.name, operator: In, values: [shop, airflow, flink, lakehouse, kafka]}
+      ports:
+        - {protocol: TCP, port: 4317}
+        - {protocol: TCP, port: 4318}
+---
+# Prometheus scrapes targets in every namespace (ServiceMonitors/PodMonitors owned by each lane) and on the nodes
+# (kubelet 10250, node-exporter 9100 on the host network). A read-only scraper: allowed to any port in the cluster.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prometheus-scrape
+  namespace: observability
+  annotations:
+    shopflow.io/any-destination: node-exporter and the kubelet listen on the host network (9100, 10250)
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: prometheus}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {}
+    - ports:
+        - {protocol: TCP, port: 9100}
+        - {protocol: TCP, port: 10250}
+---
+# Grafana's KPI datasource reads the serving database (grafana_serving, read-only).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: grafana-serving-db
+  namespace: observability
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: grafana}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: shop}
+          podSelector:
+            matchLabels: {cnpg.io/cluster: shop-db}
+      ports:
+        - {protocol: TCP, port: 5432}
+---
+# Alertmanager sends notifications to the chat webhook (Secret alertmanager-webhook): HTTPS to the internet.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: alertmanager-webhook
+  namespace: observability
+  annotations:
+    shopflow.io/any-destination: chat webhook over HTTPS on the internet
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: alertmanager}
+  policyTypes: [Egress]
+  egress:
+    - ports:
+        - {protocol: TCP, port: 443}
+---
+# Prometheus operator, kube-state-metrics, the OTel collector (k8sattributes) and Grafana's sidecars watch the API.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: operators-apiserver
+  namespace: observability
+  labels:
+    shopflow.io/egress: apiserver
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    # API server only: k3s matches egress after the Service DNAT (kubernetes.default -> node IP:6443), so 443 stays
+    # closed. The aws overlay swaps this rule for 443 to the VPC (components/apiserver-aws).
+    - ports:
+        - {protocol: TCP, port: 6443}
