@@ -39,3 +39,11 @@ sre-chaos-off: ## Game day end: remove Chaos Mesh completely (experiments, CRDs,
 
 sre-chaos-check: ## Game-day experiments: CRD schema, allowed namespaces, auto-stop; chaos-mesh only in profile chaos
 	$(SRE_CHECK) chaos
+
+# Gate check on a running cluster (read-only). Default: the cluster of CLUSTER (sf-main during gates).
+SRE_GATE_CONTEXT ?= k3d-$(CLUSTER)
+SRE_GATE_WINDOW  ?= 2h
+
+.PHONY: sre-gate-check
+sre-gate-check: ## Gate check, read-only: targets, SLO data, WAL series, Tempo memory, alerts (SRE_GATE_CONTEXT, SRE_GATE_WINDOW)
+	./scripts/sre-gate-check.sh --context $(SRE_GATE_CONTEXT) --window $(SRE_GATE_WINDOW)
