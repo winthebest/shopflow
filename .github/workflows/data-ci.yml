@@ -137,7 +137,8 @@ jobs:
             fi
           }
           {
-            echo "connect_image=$(changed 'images/kafka-connect/')"
+            # The Connect smoke test also runs the Polaris setup script and the bronze DDL.
+            echo "connect_image=$(changed 'images/kafka-connect/|deploy/platform/iceberg-catalog/base/polaris-setup\.py$|deploy/platform/trino/base/bronze-tables\.sql$')"
             echo "exporter_image=$(changed 'services/freshness-exporter/')"
             echo "airflow_image=$(changed 'data/airflow/|data/dbt/|data/\.dockerignore')"
             echo "flink_image=$(changed 'data/flink/')"
