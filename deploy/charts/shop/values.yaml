@@ -69,7 +69,9 @@ services:
     env:
       DATABASE_HOST: shop-db-rw.shop.svc
       DATABASE_SSLMODE: require
-      SHIPMENT_LATENCY_MS: "20"   # simulated carrier call per shipment (raise it to produce lag in a demo)
+      # Simulated carrier call per shipment. To produce lag in a demo raise it and lower BATCH_MAX_RECORDS (default 500):
+      # latency x batch must stay <= 60s or the worker refuses to start (liveness stall bound).
+      SHIPMENT_LATENCY_MS: "20"
     # CNPG managed role fulfillment_worker: INSERT on shipments, SELECT on orders.id (docs/contracts/services.md).
     secretEnv:
       DATABASE_USER: {name: shop-db-fulfillment-worker, key: username}
