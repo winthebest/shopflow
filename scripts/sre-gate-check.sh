@@ -96,13 +96,20 @@ else pass "rule groups healthy"; fi
 # Some SLIs are not counted on purpose until their profile is up (same guards as their SLI rules in
 # deploy/platform/slo/base/): no sample is then expected, so the check is skipped instead of failed.
 data_up="$(count 'kube_namespace_status_phase{namespace="lakehouse", phase="Active"} == 1')"
+data_age="$(scalar 'time() - max(kube_namespace_created{namespace="lakehouse"})')"
 batch_age="$(scalar 'time() - max(kube_namespace_created{namespace="airflow"})')"
+exporter_age="$(scalar 'time() - max(process_start_time_seconds{job="freshness-exporter"})')"
+younger() { [[ -n "$1" ]] && awk -v a="$1" -v l="$2" 'BEGIN{exit !(a < l)}'; }  # age $1 (seconds) below $2
 not_counted() {  # prints why service $1 has no SLI samples by design, nothing when samples are expected
   case "$1" in
-    cdc) [[ "${data_up:-0}" -gt 0 ]] || echo "profile data not up (namespace lakehouse absent)" ;;
+    cdc)
+      if [[ "${data_up:-0}" -eq 0 ]]; then echo "profile data not up (namespace lakehouse absent)"
+      elif younger "$data_age" 900; then echo "profile data up for less than 15 minutes"
+      elif younger "$exporter_age" 900; then echo "freshness exporter (re)started less than 15 minutes ago"; fi ;;
     gold)
       if [[ -z "$batch_age" ]]; then echo "profile batch not up (namespace airflow absent)"
-      elif awk -v a="$batch_age" 'BEGIN{exit !(a < 7200)}'; then echo "profile batch up for less than 2h (first dbt run)"; fi ;;
+      elif younger "$batch_age" 7200; then echo "profile batch up for less than 2h (first dbt run)"
+      elif younger "$exporter_age" 900; then echo "freshness exporter (re)started less than 15 minutes ago"; fi ;;
   esac
 }
 
@@ -122,8 +129,11 @@ done
 if [[ "${data_up:-0}" -eq 0 ]]; then
   skip "CDC heartbeat and WAL-retained" "profile data not up (namespace lakehouse absent)"
 else
+  cdc_why="$(not_counted cdc)"
   n="$(count 'cdc:bronze_heartbeat_stale:minute')"
-  if [[ "${n:-0}" -gt 0 ]]; then pass "CDC heartbeat staleness series"; else fail "CDC heartbeat staleness series" "cdc:bronze_heartbeat_stale:minute missing"; fi
+  if [[ -n "$cdc_why" ]]; then skip "CDC heartbeat staleness series" "$cdc_why"
+  elif [[ "${n:-0}" -gt 0 ]]; then pass "CDC heartbeat staleness series"
+  else fail "CDC heartbeat staleness series" "cdc:bronze_heartbeat_stale:minute missing"; fi
 
   bytes="$(scalar 'max(shopflow:pg_slot_wal_retained:bytes)')"; ratio="$(scalar 'max(shopflow:pg_slot_wal_retained:ratio)')"
   if [[ -n "$bytes" && -n "$ratio" ]]; then
