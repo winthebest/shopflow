@@ -10,7 +10,8 @@
 #
 # Checks:
 #   pipeline   Prometheus targets up; OTLP span metrics; every rule group healthy
-#   slo        checkout, cdc and (when defined) freshness SLOs have SLI samples; WAL-retained series exist
+#   slo        every Sloth spec in slo/ has SLI samples (skipped while its profile is not up); CDC heartbeat and
+#              WAL-retained series exist (profile data)
 #   tempo      GOMEMLIMIT set; no restart / OOMKill in the window; peak working set vs the memory limit
 #   alerts     no shopflow page firing; tickets listed; Alertmanager notification failures (placeholder webhook)
 set -uo pipefail
@@ -78,24 +79,42 @@ elif [[ "${unknown:-0}" -gt 0 ]]; then warn "rule groups healthy" "$unknown rule
 else pass "rule groups healthy"; fi
 
 # ---- SLOs -----------------------------------------------------------------------------------------------------
-# Every Sloth spec in slo/ must have SLI samples (one per SLO); a service without a spec yet is skipped.
+# Some SLIs are not counted on purpose until their profile is up (same guards as their SLI rules in
+# deploy/platform/slo/base/): no sample is then expected, so the check is skipped instead of failed.
+data_up="$(count 'kube_namespace_status_phase{namespace="lakehouse", phase="Active"} == 1')"
+batch_age="$(scalar 'time() - max(kube_namespace_created{namespace="airflow"})')"
+not_counted() {  # prints why service $1 has no SLI samples by design, nothing when samples are expected
+  case "$1" in
+    cdc) [[ "${data_up:-0}" -gt 0 ]] || echo "profile data not up (namespace lakehouse absent)" ;;
+    gold)
+      if [[ -z "$batch_age" ]]; then echo "profile batch not up (namespace airflow absent)"
+      elif awk -v a="$batch_age" 'BEGIN{exit !(a < 7200)}'; then echo "profile batch up for less than 2h (first dbt run)"; fi ;;
+  esac
+}
+
+# Every Sloth spec in slo/ must have SLI samples (one per SLO).
 for spec in "$ROOT"/slo/*.yaml; do
   svc="$(yq '.spec.service' "$spec")"; want="$(yq '.spec.slos | length' "$spec")"
+  why="$(not_counted "$svc")"
+  if [[ -n "$why" ]]; then skip "SLO $svc has SLI data" "$why"; continue; fi
   got="$(count "slo:sli_error:ratio_rate5m{sloth_service=\"$svc\"}")"
   if [[ "${got:-0}" -ge "$want" ]]; then pass "SLO $svc has SLI data" "$got/$want SLOs"
   else fail "SLO $svc has SLI data" "$got/$want SLOs with a 5m sample (no traffic? run loadtest/checkout.js for a few minutes)"; fi
 done
-grep -qsl 'freshness' "$ROOT"/slo/*.yaml || skip "SLO gold freshness" "no spec in slo/ yet (sf-data)"
 
-n="$(count 'cdc:bronze_heartbeat_stale:minute')"
-if [[ "${n:-0}" -gt 0 ]]; then pass "CDC heartbeat staleness series"; else fail "CDC heartbeat staleness series" "cdc:bronze_heartbeat_stale:minute missing"; fi
-
-bytes="$(scalar 'max(shopflow:pg_slot_wal_retained:bytes)')"; ratio="$(scalar 'max(shopflow:pg_slot_wal_retained:ratio)')"
-if [[ -n "$bytes" && -n "$ratio" ]]; then
-  # restart_lsn moves by WAL segment (16 MiB), so the value normally swings between ~0 and ~16 MiB.
-  pass "WAL-retained series (debezium_shop)" "$(awk -v b="$bytes" -v r="$ratio" 'BEGIN{printf "%.0f bytes (%.1f MiB), %.2f%% of max_slot_wal_keep_size", b, b/1048576, r*100}')"
+if [[ "${data_up:-0}" -eq 0 ]]; then
+  skip "CDC heartbeat and WAL-retained" "profile data not up (namespace lakehouse absent)"
 else
-  fail "WAL-retained series (debezium_shop)" "missing (data profile up? Debezium slot created? cnpg-shop scraped?)"
+  n="$(count 'cdc:bronze_heartbeat_stale:minute')"
+  if [[ "${n:-0}" -gt 0 ]]; then pass "CDC heartbeat staleness series"; else fail "CDC heartbeat staleness series" "cdc:bronze_heartbeat_stale:minute missing"; fi
+
+  bytes="$(scalar 'max(shopflow:pg_slot_wal_retained:bytes)')"; ratio="$(scalar 'max(shopflow:pg_slot_wal_retained:ratio)')"
+  if [[ -n "$bytes" && -n "$ratio" ]]; then
+    # restart_lsn moves by WAL segment (16 MiB), so the value normally swings between ~0 and ~16 MiB.
+    pass "WAL-retained series (debezium_shop)" "$(awk -v b="$bytes" -v r="$ratio" 'BEGIN{printf "%.0f bytes (%.1f MiB), %.2f%% of max_slot_wal_keep_size", b, b/1048576, r*100}')"
+  else
+    fail "WAL-retained series (debezium_shop)" "missing (Debezium slot created? cnpg-shop scraped?)"
+  fi
 fi
 
 # ---- Tempo (GOMEMLIMIT, profile obs) ----------------------------------------------------------------------------
