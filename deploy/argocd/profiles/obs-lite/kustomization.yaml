@@ -1,8 +1,11 @@
 # Profile obs-lite: metrics + SLOs only (no Loki/Tempo, no log agent). The otel-gateway still turns spans into
 # SLI metrics. Mutually exclusive with profile obs (same otel-gateway release).
+# network-policies-obs (sf-platform, sync wave -2): namespace observability with its Pod Security level and
+# default-deny NetworkPolicies, before any pod of the profile.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
+  - ../../apps/network-policies-obs
   - ../../apps/kube-prometheus-stack
   - ../../apps/slo
   - ../../apps/grafana-dashboards

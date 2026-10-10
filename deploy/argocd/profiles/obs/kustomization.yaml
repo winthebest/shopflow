@@ -1,8 +1,10 @@
 # Profile obs: full telemetry (metrics, logs, traces, SLOs). Mutually exclusive with profile obs-lite
-# (same otel-gateway release).
+# (same otel-gateway release). network-policies-obs (sf-platform, sync wave -2): namespace observability with its
+# Pod Security level and default-deny NetworkPolicies, before any pod of the profile.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
+  - ../../apps/network-policies-obs
   - ../../apps/kube-prometheus-stack
   - ../../apps/slo
   - ../../apps/grafana-dashboards
