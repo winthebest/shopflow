@@ -7,8 +7,9 @@
 #   restore-drill.sh run       k6 writes -> shop-db is destroyed -> recovery from the chain (latest, or --pitr N:
 #                              N seconds before the disaster) -> RPO, acked orders lost, RTO
 #
-# Options: --cluster NAME (sf-main)  --profiles LIST (core,drill)  --revision REV (main)  --warmup SECONDS (120)
-#          --rate CHECKOUTS_PER_S (20)  --pitr SECONDS  --dry-run
+# Options: --cluster NAME (sf-main)  --warmup SECONDS (120)  --rate CHECKOUTS_PER_S (20)  --pitr SECONDS  --dry-run
+#          --profiles LIST, --revision REV: default to what the cluster's root apps already use (root-* apps, the
+#          revision of root-core), so the recovery never moves the other apps to another revision.
 # Environment: BASE_URL (https://shop.127.0.0.1.sslip.io:<the cluster's HTTPS port>).
 # Output: out/drill/run-<stamp>/{acks.jsonl,k6.log,survivors.txt,result.json}; the head of the chain in
 # out/drill/pointer.json.
@@ -31,8 +32,8 @@ RECOVERY_TIMEOUT="${DRILL_RECOVERY_TIMEOUT:-1800}"
 PITR_TOLERANCE=2 # seconds around the PITR mark where an order may land on either side
 
 K3D_CLUSTER=sf-main
-PROFILES=core,drill
-REVISION=main
+PROFILES=""
+REVISION=""
 WARMUP=120
 RATE=20
 PITR=""
@@ -42,7 +43,7 @@ ARGO_PAUSED=0
 K6_PID=""
 
 usage() {
-  sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 parse_args() {
@@ -63,7 +64,20 @@ parse_args() {
     shift
   done
   case "$COMMAND" in prepare | run) ;; *) usage >&2; die "usage: $0 prepare|run [options]" ;; esac
-  case ",$PROFILES," in *,drill,*) ;; *) die "--profiles must include drill (seaweedfs + the barman-cloud plugin)" ;; esac
+}
+
+# The profiles and revision the root apps were created with (make up PROFILES=... GIT_REVISION=...).
+resolve_root_args() {
+  if [ -z "$PROFILES" ]; then
+    PROFILES="$(kube -n argocd get applications.argoproj.io -o json |
+      jq -r '[.items[].metadata.name | select(startswith("root-")) | ltrimstr("root-")] | join(",")')"
+  fi
+  if [ -z "$REVISION" ]; then
+    REVISION="$(kube -n argocd get applications.argoproj.io root-core -o jsonpath='{.spec.source.targetRevision}' 2>/dev/null || true)"
+    [ -n "$REVISION" ] || die "cannot read the revision of root-core: pass --revision"
+  fi
+  case ",$PROFILES," in *,drill,*) ;; *) die "the profiles ($PROFILES) do not include drill: make up PROFILES=core,drill" ;; esac
+  log "root apps: profiles $PROFILES, revision $REVISION"
 }
 
 # HTTPS load-balancer port of each cluster (docs/contracts/environment.md).
@@ -134,7 +148,8 @@ db_gone() {
 preflight() {
   require_cmds kubectl jq curl k6
   write_kubeconfig
-  apps_ready || die "profile drill is not Synced/Healthy (seaweedfs, cnpg-barman-plugin, shop-db): make up PROFILES=$PROFILES"
+  resolve_root_args
+  apps_ready || die "profile drill is not Synced/Healthy (seaweedfs, cnpg-barman-plugin, shop-db)"
   cnpg_ready || die "CNPG cluster shop-db is not Ready"
 }
 

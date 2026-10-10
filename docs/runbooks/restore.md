@@ -22,6 +22,9 @@ scripts/restore-drill.sh run --cluster <slot>        # latest
 scripts/restore-drill.sh run --cluster <slot> --pitr 30   # PITR: 30 s before the disaster
 ```
 
+`--profiles` and `--revision` default to what the cluster's root apps use (the `root-*` apps and root-core's
+revision), so re-applying the root apps for the recovery never moves the other apps to `main`.
+
 What `run` does:
 
 1. **Preflight:**

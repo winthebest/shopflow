@@ -13,7 +13,7 @@ NEW = f"shop-db-drill-{STAMP}"
 APPS = {
     "items": [
         {"metadata": {"name": name}, "status": {"sync": {"status": "Synced"}, "health": {"status": "Healthy"}}}
-        for name in ("seaweedfs", "cnpg-barman-plugin", "shop-db", "shop")
+        for name in ("root-core", "root-drill", "seaweedfs", "cnpg-barman-plugin", "shop-db", "shop")
     ]
 }
 
@@ -52,6 +52,7 @@ def drill(fake: Harness, tmp_path):
     k6.chmod(0o755)
     fake.on("kubectl", r"config view --minify --flatten --context k3d-sf-main", "apiVersion: v1\n")
     fake.on("kubectl", r"-n argocd get applications.argoproj.io -o json", json_out=APPS)
+    fake.on("kubectl", r"get applications.argoproj.io root-core -o jsonpath=\{.spec.source.targetRevision\}", "feature-x")
     fake.on("kubectl", r"-n argocd get pods -l app.kubernetes.io/name=argocd-application-controller", "")
     fake.on("kubectl", r"-n shop get pods,pvc -l cnpg.io/cluster=shop-db -o name", "")
     fake.on("kubectl", r"get clusters.postgresql.cnpg.io shop-db$", exit=1, stderr="NotFound")
@@ -105,7 +106,13 @@ def test_prepare_refuses_a_cluster_without_a_backup_chain(fake, drill):
 def test_profile_drill_must_be_healthy(fake, drill):
     env, _ = drill
     fake.rules.insert(
-        0, {"tool": "kubectl", "match": r"-n argocd get applications", "stdout": json.dumps({"items": APPS["items"][2:]}), "exit": 0}
+        0,
+        {
+            "tool": "kubectl",
+            "match": r"-n argocd get applications",
+            "stdout": json.dumps({"items": [a for a in APPS["items"] if a["metadata"]["name"] != "seaweedfs"]}),
+            "exit": 0,
+        },
     )
 
     result = fake.run("restore-drill.sh", "prepare", env=env)
@@ -142,7 +149,7 @@ def test_drill_destroys_recovers_and_measures(fake, drill):
     positions = [fake.index_of(s) for s in order]
     assert positions == sorted(positions), list(zip(order, positions, strict=True))
     hook = record.read_text()
-    expected = "KUBE_CONTEXT=k3d-sf-main --overlay local --revision main --profiles core,drill"
+    expected = "KUBE_CONTEXT=k3d-sf-main --overlay local --revision feature-x --profiles core,drill"
     assert f"{expected} --param pg.serverName={NEW} --param pg.recoveryFrom={OLD}" in hook
     assert "pg.recoveryTargetTime" not in hook
 
@@ -196,11 +203,22 @@ def test_dry_run_changes_nothing(fake, drill):
 
 def test_profiles_must_include_drill(fake, drill):
     env, _ = drill
+    run_ready(fake)
 
     result = fake.run("restore-drill.sh", "run", "--profiles", "core", env=env)
 
-    assert result.returncode != 0 and "--profiles must include drill" in result.stderr
-    assert not fake.calls()
+    assert result.returncode != 0 and "do not include drill" in result.stderr
+    assert not fake.mutations()
+
+
+def test_explicit_revision_wins_over_the_cluster(fake, drill):
+    env, record = drill
+    run_ready(fake)
+
+    result = fake.run("restore-drill.sh", "run", "--warmup", "1", "--revision", "abc1234", env=env)
+
+    assert result.returncode == 0, result.stderr
+    assert "--revision abc1234 --profiles core,drill" in record.read_text()
 
 
 def test_the_k6_script_still_logs_acks_in_the_shape_the_drill_reads():
