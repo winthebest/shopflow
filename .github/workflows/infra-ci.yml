@@ -159,7 +159,10 @@ jobs:
     env:
       AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
       TF_VAR_aws_account_id: ${{ vars.AWS_ACCOUNT_ID }}
-      TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
+      # Not a credential: the budget alert address, a secret only so GitHub masks it in public plan logs. An
+      # environment would change the OIDC subject that shopflow-ci-plan trusts (infra/tofu/bootstrap/github-oidc.tf)
+      # and gate a read-only plan without protecting anything.
+      TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }} # zizmor: ignore[secrets-outside-env]
       # Plan-only placeholder (TEST-NET-1); cloud-up passes the operator's real /32.
       TF_VAR_operator_cidr: 192.0.2.1/32
       LAYER: ${{ matrix.layer }}
