@@ -31,9 +31,10 @@ Expected spend for the first session: about **$1.2 for 4 hours** (`core,obs-lite
 Guardrails live from step 3: emails at $10 and $20 actual and $25 forecast; the Budget Action at $25 blocks new
 capacity; the lease (4 h by default) with the GitHub and Lambda reapers is the real stop.
 
-Before step 7 these must be merged (other lanes): the sf-platform root-app hook with the session parameters
-(ADR 0206), the `profiles-aws` trees, and the `aws` overlays of the core and obs-lite components, including the
-Envoy Gateway Service with the NLB load balancer class.
+Prerequisites from other lanes, all merged: the root-app hook with the session parameters (ADR 0206, #61), the
+`profiles-aws` trees (`core` #69, `obs`/`obs-lite` #73), the `aws` overlays of their components (the Envoy Gateway
+Service carries `loadBalancerClass: service.k8s.aws/nlb` and the operator CIDR), and the NetworkPolicies with
+their aws variant (ADR 0208).
 
 ## One-time account setup (user)
 
@@ -282,7 +283,20 @@ cluster; reaper workflow disabled â†’ the Lambda destroys it; a paused cluster â
       layer 2).
 - [ ] `kubectl get clustersecretstores,externalsecrets -A`: every store `Valid`, every ExternalSecret
       `SecretSynced`. The usual causes are a missing `aws.accountId` parameter or an unseeded parameter.
-- [ ] OpenCost (`kubectl -n opencost port-forward svc/opencost 9090`) shows cost per namespace.
+- [ ] API server egress address (ADR 0208, `components/apiserver-aws` allows TCP 443 to the VPC CIDR and to the
+      `kubernetes` Service IP `172.20.0.1`): keep only the one the network policy agent matches.
+      1. `kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes -o
+         jsonpath='{.items[*].endpoints[*].addresses[*]}'`: the control-plane ENIs, expected inside `10.60.0.0/16`;
+         `kubectl get svc kubernetes`: ClusterIP `172.20.0.1` (EKS picks `172.20.0.0/16` for a VPC in `10.0.0.0/8`).
+      2. In a scratch namespace `netpol-lab`, apply `default-deny` + DNS + one egress rule (TCP 443 to the VPC CIDR
+         **only**), and from a pod there connect to `kubernetes.default.svc:443`. Repeat with `172.20.0.1/32`
+         **only**. Delete the namespace.
+      3. Send the result (which address connected) to sf-platform, who own the component. If both connect, the
+         agent matches after the Service DNAT, and the VPC CIDR alone is enough.
+- [ ] OpenCost (`kubectl -n opencost port-forward svc/opencost 9090`) shows cost per namespace. It prices spot
+      nodes at on-demand rates, so compare its split with Cost Explorer's total the next day.
+- [ ] `out/cloud/<session>/timings.json`: RTO-infra and RTO-service of the first session, for `docs/cost.md` and
+      the Phase 6 report.
 - [ ] Measure $/hour (full stack and paused) and fill [`docs/cost.md`](../cost.md).
 
 ## Troubleshooting
