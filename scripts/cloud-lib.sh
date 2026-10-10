@@ -285,7 +285,11 @@ cnpg_backup_phase() {
 
 backup_completed() { [ "$(cnpg_backup_phase "$1")" = completed ]; }
 
-# On-demand CNPG Backup -> wait until completed -> move the SSM pointer to it. Idempotent: an
+# Where take_backup records the head of the chain: SSM on AWS. scripts/restore-drill.sh redefines it (a local
+# file). Arguments: the pointer JSON {serverName, backupId}, the Backup name.
+save_pg_pointer() { ssm_put "$SSM_PG_POINTER" "$1"; }
+
+# On-demand CNPG Backup -> wait until completed -> move the pointer to it. Idempotent: an
 # already-completed Backup of the same name only refreshes the pointer.
 take_backup() {
   local name="$1" file
@@ -331,7 +335,7 @@ EOF
   local pointer
   pointer="$(kube -n shop get backups.postgresql.cnpg.io "$name" -o json | jq -ce '{serverName: .status.serverName, backupId: .status.backupId}')" ||
     die "Backup $name has no serverName/backupId in its status"
-  ssm_put "$SSM_PG_POINTER" "$pointer"
+  save_pg_pointer "$pointer" "$name"
   log "backup pointer -> $pointer"
 }
 

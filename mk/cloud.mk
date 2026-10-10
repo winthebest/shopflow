@@ -9,7 +9,8 @@ HOURS ?= 2
 CLOUD_OFFLINE := env -u AWS_PROFILE -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN \
 	AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_EC2_METADATA_DISABLED=true
 CLOUD_TOFU_DIRS := infra/tofu/bootstrap infra/tofu/network infra/tofu/cluster $(sort $(wildcard infra/tofu/modules/*))
-CLOUD_SCRIPTS := scripts/cloud-lib.sh $(filter-out scripts/cloud-lib.sh,$(wildcard scripts/cloud-*.sh)) $(wildcard scripts/aws-*.sh) scripts/export-evidence.sh
+CLOUD_SCRIPTS := scripts/cloud-lib.sh $(filter-out scripts/cloud-lib.sh,$(wildcard scripts/cloud-*.sh)) $(wildcard scripts/aws-*.sh) scripts/export-evidence.sh \
+	scripts/restore-drill.sh
 # Pinned by digest (Trivy 0.74.0, ShellCheck v0.11.0); bump deliberately.
 CLOUD_TRIVY_IMAGE := aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969
 CLOUD_SHELLCHECK_IMAGE := koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
