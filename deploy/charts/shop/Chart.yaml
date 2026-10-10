@@ -3,4 +3,4 @@ name: shop
 description: shopflow shop services (gateway, orders, payments), migration and seed Jobs, public HTTPRoute; component=worker renders fulfillment-worker (KEDA)
 type: application
 version: 0.1.0
-appVersion: sha-0c7d9a1
+appVersion: sha-c35f922

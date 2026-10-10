@@ -19,8 +19,8 @@ services:
   gateway:
     image:
       repository: ghcr.io/winthebest/shopflow-gateway
-      tag: sha-0c7d9a1
-      digest: sha256:23d17f2f5f9898f667f5515d976b669ab2309d4969b75d3190a2865216c59939
+      tag: sha-c35f922
+      digest: sha256:3ecc7b3b88a5d6d0fd02d28b53e98d1a6a3b48597cf5735340a1b7387b53d48c
     port: 8000
     replicas: 2
     env:
@@ -31,8 +31,8 @@ services:
   orders:
     image:
       repository: ghcr.io/winthebest/shopflow-orders
-      tag: sha-0c7d9a1
-      digest: sha256:e32f7e67e31772530037fb18e256119100407dddd1ea02c86dc9885bbe68d4a6
+      tag: sha-c35f922
+      digest: sha256:40fcd26749b4bf83ead9fc0272522d38841db018ae484e4b745492627c02ac77
     port: 8001
     replicas: 2
     env:
@@ -47,8 +47,8 @@ services:
   payments:
     image:
       repository: ghcr.io/winthebest/shopflow-payments
-      tag: sha-0c7d9a1
-      digest: sha256:a09390169b12b4fed383ee751e9726332e46dd4ec6a3a920b31543f21b9d6409
+      tag: sha-c35f922
+      digest: sha256:2b8a2201048bcf2d7b631fbda3f709387932a1c2c0e16fc9f26bc26ff8055935
     port: 8002
     replicas: 2
     env:
@@ -63,8 +63,8 @@ services:
     kind: worker
     image:
       repository: ghcr.io/winthebest/shopflow-fulfillment-worker
-      tag: sha-0c7d9a1
-      digest: sha256:2508110c37dcd08eb159d7d5cad0fec8a6e4261714761815b3692fa3ed566a5b
+      tag: sha-c35f922
+      digest: sha256:15705c4f5527ace0ea76be81e8f441810b71098034738d637ecfa091272ba91b
     port: 8003
     env:
       DATABASE_HOST: shop-db-rw.shop.svc
