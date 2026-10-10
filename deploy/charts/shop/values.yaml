@@ -79,7 +79,9 @@ services:
     autoscaling:                  # KEDA Kafka scaler (docs/adr/0304)
       minReplicaCount: 1
       maxReplicaCount: 6          # <= partitions of shop.public.orders (6, sf-data); more consumers would idle
-      lagThreshold: 50            # records per replica; re-measure with k6 before the game day
+      # Records of backlog per replica: ~100 records/s per replica (measured: 103.5 under k6, 100 draining game day 3's
+      # backlog) x 30 s of work each (docs/perf-baseline.md, 2026-10-10; ADR 0304). Was 50: scaled on any blip.
+      lagThreshold: 3000
       pollingInterval: 15
       scaleDownStabilizationSeconds: 60   # back to minReplicaCount 60s after the lag is drained
     resources:
