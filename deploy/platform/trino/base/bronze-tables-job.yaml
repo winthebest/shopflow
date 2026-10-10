@@ -30,8 +30,8 @@ spec:
           command:
             - trino
             - --server=https://trino.lakehouse.svc:8443
+            # A PEM file is recognised as such; --truststore-type only names JVM keystore types (PEM is not one).
             - --truststore-path=/etc/trino-ca/ca.crt
-            - --truststore-type=PEM
             - --user=dbt
             - --password
             - --file=/sql/bronze-tables.sql

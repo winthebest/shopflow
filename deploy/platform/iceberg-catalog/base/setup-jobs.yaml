@@ -19,7 +19,10 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: polaris-bootstrap
+        # name=polaris: the shop-db NetworkPolicy admits Polaris (server and this admin tool) to database catalog.
+        # No app.kubernetes.io/instance label, so the polaris Service and Deployment never select this pod.
+        app.kubernetes.io/name: polaris
+        app.kubernetes.io/component: bootstrap
         app.kubernetes.io/part-of: shopflow
     spec:
       restartPolicy: Never
@@ -29,6 +32,39 @@ spec:
         runAsUser: 10000  # the image's user is named, so give the uid the chart's server also uses
         seccompProfile:
           type: RuntimeDefault
+      # Polaris 1.8 creates its tables from postgres/schema-v6.sql, which (unlike v2-v4) no longer creates the schema:
+      # it expects the one named by the chart's currentSchema=POLARIS_SCHEMA to exist. polaris owns database catalog,
+      # so it creates the schema itself (idempotent; the shop-db policy admits this pod as Polaris).
+      initContainers:
+        - name: create-schema
+          image: ghcr.io/cloudnative-pg/postgresql:17.11-minimal-trixie@sha256:ca2c3bb893d185fe4e5d0401a010454bd87dcb67c53003c38fd828804928f5d9
+          # Retries: a new pod's IP reaches the k3s NetworkPolicy allow-lists a few seconds after it starts, so the
+          # first connection of a fast init container can be rejected.
+          command:
+            - sh
+            - -c
+            - |-
+              for attempt in $(seq 1 30); do
+                psql -v ON_ERROR_STOP=1 -qAt -c "CREATE SCHEMA IF NOT EXISTS polaris_schema" && exit 0
+                sleep 2
+              done
+              exit 1
+          env:
+            - name: PGHOST
+              value: shop-db-rw.shop.svc
+            - name: PGDATABASE
+              value: catalog
+            - name: PGSSLMODE
+              value: require
+            - name: PGUSER
+              valueFrom: {secretKeyRef: {name: polaris-db, key: username}}
+            - name: PGPASSWORD
+              valueFrom: {secretKeyRef: {name: polaris-db, key: password}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
       containers:
         - name: bootstrap
           image: apache/polaris-admin-tool:1.8.0@sha256:34dde19bb321aef5925a14ba90b69e26e982a5dcbda76a9d0cfc1aac1534ba4e

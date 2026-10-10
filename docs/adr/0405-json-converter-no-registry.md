@@ -18,6 +18,18 @@ changes are already gated by data contracts in CI (Phase 5).
 - `timestamptz` → Debezium ISO-8601 string, converted to `timestamp(6) with time zone`;
 - `_ingested_at` → Kafka record time (`InsertField` with `timestamp.field` on the sink side; epoch milliseconds).
 
+Record format on `shop.public.*` (value; the key is `{"<pk>": ...}`), observed on the cluster on 2026-10-10:
+
+- every source column of the after-image, plus `_op` (`c|u|d|r`), `_lsn`, `_source_ts_ms` (ExtractNewRecordState
+  `add.fields`), `__deleted` (`"true"|"false"`, from `delete.tombstone.handling.mode=rewrite`) and `_cdc_epoch`;
+- `_cdc_epoch` is a **string** (`InsertField` static value, e.g. `"1791611151"`, epoch seconds); bronze stores it as
+  `bigint`;
+- a delete (`_op = 'd'`, `__deleted = "true"`) carries the real key only: Postgres sends just the key (default
+  replica identity) and Debezium fills every other NOT NULL column with its type's default (`0`, `""`, `"0.00"`,
+  `1970-01-01T00:00:00Z`). Consumers (silver, Flink, services) must trust only the key of a `d` row and decide by
+  `_op` (or `__deleted`), never by its other columns;
+- no tombstones (`tombstones.on.delete=false`).
+
 Bronze tables are created up front with explicit types (`deploy/platform/trino/base/bronze-tables.sql`), with
 `auto-create` and schema evolution off in the sink: unknown fields (for example the routing field `_topic`) are
 dropped, and a new source column reaches bronze only through a reviewed DDL change.
