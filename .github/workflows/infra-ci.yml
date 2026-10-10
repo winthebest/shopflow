@@ -20,6 +20,8 @@ on:
       - scripts/cloud-*.sh
       - scripts/aws-*.sh
       - scripts/export-evidence.sh
+      - scripts/restore-drill.sh
+      - loadtest/checkout.js
       - mk/cloud.mk
       - .github/workflows/infra-ci.yml
       - .github/workflows/cloud-reaper.yml
@@ -36,6 +38,8 @@ on:
       - scripts/cloud-*.sh
       - scripts/aws-*.sh
       - scripts/export-evidence.sh
+      - scripts/restore-drill.sh
+      - loadtest/checkout.js
       - mk/cloud.mk
       - .github/workflows/infra-ci.yml
       - .github/workflows/cloud-reaper.yml
