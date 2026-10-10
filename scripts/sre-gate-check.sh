@@ -55,15 +55,20 @@ if [[ "${n:-0}" -gt 0 ]]; then pass "CNPG scraped (PodMonitor cnpg-shop)" "$n ta
 n="$(count 'traces_span_metrics_calls_total{service_name="gateway", span_kind="SPAN_KIND_SERVER"}')"
 if [[ "${n:-0}" -gt 0 ]]; then pass "OTLP span metrics (gateway)" "$n series"; else fail "OTLP span metrics (gateway)" "no series: is traffic flowing and otel-gateway up?"; fi
 
-bad="$(prom_raw rules 2>/dev/null | jq -r '[.data.groups[] | .name as $g | .rules[] | select(.health != "ok") | $g + "/" + .name + ": " + (.lastError // .health)] | join("; ")')"
-if [[ -z "$bad" ]]; then pass "rule groups healthy"; else fail "rule groups healthy" "$bad"; fi
+# health "unknown" = not evaluated yet (normal right after make up): WARN; "err" = broken rule: FAIL.
+rules="$(prom_raw rules 2>/dev/null)"
+bad="$(jq -r '[.data.groups[] | .name as $g | .rules[] | select(.health == "err") | $g + "/" + .name + ": " + (.lastError // "err")] | join("; ")' <<<"$rules")"
+unknown="$(jq -r '[.data.groups[] | .rules[] | select(.health == "unknown")] | length' <<<"$rules")"
+if [[ -n "$bad" ]]; then fail "rule groups healthy" "$bad"
+elif [[ "${unknown:-0}" -gt 0 ]]; then warn "rule groups healthy" "$unknown rule(s) not evaluated yet; re-run in a minute"
+else pass "rule groups healthy"; fi
 
 # ---- SLOs -----------------------------------------------------------------------------------------------------
 # Every Sloth spec in slo/ must have SLI samples (one per SLO); a service without a spec yet is skipped.
 for spec in "$ROOT"/slo/*.yaml; do
   svc="$(yq '.spec.service' "$spec")"; want="$(yq '.spec.slos | length' "$spec")"
   got="$(count "slo:sli_error:ratio_rate5m{sloth_service=\"$svc\"}")"
-  if [[ "$got" -ge "$want" ]]; then pass "SLO $svc has SLI data" "$got/$want SLOs"
+  if [[ "${got:-0}" -ge "$want" ]]; then pass "SLO $svc has SLI data" "$got/$want SLOs"
   else fail "SLO $svc has SLI data" "$got/$want SLOs with a 5m sample (no traffic or SLI source missing?)"; fi
 done
 grep -qsl 'freshness' "$ROOT"/slo/*.yaml || skip "SLO gold freshness" "no spec in slo/ yet (sf-data)"
