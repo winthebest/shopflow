@@ -65,8 +65,9 @@ class Sweeper:
                 log.info("stranded-order sweep paused: payments circuit open")
                 break
             outcome = await self._payments.charge(order_id, total, permit)
-            if outcome.error is not None:
-                continue  # no answer: still pending, retried once the lease expires
+            if outcome.error is not None:  # still pending, retried once the lease expires
+                log.info("stranded order: payments did not answer, retrying later", extra={"order_id": order_id})
+                continue
             result = await settle_order(self._sessionmaker, order_id, total, outcome)
             if result.settled_now:
                 settled += 1

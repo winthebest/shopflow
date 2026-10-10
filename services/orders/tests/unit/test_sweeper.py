@@ -80,11 +80,14 @@ async def test_answers_are_settled_and_counted(db, caplog):
     assert sum(r.message == "stranded order settled" for r in caplog.records) == 2
 
 
-async def test_no_answer_leaves_the_order_pending(db):
+async def test_no_answer_leaves_the_order_pending_and_says_so(db, caplog):
     payments = FakePayments(ChargeOutcome("error", error="timeout"), ChargeOutcome("succeeded", charge_id="c-8"))
     sweep, _ = sweeper(payments)
-    assert await sweep.sweep_once() == 1
+    with caplog.at_level("INFO", logger="orders"):
+        assert await sweep.sweep_once() == 1
     assert db["settles"] == [(8, "succeeded")]  # order 7 is retried once its lease expires
+    retried = [r for r in caplog.records if r.message == "stranded order: payments did not answer, retrying later"]
+    assert [r.order_id for r in retried] == [7]  # what the pending-orders runbook greps for
 
 
 async def test_open_circuit_ends_the_tick_without_charging(db):
