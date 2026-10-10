@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Gate check for the sf-sre components on a running cluster (read-only; queries Prometheus and the API server
-# through the kube-apiserver service proxy, so no port-forward). Prints PASS / WARN / FAIL / SKIP per check and
-# exits non-zero on any FAIL.
+# Gate check for the sf-sre components on a running cluster (read-only). Prometheus is queried through a
+# `kubectl port-forward` on a random local port (killed on exit): unlike the API server's service proxy, it is not
+# blocked by the observability NetworkPolicies. Prints PASS / WARN / FAIL / SKIP per check and exits non-zero on any
+# FAIL.
 #
 # Usage: scripts/sre-gate-check.sh [--context CTX] [--window DURATION]
 #   --context  kube context (default: $KUBE_CONTEXT, else k3d-sf-main)
@@ -34,7 +35,8 @@ skip() { printf 'SKIP  %-34s %s\n' "$1" "${2:-}"; }
 
 kc() { kubectl --context "$CTX" "$@"; }
 enc() { jq -rn --arg v "$1" '$v | @uri'; }
-prom_raw() { kc get --raw "/api/v1/namespaces/observability/services/kps-prometheus:9090/proxy/api/v1/$1"; }
+PF_PORT=""
+prom_raw() { curl -fsS --max-time 20 "http://127.0.0.1:${PF_PORT}/api/v1/$1"; }
 # prom '<promql>' → instant-query result array (JSON), [] on error
 prom() { prom_raw "query?query=$(enc "$1")" 2>/dev/null | jq -c '.data.result // []' 2>/dev/null || echo '[]'; }
 # scalar '<promql>' → first sample value, empty when none
@@ -42,7 +44,19 @@ scalar() { prom "$1" | jq -r '.[0].value[1] // empty'; }
 count() { prom "$1" | jq 'length'; }
 
 kc get --raw /readyz >/dev/null 2>&1 || { echo "cannot reach the API server of context $CTX" >&2; exit 2; }
-prom_raw "status/buildinfo" >/dev/null 2>&1 || { echo "Prometheus (observability/kps-prometheus) not reachable" >&2; exit 2; }
+PF_LOG="$(mktemp)"
+kc -n observability port-forward svc/kps-prometheus :9090 >"$PF_LOG" 2>&1 &
+PF_PID=$!
+trap 'kill "$PF_PID" 2>/dev/null; rm -f "$PF_LOG"' EXIT
+for _ in $(seq 1 50); do
+  PF_PORT="$(grep -oE '127\.0\.0\.1:[0-9]+' "$PF_LOG" | head -1 | cut -d: -f2)"
+  [[ -n "$PF_PORT" ]] && break
+  sleep 0.2
+done
+if [[ -z "$PF_PORT" ]] || ! prom_raw "status/buildinfo" >/dev/null 2>&1; then
+  echo "Prometheus (observability/kps-prometheus) not reachable through port-forward" >&2
+  exit 2
+fi
 echo "sre gate check — context $CTX, window $WINDOW"
 
 # ---- pipeline -------------------------------------------------------------------------------------------------
@@ -69,7 +83,7 @@ for spec in "$ROOT"/slo/*.yaml; do
   svc="$(yq '.spec.service' "$spec")"; want="$(yq '.spec.slos | length' "$spec")"
   got="$(count "slo:sli_error:ratio_rate5m{sloth_service=\"$svc\"}")"
   if [[ "${got:-0}" -ge "$want" ]]; then pass "SLO $svc has SLI data" "$got/$want SLOs"
-  else fail "SLO $svc has SLI data" "$got/$want SLOs with a 5m sample (no traffic or SLI source missing?)"; fi
+  else fail "SLO $svc has SLI data" "$got/$want SLOs with a 5m sample (no traffic? run loadtest/checkout.js for a few minutes)"; fi
 done
 grep -qsl 'freshness' "$ROOT"/slo/*.yaml || skip "SLO gold freshness" "no spec in slo/ yet (sf-data)"
 
@@ -78,7 +92,8 @@ if [[ "${n:-0}" -gt 0 ]]; then pass "CDC heartbeat staleness series"; else fail 
 
 bytes="$(scalar 'max(shopflow:pg_slot_wal_retained:bytes)')"; ratio="$(scalar 'max(shopflow:pg_slot_wal_retained:ratio)')"
 if [[ -n "$bytes" && -n "$ratio" ]]; then
-  pass "WAL-retained series (debezium_shop)" "$(awk -v b="$bytes" -v r="$ratio" 'BEGIN{printf "%.0f MiB, %.1f%% of max_slot_wal_keep_size", b/1048576, r*100}')"
+  # restart_lsn moves by WAL segment (16 MiB), so the value normally swings between ~0 and ~16 MiB.
+  pass "WAL-retained series (debezium_shop)" "$(awk -v b="$bytes" -v r="$ratio" 'BEGIN{printf "%.0f bytes (%.1f MiB), %.2f%% of max_slot_wal_keep_size", b, b/1048576, r*100}')"
 else
   fail "WAL-retained series (debezium_shop)" "missing (data profile up? Debezium slot created? cnpg-shop scraped?)"
 fi
