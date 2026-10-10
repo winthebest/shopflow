@@ -27,7 +27,7 @@ Point-in-time recovery is also blind past the last archived segment while this l
 
 ## Triage
 
-1. How bad and how fast, in Grafana Explore or `make sre-gate-check`:
+1. How bad and how fast, in Grafana Explore:
    - `shopflow:pg_wal_archive_pending:segments`: segments waiting (×16 MiB);
    - `deriv(shopflow:pg_wal_archive_pending:segments[15m]) * 60`: segments a minute;
    - `cnpg_pg_stat_archiver_failed_count`, `cnpg_pg_stat_archiver_seconds_since_last_archival`.
