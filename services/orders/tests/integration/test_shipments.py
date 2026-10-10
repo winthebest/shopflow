@@ -28,10 +28,12 @@ SCHEMA_PRIVILEGES = """
     SELECT n.nspname, acl.privilege_type FROM pg_namespace n, aclexplode(n.nspacl) acl
     WHERE acl.grantee = 'fulfillment_worker'::regrole ORDER BY 1, 2
 """
-# What the worker runs (fulfillment-worker): idempotent on order_id.
+# What the worker runs (fulfillment-worker): idempotent on order_id. No conflict target on purpose: naming one,
+# `ON CONFLICT (order_id)`, needs SELECT on that column; untargeted DO NOTHING needs INSERT only, and order_id is the
+# only unique constraint that can fire (the identity key never collides).
 INSERT_SHIPMENT = """
     INSERT INTO shipments (order_id, cdc_epoch, source_lsn) VALUES ({order_id}, 7, 1000)
-    ON CONFLICT (order_id) DO NOTHING
+    ON CONFLICT DO NOTHING
 """
 
 
@@ -103,6 +105,7 @@ async def test_shipment_for_unknown_order_is_rejected(seeded_db, worker_url):
         "INSERT INTO orders (customer_id, status, total) VALUES (1, 'paid', 1)",
         "SELECT * FROM customers",
         "CREATE TABLE public.sneaky (id int)",
+        "INSERT INTO shipments (order_id, cdc_epoch, source_lsn) VALUES (1, 7, 1) ON CONFLICT (order_id) DO NOTHING",
     ],
     ids=[
         "read-order-total",
@@ -112,6 +115,7 @@ async def test_shipment_for_unknown_order_is_rejected(seeded_db, worker_url):
         "insert-orders",
         "read-customers",
         "create-table",
+        "targeted-on-conflict",  # a conflict target needs SELECT on its columns, which the worker does not have
     ],
 )
 async def test_worker_cannot_do_anything_else(seeded_db, worker_url, sql):
