@@ -8,6 +8,11 @@
 -- The sink upserts by window_start, so a replay rewrites the same rows.
 -- Run by io.shopflow.flink.SqlRunner: placeholders come from the environment, statements end with ';' at line end.
 
+-- One job and one checkpoint directory per CDC epoch: a new epoch starts from fresh state (scripts/cdc-epoch.sh new
+-- deletes the FlinkDeployment, Argo CD recreates it) and never restores another epoch's checkpoint.
+SET 'pipeline.name' = 'kpi-minute-${CDC_EPOCH}';
+SET 'execution.checkpointing.dir' = 's3://lake/flink-ckpt/${CDC_EPOCH}';
+
 CREATE TABLE orders_cdc (
     id BIGINT,
     total STRING,

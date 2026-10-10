@@ -36,9 +36,11 @@ epoch.
     `shop.public.orders` has 6 partitions (Phase 7 fulfillment worker) and a quiet shop leaves most of them empty.
   - 1-minute tumbling windows over a union of order and payment inserts.
   - The JDBC sink upserts on `window_start`, so replays rewrite the same rows.
-- **Epochs:** the Kafka consumer group carries the CDC epoch (`flink-kpi-minute-<epoch>`, in the SQL). The
-  deployment PR adds the per-epoch checkpoint directory (`flink-ckpt/<epoch>/`) and the switch to a new epoch, which
-  starts from fresh state and never restores another epoch's checkpoint.
+- **Epochs:** the Kafka consumer group (`flink-kpi-minute-<epoch>`), the job name and the checkpoint directory
+  (`SET 'execution.checkpointing.dir' = 's3://lake/flink-ckpt/<epoch>'`, applied by SqlRunner to the job's
+  configuration) all carry the CDC epoch. On a new epoch, `scripts/cdc-epoch.sh new` deletes the FlinkDeployment
+  (the operator drops its HA state with it) and Argo CD recreates it: the job starts from fresh state and never
+  restores another epoch's checkpoint.
 
 ## Alternatives considered
 
