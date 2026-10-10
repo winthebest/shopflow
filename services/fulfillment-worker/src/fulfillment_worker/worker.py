@@ -5,11 +5,13 @@ the database commit, so a crash re-delivers the batch and `ON CONFLICT DO NOTHIN
 """
 
 import asyncio
+import contextlib
 import logging
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Protocol
 
+from aiokafka.errors import CommitFailedError
 from opentelemetry import trace
 from sqlalchemy.exc import DBAPIError
 
@@ -17,7 +19,9 @@ from fulfillment_worker.events import MalformedEventError, OrderChange, parse_or
 from fulfillment_worker.store import BatchResult
 
 POLL_TIMEOUT_MS = 1_000
-STORE_ATTEMPTS = 4  # ~7s of backoff in total; well inside the consumer's max.poll.interval (300s)
+# Backoff 0.5, 1, 2, 4, 8, 10s (~25s): rides out a CNPG switchover; well inside max.poll.interval (300s).
+STORE_ATTEMPTS = 7
+MAX_BACKOFF_S = 10.0
 
 log = logging.getLogger("worker")
 tracer = trace.get_tracer("fulfillment_worker")
@@ -42,23 +46,35 @@ class Worker:
         *,
         max_records: int,
         shipment_latency_s: float,
-        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
         self.consumer = consumer
         self.store = store
         self.max_records = max_records
         self.shipment_latency_s = shipment_latency_s
-        self.sleep = sleep
+        self.sleep = sleep or self._pause
         self.last_poll = time.monotonic()
-        self._stopping = False
+        self._stopping = asyncio.Event()
 
     def stop(self) -> None:
-        """Finish the batch in progress, commit it, then return from run()."""
-        self._stopping = True
+        """Finish the batch in progress (cutting short its simulated latency), commit it, then leave run()."""
+        self._stopping.set()
+
+    def seconds_since_poll(self) -> float:
+        return time.monotonic() - self.last_poll
 
     async def run(self) -> None:
-        while not self._stopping:
-            await self.process_once()
+        try:
+            while not self._stopping.is_set():
+                await self.process_once()
+        except Exception:
+            log.exception("consume loop crashed; the pod restarts from the last committed offset")
+            raise
+
+    async def _pause(self, seconds: float) -> None:
+        """Sleep that ends early on stop(), so shutdown never waits for simulated latency."""
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self._stopping.wait(), seconds)
 
     async def process_once(self) -> int:
         """Poll one batch and handle it. Returns the number of records consumed."""
@@ -83,7 +99,12 @@ class Worker:
             result = await self._store_with_retry(wanted)
             if result.created and self.shipment_latency_s:
                 await self.sleep(result.created * self.shipment_latency_s)  # simulated carrier booking
-            await self.consumer.commit()
+            try:
+                await self.consumer.commit()
+            except CommitFailedError as exc:
+                # The group rebalanced mid-batch (KEDA scaling, rollout): the partitions' new owner re-reads this
+                # batch and ON CONFLICT DO NOTHING absorbs it. Keep consuming instead of crashing into a restart.
+                log.warning("offset commit lost to a rebalance; batch will be re-delivered", extra={"error": str(exc)})
 
             log.info(
                 "batch done",
@@ -110,7 +131,7 @@ class Worker:
             except (DBAPIError, OSError, TimeoutError) as exc:
                 if attempt == STORE_ATTEMPTS:
                     raise  # task dies -> /healthz fails -> restart from the last committed offset
-                delay = 0.5 * 2 ** (attempt - 1)
+                delay = min(0.5 * 2 ** (attempt - 1), MAX_BACKOFF_S)
                 log.warning("store failed, retrying", extra={"attempt": attempt, "delay_s": delay, "error": str(exc)})
                 await self.sleep(delay)
         raise AssertionError("unreachable")

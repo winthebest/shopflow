@@ -97,3 +97,10 @@ async def test_dead_loop_fails_liveness():
         await asyncio.sleep(0.05)  # let the loop crash
         assert await probe(app, "/healthz") == 503
         assert await probe(app, "/readyz") == 503
+
+
+async def test_stalled_loop_fails_liveness(monkeypatch):
+    app = app_with(IdleConsumer())
+    async with app.router.lifespan_context(app):
+        monkeypatch.setattr(app.state.worker, "seconds_since_poll", lambda: 500.0)
+        assert await probe(app, "/healthz") == 503

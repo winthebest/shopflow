@@ -31,6 +31,10 @@ SERVICE = "fulfillment-worker"
 PORT = 8003
 READY_TIMEOUT_S = 1.0
 STOP_TIMEOUT_S = GRACEFUL_SHUTDOWN_S - 2  # leave time to close the consumer and the engine
+# Liveness: the loop polls every second when idle; a batch takes at most ~batch x latency plus ~25s of DB retries.
+STALLED_AFTER_S = 120.0
+DB_CONNECT_TIMEOUT_S = 5.0  # no 1s request budget here, unlike orders
+DB_STATEMENT_TIMEOUT_S = 10.0
 
 log = logging.getLogger("fulfillment_worker")
 
@@ -60,7 +64,9 @@ def create_app(settings: Settings | None = None, consumer: AIOKafkaConsumer | No
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        engine = create_engine(settings.dsn())
+        engine = create_engine(
+            settings.dsn(), connect_timeout_s=DB_CONNECT_TIMEOUT_S, command_timeout_s=DB_STATEMENT_TIMEOUT_S
+        )
         kafka = consumer or kafka_consumer(settings)
         await kafka.start()
         worker = Worker(
@@ -70,12 +76,12 @@ def create_app(settings: Settings | None = None, consumer: AIOKafkaConsumer | No
             shipment_latency_s=settings.shipment_latency_ms / 1000,
         )
         task = asyncio.create_task(worker.run(), name="consume")
-        app.state.engine, app.state.task = engine, task
+        app.state.engine, app.state.task, app.state.worker = engine, task, worker
         try:
             yield
         finally:
             worker.stop()
-            with suppress(Exception):  # a crashed loop already logged its error
+            with suppress(Exception):  # Worker.run() logged the crash
                 await asyncio.wait_for(task, STOP_TIMEOUT_S)
             await kafka.stop()  # leave the group: partitions move to the other replicas without waiting
             await engine.dispose()
@@ -86,7 +92,8 @@ def create_app(settings: Settings | None = None, consumer: AIOKafkaConsumer | No
     def loop_failure(request: Request) -> str | None:
         task: asyncio.Task = request.app.state.task
         if not task.done():
-            return None
+            stalled_s = request.app.state.worker.seconds_since_poll()
+            return f"consume loop stalled for {stalled_s:.0f}s" if stalled_s > STALLED_AFTER_S else None
         exc = task.exception() if not task.cancelled() else None
         return f"consume loop stopped: {exc!r}" if exc else "consume loop stopped"
 

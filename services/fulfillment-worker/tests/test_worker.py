@@ -1,9 +1,12 @@
 """Consume loop semantics with a fake consumer and store: commit only after a successful store, retries, poison."""
 
+import asyncio
 import json
+import time
 from collections import namedtuple
 
 import pytest
+from aiokafka.errors import CommitFailedError
 from sqlalchemy.exc import OperationalError
 
 from fulfillment_worker.events import OrderChange
@@ -117,3 +120,40 @@ async def test_stop_ends_the_loop_after_the_current_batch():
     await loop.run()
     assert [c.order_id for call in store.calls for c in call] == [1]
     assert consumer.commits == 1
+
+
+class RebalancingConsumer(FakeConsumer):
+    """commit() fails like aiokafka does when the group rebalanced during the batch."""
+
+    async def commit(self) -> None:
+        self.commits += 1
+        raise CommitFailedError("rebalance in progress")
+
+
+async def test_commit_lost_to_a_rebalance_does_not_kill_the_loop(caplog):
+    consumer, store = RebalancingConsumer([change(1)], [change(2)]), FakeStore()
+    loop = worker(consumer, store)
+    await loop.process_once()
+    await loop.process_once()  # still consuming
+    assert consumer.commits == 2
+    assert any("lost to a rebalance" in r.message for r in caplog.records)
+
+
+async def test_crashed_loop_is_logged(caplog):
+    consumer, store = FakeConsumer([change(1)]), FakeStore(failures=STORE_ATTEMPTS)
+    with pytest.raises(OperationalError):
+        await worker(consumer, store).run()
+    assert any(r.message.startswith("consume loop crashed") and r.exc_info for r in caplog.records)
+
+
+async def test_stop_cuts_simulated_latency_short():
+    loop = Worker(FakeConsumer(), FakeStore(), max_records=500, shipment_latency_s=0.0)
+    loop.stop()
+    await asyncio.wait_for(loop._pause(30), timeout=1)  # returns at once instead of after 30s
+
+
+def test_seconds_since_poll_grows_until_the_next_poll(monkeypatch):
+    loop = worker(FakeConsumer(), FakeStore())
+    now = time.monotonic()
+    monkeypatch.setattr(time, "monotonic", lambda: now + 200)
+    assert loop.seconds_since_poll() >= 199
