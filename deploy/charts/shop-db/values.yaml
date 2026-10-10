@@ -53,6 +53,11 @@ roles:
     database: serving
     secret: shop-db-grafana-serving
     comment: Grafana KPI datasource (read-only on serving, grants from flink_serving)
+  fulfillment_worker:
+    enabled: true
+    database: shop
+    secret: shop-db-fulfillment-worker
+    comment: fulfillment-worker (INSERT on shipments, grants from Alembic 0004)
 
 # Databases besides `shop`, as CNPG Database objects. Kept when the object is deleted: dropping one loses data.
 databases:
