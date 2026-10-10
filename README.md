@@ -49,14 +49,13 @@ flowchart LR
   end
   sink --> bronze
   gold --> trino[Trino] -.-> mb[Metabase<br/>planned]:::planned
-  kafka --> flink[Flink SQL KPIs<br/>not yet run]:::wip --> kpi[(KPI table<br/>Postgres)] --> graf[Grafana]
+  kafka --> flink[Flink SQL KPIs<br/>validated on k3d] --> kpi[(KPI table<br/>Postgres)] --> graf[Grafana]
   classDef planned stroke-dasharray: 6 4
-  classDef wip stroke-dasharray: 2 2
 ```
 
 Iceberg data lives in SeaweedFS behind an Apache Polaris REST catalog (S3 and AWS Glue on AWS). CDC into
-bronze is validated end to end on a local k3d cluster, not yet on AWS. dbt and Airflow are merged but not yet
-run on a cluster; the same holds for the Flink KPI job (profile `rt`). Metabase is planned.
+bronze and the Flink KPI job (profile `rt`) are validated end to end on a local k3d cluster, not yet on AWS.
+dbt and Airflow are merged; their cluster run is in progress. Metabase is planned.
 
 **Platform and observability.** After the bootstrap, Git is the only deploy path. Every request is traced, and
 the SLIs come from those traces.
@@ -90,6 +89,7 @@ flowchart LR
 | GitOps fails closed: CI builds every profile and fails if any app would not follow the deployed Git revision | [gitops.md §4](docs/contracts/gitops.md#4-profiles), [platform-validate.sh](scripts/platform-validate.sh) |
 | Security baseline: Pod Security `restricted` in the core namespaces (`baseline` for data and Airflow, `privileged` for observability), default-deny NetworkPolicies in all of them, SOPS-encrypted secrets, admin UIs only through port-forward, Kafka over TLS + SCRAM, gitleaks, images pinned by digest | ADRs [0208](docs/adr/0208-psa-and-network-policies.md), [0204](docs/adr/0204-sops-ksops-local-secrets.md), [0205](docs/adr/0205-admin-ui-port-forward-only.md), [0404](docs/adr/0404-kafka-tls-scram-acl.md) |
 | CDC end to end on k3d (`core,obs-lite,data`): the snapshot put 100/100 customers in bronze; one order's insert, update and delete reached bronze as `c,u,d` in **47 s** (target ≤ 120 s); bronze heartbeat freshness 27 s; Debezium 3 ms behind the source when idle; ~10.6 GB RAM. Not run on AWS yet | [PR #122](https://github.com/winthebest/shopflow/pull/122), [data-cluster-check.sh](scripts/data-cluster-check.sh) |
+| Realtime KPIs with Flink SQL on k3d (`core,obs-lite,data,rt`): under k6 at 10 checkouts/s, a minute's KPIs are in Postgres 34 s after its window closes (67 s after the load starts); per-minute order counts match the `orders` table exactly; the Grafana KPI panels show data; ~12.6 GB RAM, so `rt` runs as an exclusive slot. Known gap: the last minute stays open when orders stop. Not run on AWS yet | [ADR 0415, Consequences](docs/adr/0415-flink-sql-realtime-kpis.md#consequences) |
 | AWS guardrails: a budget that excludes credits, a deny action at $25, sessions bounded by a lease and two reapers. Cost *estimate* $0.30–0.45/h, not yet measured | [docs/cost.md](docs/cost.md), ADRs [0510](docs/adr/0510-cost-guardrails-exclude-credits.md), [0501](docs/adr/0501-ephemeral-env-with-lease.md) |
 
 ## Tech stack
@@ -102,7 +102,7 @@ flowchart LR
 | Observability, SLO | OpenTelemetry Collector, Prometheus + Alertmanager, Loki, Tempo, Grafana, Sloth, k6 | [0300](docs/adr/0300-slo-tooling-sloth.md), [0301](docs/adr/0301-otel-collector-single-pipeline.md), [0302](docs/adr/0302-observability-backends-chart-sources.md) |
 | Ingest | Debezium, Kafka on Strimzi (KRaft), Iceberg sink connector | [0400](docs/adr/0400-kafka-kraft-debezium-iceberg-versions.md), [0403](docs/adr/0403-strimzi-over-msk.md), [0405](docs/adr/0405-json-converter-no-registry.md), [0406](docs/adr/0406-append-only-bronze-cdc-epoch.md) |
 | Lakehouse | Apache Iceberg v2, Apache Polaris, SeaweedFS (AWS: S3 + Glue), Trino | [0407](docs/adr/0407-iceberg-format-v2.md), [0408](docs/adr/0408-iceberg-rest-catalog-polaris.md), [0409](docs/adr/0409-seaweedfs-over-minio.md), [0410](docs/adr/0410-trino-catalogs-per-identity.md), [0506](docs/adr/0506-glue-catalog-on-aws.md) |
-| Transform, serve | dbt Core, Airflow 3 + Cosmos, custom freshness exporter, Flink SQL (in progress), Metabase (planned) | [0412](docs/adr/0412-dbt-core-over-sqlmesh.md), [0414](docs/adr/0414-airflow3-local-executor-cosmos.md), [0402](docs/adr/0402-freshness-exporter-custom.md), [0415](docs/adr/0415-flink-sql-realtime-kpis.md) |
+| Transform, serve | dbt Core, Airflow 3 + Cosmos, custom freshness exporter, Flink SQL, Metabase (planned) | [0412](docs/adr/0412-dbt-core-over-sqlmesh.md), [0414](docs/adr/0414-airflow3-local-executor-cosmos.md), [0402](docs/adr/0402-freshness-exporter-custom.md), [0415](docs/adr/0415-flink-sql-realtime-kpis.md) |
 | Shop | Python 3.12, FastAPI, uv workspace, Alembic, data contracts checked in CI | [0100](docs/adr/0100-app-language-python-fastapi.md), [0101](docs/adr/0101-data-contracts-in-ci.md) |
 
 ## Quickstart
@@ -162,7 +162,7 @@ regenerated secrets; this is not scripted yet.
 | 2 | k3d + Argo CD, edge with TLS, CloudNativePG, SOPS, Pod Security, NetworkPolicies | Done (Gate 1 passed) |
 | 3 | OpenTelemetry, Prometheus/Loki/Tempo, checkout SLOs, soak, postmortem | Done (Gate 2 passed); page timing on the cluster moved to Phase 7 |
 | 4 | CDC: Debezium, Kafka, Iceberg, Polaris, Trino, CDC lag SLO | Done (Gate 2 passed, local k3d) |
-| 5 | dbt bronze → silver → gold, Airflow, Flink KPIs, Metabase, data quality | In progress: dbt, Airflow and the Flink KPI job merged, not yet run on a cluster; Metabase planned |
+| 5 | dbt bronze → silver → gold, Airflow, Flink KPIs, Metabase, data quality | In progress: Flink KPI job validated on a dev cluster; dbt and Airflow merged, cluster run in progress; Metabase planned |
 | 6 | AWS: OpenTofu, EKS on spot, lease and reapers, cost guardrails, security baseline | In progress: offline checks pass in CI; no AWS session run yet |
 | 7 | Chaos game days, autoscaling, restore drills, page timing | In progress: Chaos Mesh (game-day-only profile), experiments and postmortem template merged; KEDA and the fulfillment worker merged (code and chart), not yet run on a cluster; game days not run yet |
 | 8 | Supply chain (signed images, SBOM, admission policy) and a short demo video | Planned |
