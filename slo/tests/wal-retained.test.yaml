@@ -100,3 +100,26 @@ tests:
             exp_annotations:
               summary: "Nothing reads slot debezium_shop on shop-db-1 for 10m: WAL is accumulating."
               runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/wal-retained.md
+
+  # Regression for a report from the sf-data slot (rule showed 0 MiB, the metric 16 MiB): with the full label set a
+  # CNPG PodMonitor target carries, the recording rules return the raw value and its share of the cap. CNPG measures
+  # from restart_lsn (the same point max_slot_wal_keep_size uses), which moves by WAL segment, so the value normally
+  # swings between ~0 and ~16 MiB: compare readings taken at the same instant.
+  - name: recording rules keep the raw CNPG value with real target labels
+    interval: 1m
+    input_series:
+      - series: 'cnpg_pg_replication_slots_pg_wal_lsn_diff{namespace="shop",pod="shop-db-1",container="postgres",endpoint="metrics",instance="10.42.0.31:9187",job="observability/cnpg-shop",slot_name="debezium_shop",slot_type="logical",database="shop"}'
+        values: '16767200+0x10'
+      - series: 'cnpg_pg_settings_setting{namespace="shop",pod="shop-db-1",container="postgres",endpoint="metrics",instance="10.42.0.31:9187",job="observability/cnpg-shop",name="max_slot_wal_keep_size"}'
+        values: '2048+0x10'
+    promql_expr_test:
+      - expr: shopflow:pg_slot_wal_retained:bytes
+        eval_time: 5m
+        exp_samples:
+          - labels: 'shopflow:pg_slot_wal_retained:bytes{namespace="shop", pod="shop-db-1", slot_name="debezium_shop"}'
+            value: 16767200
+      - expr: shopflow:pg_slot_wal_retained:ratio
+        eval_time: 5m
+        exp_samples:
+          - labels: 'shopflow:pg_slot_wal_retained:ratio{namespace="shop", pod="shop-db-1", slot_name="debezium_shop"}'
+            value: 0.007807835936546326
