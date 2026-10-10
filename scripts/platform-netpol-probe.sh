@@ -4,7 +4,7 @@
 # the source workload (policies select by labels), so no workload image needs a shell or netcat.
 #
 #   scripts/platform-netpol-probe.sh                 run the probes, print a table, exit 1 on any mismatch
-#   scripts/platform-netpol-probe.sh --apply REV     first apply apps network-policies-{obs,data} at Git revision REV
+#   scripts/platform-netpol-probe.sh --apply REV     first apply apps network-policies-{obs,data,batch} at Git revision REV
 #   scripts/platform-netpol-probe.sh --remove        delete those two apps and their policies (namespaces stay)
 #
 # A probe whose source or target namespace/pod does not exist is reported as SKIP, not as a failure.
@@ -14,7 +14,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KUBE_CONTEXT="${KUBE_CONTEXT:-k3d-${CLUSTER:-sf-main}}"
-APPS=(network-policies-obs network-policies-data)
+APPS=(network-policies-obs network-policies-data network-policies-batch)
 REPO_URL="https://github.com/winthebest/shopflow.git"
 
 kc() { kubectl --context "$KUBE_CONTEXT" "$@"; }
@@ -39,6 +39,11 @@ PROBES=(
   "lakehouse|app.kubernetes.io/name=probe|shop|cnpg.io/cluster=shop-db|5432|blocked"
   "lakehouse|app.kubernetes.io/name=probe|lakehouse|app.kubernetes.io/name=trino|8443|open"
   "default|app.kubernetes.io/name=probe|lakehouse|app.kubernetes.io/name=polaris|8181|blocked"
+  # batch (airflow)
+  "airflow|app.kubernetes.io/name=probe|shop|cnpg.io/cluster=shop-db|5432|open"
+  "airflow|app.kubernetes.io/name=probe|lakehouse|app.kubernetes.io/name=trino|8443|open"
+  "airflow|app.kubernetes.io/name=probe|lakehouse|app.kubernetes.io/name=polaris|8181|blocked"
+  "airflow|app.kubernetes.io/name=probe|kafka|strimzi.io/kind=KafkaConnect|8083|blocked"
   # observability
   "observability|app.kubernetes.io/name=prometheus|shop|cnpg.io/cluster=shop-db|9187|open"
   "observability|app.kubernetes.io/name=prometheus|kafka|strimzi.io/kind=KafkaConnect|9404|open"
@@ -52,6 +57,7 @@ INTERNET_PROBES=(
   "shop|app.kubernetes.io/name=orders"
   "lakehouse|app.kubernetes.io/name=trino"
   "kafka|strimzi.io/kind=KafkaConnect"
+  "airflow|app.kubernetes.io/name=probe"
 )
 
 apply_apps() {
