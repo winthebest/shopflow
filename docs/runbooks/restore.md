@@ -32,9 +32,19 @@ Checks for the first drill slot, before `prepare`. Record the growth rate under 
       prints `True`.
 - [ ] Bucket `pg-backup` exists and receives WAL:
       `kubectl -n lakehouse exec deploy/seaweedfs -- sh -c 'echo "fs.du /buckets/pg-backup" | weed shell'`.
-- [ ] Growth rate: run `fs.du` again one hour later. With `archive_timeout: 60s`, an idle database still switches
-      WAL every minute. gzip shrinks the mostly empty segments, but 60 files an hour add up; the rate decides how
-      long a drill cluster can stay up.
+- [ ] Growth rate: run `fs.du` again one hour later, and write down **which profiles** were running.
+      `archive_timeout: 60s` only switches segment when WAL was written since the last switch:
+      - with `data`, the Debezium heartbeat writes every 10 s, so a segment goes out every minute;
+      - with `drill` alone, an idle shop may archive almost nothing, and only load (k6) makes it grow.
+      gzip shrinks the mostly empty segments. The rate decides how long a drill cluster can stay up.
+- [ ] Archive alerts (sf-sre, [wal-archive.md](wal-archive.md); needs `obs-lite`, so this slot runs
+      `PROFILES=core,obs-lite,drill`):
+      - healthy: `shopflow:pg_wal_archive_pending:segments` stays at 0–2;
+      - blocked: pause the Argo CD controller as in `run`, scale `lakehouse/seaweedfs` to 0, and keep k6 writing.
+        Without WAL activity no segment is ready, the archiver never fails, and the alert has nothing to see.
+        `ShopDbWalArchiveFailing` should fire around +10–13 min; sidecar logs in `plugin-barman-cloud`;
+      - then scale SeaweedFS and the controller back, and check that pending returns to 0–2 and the alert
+        resolves.
 
 What `run` does:
 
@@ -82,7 +92,8 @@ Expectations:
 |---|---|---|---|---|---|---|---|
 | | | | | | | | |
 
-`pg-backup` growth (idle / under k6): _to measure in the first slot_.
+`pg-backup` growth (profiles; idle / under k6): _to measure in the first slot_.
+RAM of `core,obs-lite,drill` (`docker stats` of the k3d nodes): _to measure in the first slot_.
 
 ## When a recovery fails
 
