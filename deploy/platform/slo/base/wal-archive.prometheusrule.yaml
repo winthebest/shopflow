@@ -1,0 +1,55 @@
+# WAL archiving of shop-db (barman-cloud plugin → object storage: SeaweedFS pg-backup locally, S3 on AWS). Postgres
+# keeps every WAL segment it has not archived yet, whatever max_slot_wal_keep_size says (that cap only applies to
+# replication slots). With archive_timeout 60s and the CDC heartbeat writing every 10s, Postgres switches segment
+# every minute: a broken archive keeps ~1 segment (16 MiB) per minute, ~1 GB/h, until the 5Gi volume is full and
+# the database stops. Metrics: CloudNativePG default query pg_stat_archiver (primary only; -1 when never) and the
+# collector's count of segments in pg_wal/archive_status (`.ready` = waiting), scraped by the cnpg-shop PodMonitor.
+# Runbook: docs/runbooks/wal-archive.md.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: wal-archive
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: shopflow
+spec:
+  groups:
+    - name: shopflow-postgres-wal-archive
+      rules:
+        # 1 while the archiver's last failure is newer than its last success, per Postgres pod.
+        - record: shopflow:pg_wal_archive_failing:bool
+          expr: |
+            max by (namespace, pod) (cnpg_pg_stat_archiver_last_failed_time)
+            > bool
+            max by (namespace, pod) (cnpg_pg_stat_archiver_last_archived_time)
+        # Segments waiting to be archived on the primary (a standby does not archive).
+        - record: shopflow:pg_wal_archive_pending:segments
+          expr: |
+            max by (namespace, pod) (cnpg_collector_pg_wal_archive_status{value="ready"})
+            and on (namespace, pod)
+            (max by (namespace, pod) (cnpg_pg_replication_in_recovery) == 0)
+        # Failing for 10 minutes, or more than 10 segments waiting for 10 minutes (an archiver that hangs never
+        # records a failure).
+        - alert: ShopDbWalArchiveFailing
+          expr: |
+            shopflow:pg_wal_archive_failing:bool == 1
+            or
+            shopflow:pg_wal_archive_pending:segments > 10
+          for: 10m
+          labels:
+            severity: ticket
+            team: sf-sre
+          annotations:
+            summary: "WAL archiving of {{ $labels.pod }} is failing or falling behind: unarchived WAL piles up on its volume."
+            runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/wal-archive.md
+        # 80 segments (1.25 GiB, about 80 minutes of WAL at one segment a minute): a quarter of the 5Gi volume,
+        # roughly 3 hours left before the database stops for lack of disk.
+        - alert: ShopDbWalArchiveBacklogCritical
+          expr: shopflow:pg_wal_archive_pending:segments >= 80
+          for: 5m
+          labels:
+            severity: page
+            team: sf-sre
+          annotations:
+            summary: "{{ printf \"%.0f\" $value }} WAL segments of {{ $labels.pod }} are not archived: its volume fills within hours."
+            runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/wal-archive.md

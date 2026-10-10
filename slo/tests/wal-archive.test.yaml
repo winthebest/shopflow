@@ -1,0 +1,105 @@
+# promtool unit tests for the shop-db WAL archive alerts (sf-sre). Rule file: the `.spec` of
+# deploy/platform/slo/base/wal-archive.prometheusrule.yaml, extracted next to this file by scripts/sre-check.sh.
+# Every test: one primary shop-db-1; archiving works (a segment a minute, last_archived_time = now) until minute 30
+# unless the test says otherwise; pg_stat_archiver times are epochs in seconds (-1 = never).
+rule_files:
+  - wal-archive.rules.yaml
+evaluation_interval: 1m
+
+tests:
+  - name: healthy archiving raises nothing
+    interval: 1m
+    input_series:
+      - series: 'cnpg_pg_replication_in_recovery{namespace="shop",pod="shop-db-1"}'
+        values: '0x120'
+      - series: 'cnpg_pg_stat_archiver_last_archived_time{namespace="shop",pod="shop-db-1"}'
+        values: '0+60x120'
+      - series: 'cnpg_pg_stat_archiver_last_failed_time{namespace="shop",pod="shop-db-1"}'
+        values: '-1x120'
+      - series: 'cnpg_collector_pg_wal_archive_status{namespace="shop",pod="shop-db-1",value="ready"}'
+        values: '1x120'
+    alert_rule_test:
+      - {eval_time: 120m, alertname: ShopDbWalArchiveFailing, exp_alerts: []}
+      - {eval_time: 120m, alertname: ShopDbWalArchiveBacklogCritical, exp_alerts: []}
+
+  # The object store refuses the segments from minute 30: the archiver retries and fails every minute, and one
+  # more segment waits each minute. Failing from minute 31 → ticket after 10 minutes (silent at +9m, firing by
+  # +13m with one evaluation of lag); 80 segments waiting at minute 110 → page 5 minutes later.
+  - name: archiving that keeps failing raises a ticket after 10 minutes, then a page at 80 waiting segments
+    interval: 1m
+    input_series:
+      - series: 'cnpg_pg_replication_in_recovery{namespace="shop",pod="shop-db-1"}'
+        values: '0x125'
+      - series: 'cnpg_pg_stat_archiver_last_archived_time{namespace="shop",pod="shop-db-1"}'
+        values: '0+60x30 1800x95'
+      - series: 'cnpg_pg_stat_archiver_last_failed_time{namespace="shop",pod="shop-db-1"}'
+        values: '-1x30 1860+60x94'
+      - series: 'cnpg_collector_pg_wal_archive_status{namespace="shop",pod="shop-db-1",value="ready"}'
+        values: '0x30 1+1x94'
+    alert_rule_test:
+      - {eval_time: 39m, alertname: ShopDbWalArchiveFailing, exp_alerts: []}
+      - eval_time: 43m
+        alertname: ShopDbWalArchiveFailing
+        exp_alerts:
+          - exp_labels: {severity: ticket, team: sf-sre, namespace: shop, pod: shop-db-1}
+            exp_annotations:
+              summary: "WAL archiving of shop-db-1 is failing or falling behind: unarchived WAL piles up on its volume."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/wal-archive.md
+      - {eval_time: 113m, alertname: ShopDbWalArchiveBacklogCritical, exp_alerts: []}
+      - eval_time: 118m
+        alertname: ShopDbWalArchiveBacklogCritical
+        exp_alerts:
+          - exp_labels: {severity: page, team: sf-sre, namespace: shop, pod: shop-db-1}
+            exp_annotations:
+              summary: "88 WAL segments of shop-db-1 are not archived: its volume fills within hours."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/wal-archive.md
+
+  # An archive command that hangs records no failure: only the waiting segments show it. More than 10 waiting from
+  # minute 41 → ticket 10 minutes later.
+  - name: an archiver that hangs without failing raises a ticket from the waiting segments
+    interval: 1m
+    input_series:
+      - series: 'cnpg_pg_replication_in_recovery{namespace="shop",pod="shop-db-1"}'
+        values: '0x60'
+      - series: 'cnpg_pg_stat_archiver_last_archived_time{namespace="shop",pod="shop-db-1"}'
+        values: '0+60x30 1800x30'
+      - series: 'cnpg_pg_stat_archiver_last_failed_time{namespace="shop",pod="shop-db-1"}'
+        values: '-1x60'
+      - series: 'cnpg_collector_pg_wal_archive_status{namespace="shop",pod="shop-db-1",value="ready"}'
+        values: '0x30 1+1x30'
+    alert_rule_test:
+      - {eval_time: 49m, alertname: ShopDbWalArchiveFailing, exp_alerts: []}
+      - eval_time: 54m
+        alertname: ShopDbWalArchiveFailing
+        exp_alerts:
+          - exp_labels: {severity: ticket, team: sf-sre, namespace: shop, pod: shop-db-1}
+            exp_annotations:
+              summary: "WAL archiving of shop-db-1 is failing or falling behind: unarchived WAL piles up on its volume."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/wal-archive.md
+
+  # One failed attempt at minute 30, archived again from minute 31: nothing fires.
+  - name: a single failed attempt followed by success raises nothing
+    interval: 1m
+    input_series:
+      - series: 'cnpg_pg_replication_in_recovery{namespace="shop",pod="shop-db-1"}'
+        values: '0x60'
+      - series: 'cnpg_pg_stat_archiver_last_archived_time{namespace="shop",pod="shop-db-1"}'
+        values: '0+60x29 1740 1860+60x29'
+      - series: 'cnpg_pg_stat_archiver_last_failed_time{namespace="shop",pod="shop-db-1"}'
+        values: '-1x29 1800x30'
+      - series: 'cnpg_collector_pg_wal_archive_status{namespace="shop",pod="shop-db-1",value="ready"}'
+        values: '1x29 2 1x29'
+    alert_rule_test:
+      - {eval_time: 45m, alertname: ShopDbWalArchiveFailing, exp_alerts: []}
+
+  # A standby does not archive (and has no pg_stat_archiver metrics): its ready segments raise nothing.
+  - name: waiting segments on a standby raise nothing
+    interval: 1m
+    input_series:
+      - series: 'cnpg_pg_replication_in_recovery{namespace="shop",pod="shop-db-2"}'
+        values: '1x120'
+      - series: 'cnpg_collector_pg_wal_archive_status{namespace="shop",pod="shop-db-2",value="ready"}'
+        values: '0+1x120'
+    alert_rule_test:
+      - {eval_time: 120m, alertname: ShopDbWalArchiveFailing, exp_alerts: []}
+      - {eval_time: 120m, alertname: ShopDbWalArchiveBacklogCritical, exp_alerts: []}
