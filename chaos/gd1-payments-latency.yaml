@@ -3,8 +3,10 @@
 #   availability budget and slow ones the latency budget; the page fires within ~5 minutes (availability) and the
 #   fix (timeout + bounded retry with jitter + circuit breaker, sf-app) cuts the burn on the re-run.
 # Blast radius: payments pods only (namespace shop); checkout fails or is slow, browse is unaffected.
-# Stop: automatic after `duration`; earlier with `kubectl delete -f` if the error ratio stays > 50% for 5 min or
-#   anything outside shop degrades.
+# Stop: automatic after `duration`. Failing checkouts are the expected outcome, not a stop condition (payments
+#   50ms + 800ms ± 50ms against an 800ms timeout: nearly every checkout ends in 504, and the latency page needs
+#   ~10 minutes). Earlier with `kubectl delete -f` if browse errors exceed 1% for 5 min or anything outside shop
+#   degrades.
 apiVersion: chaos-mesh.org/v1alpha1
 kind: NetworkChaos
 metadata:
