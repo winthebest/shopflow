@@ -2,12 +2,15 @@
 # S3 gateway in one process: the smallest footprint that still speaks the S3 API Iceberg needs.
 # Only S3 (8333) is exposed as a Service; WebDAV, admin UI, telemetry and the built-in Iceberg catalog are off.
 #
-# S3 identities come from Secret seaweedfs-s3-config (key s3.json, SOPS-managed). One identity per client:
+# S3 identities: the init container merge-s3-config builds s3.json from Secret seaweedfs-s3-config (key s3.json,
+# SOPS-managed) and Secret seaweedfs-cnpg-backup (merge-s3-config.py). One identity per client:
 #   polaris        Read, List, Write on lake  (catalog writes table metadata)
 #   iceberg-sink   Read, List, Write on lake  (bronze data files)
 #   trino-lake     Read, List, Write on lake  (dbt: silver/gold; maintenance procedures)
 #   trino-lake-ro  Read, List on lake         (lake_ro: exporter, metabase, planner; cannot delete files)
 #   flink          Read, Write below lake/flink-ckpt/, List on lake  (Flink checkpoints and HA state, profile rt)
+#   cnpg-backup    Read, Write, List on pg-backup  (shop-db WAL archive and base backups, copied to namespace shop)
+# Buckets lake and pg-backup are created at start (-bucket).
 apiVersion: v1
 kind: Service
 metadata:
@@ -62,6 +65,27 @@ spec:
         fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        - name: merge-s3-config
+          image: python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4
+          command: ["python", "-I", "/scripts/merge-s3-config.py"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: s3-config-lake
+              mountPath: /in/lake
+              readOnly: true
+            - name: s3-config-cnpg-backup
+              mountPath: /in/cnpg-backup
+              readOnly: true
+            - name: s3-config
+              mountPath: /out
       containers:
         - name: seaweedfs
           image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
@@ -69,7 +93,7 @@ spec:
             - mini
             - -dir=/data
             - -s3.config=/etc/seaweedfs/s3.json
-            - -bucket=lake
+            - -bucket=lake,pg-backup
             - -s3.port.iceberg=0
             - -webdav=false
             - -admin.ui=false
@@ -105,8 +129,20 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: seaweedfs-data
-        - name: s3-config
+        - name: scripts
+          configMap:
+            name: seaweedfs-merge-s3-config
+        - name: s3-config-lake
           secret:
             secretName: seaweedfs-s3-config
+        - name: s3-config-cnpg-backup
+          secret:
+            secretName: seaweedfs-cnpg-backup
+            optional: true
+        # The merged s3.json; memory-backed, so the credentials never touch the node's disk.
+        - name: s3-config
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
         - name: tmp
           emptyDir: {}

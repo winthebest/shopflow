@@ -18,6 +18,14 @@ at start. Runs as uid 1000 with a read-only root filesystem. S3 identities are s
 client; the read-only Trino catalog gets `Read`/`List` only, so it cannot delete files even through procedures
 that bypass the catalog (`remove_orphan_files`).
 
+A second bucket, `pg-backup`, holds shop-db's WAL archive and base backups (sf-platform's CNPG barman plugin, profile
+`data` and the restore drill). Its identity `cnpg-backup` (`Read`/`Write`/`List` on `pg-backup` only) lives in its own
+Secret, not in the lake's `s3.json`. The lake identities are one SOPS group whose secret keys only exist encrypted, so
+adding an identity there would regenerate every lake credential. An init container instead merges the backup identity
+into `s3.json` when the pod starts (`deploy/platform/seaweedfs/base/merge-s3-config.py`), and SeaweedFS reads the
+merged file from a memory-backed volume. A changed credential takes effect on the next pod start
+(`kubectl -n lakehouse rollout restart deploy/seaweedfs`).
+
 ## Alternatives considered
 
 | Option | Why not |

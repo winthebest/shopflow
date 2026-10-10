@@ -8,6 +8,9 @@ resources:
   - ../../apps/kafka
   - ../../apps/kafka-connect
   - ../../apps/seaweedfs
+  # shop-db WAL archive and base backups to SeaweedFS bucket pg-backup (sf-platform, wave 0). Listing it is what makes
+  # `make up` turn archiving on (pg.serverName); it needs Secret lakehouse/seaweedfs-cnpg-backup, which seaweedfs has.
+  - ../../apps/cnpg-barman-plugin
   - ../../apps/iceberg-catalog
   - ../../apps/trino
   - ../../apps/freshness-exporter
