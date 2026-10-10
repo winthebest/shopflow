@@ -2,8 +2,10 @@
 
 Follows the "adding a source table" rule (docs/contracts/services.md) in one migration: create the table, add it to
 publication shop_cdc, grant SELECT to debezium and trino_pg (data/contracts/shipments.yaml lands in the same PR).
-Writer role fulfillment_worker (CNPG managed role, compose init SQL) gets only what the worker needs:
-INSERT on shipments and SELECT on orders.id (to skip events whose order no longer exists, e.g. after a PITR restore).
+Writer role fulfillment_worker (CNPG managed role, compose init SQL) gets only what the worker needs: INSERT on
+shipments and SELECT on orders (id, status), so it ships an order only if Postgres says it is paid *now*. After a PITR
+restore, Kafka may still hold `paid` events for orders that were lost or restored as `pending`; statuses are terminal
+(pending -> paid | failed), so this check is exact.
 
 Revision ID: 0004
 Revises: 0003
@@ -57,11 +59,11 @@ def upgrade() -> None:
     op.execute("GRANT SELECT ON shipments TO debezium, trino_pg")
     op.execute("GRANT USAGE ON SCHEMA public TO fulfillment_worker")
     op.execute("GRANT INSERT ON shipments TO fulfillment_worker")
-    op.execute("GRANT SELECT (id) ON orders TO fulfillment_worker")
+    op.execute("GRANT SELECT (id, status) ON orders TO fulfillment_worker")
 
 
 def downgrade() -> None:
-    op.execute("REVOKE SELECT (id) ON orders FROM fulfillment_worker")
+    op.execute("REVOKE SELECT (id, status) ON orders FROM fulfillment_worker")
     op.execute("REVOKE USAGE ON SCHEMA public FROM fulfillment_worker")
     op.execute("ALTER PUBLICATION shop_cdc DROP TABLE shipments")
     op.drop_table("shipments")  # drops its trigger and every grant on it

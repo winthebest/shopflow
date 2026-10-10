@@ -58,7 +58,10 @@ async def an_order(url: str) -> int:
 
 async def test_worker_privileges_are_exactly_the_spec(database_url):
     assert (await execute(database_url, TABLE_PRIVILEGES))[1] == [("public.shipments", "INSERT")]
-    assert (await execute(database_url, COLUMN_PRIVILEGES))[1] == [("public.orders.id", "SELECT")]
+    assert (await execute(database_url, COLUMN_PRIVILEGES))[1] == [
+        ("public.orders.id", "SELECT"),
+        ("public.orders.status", "SELECT"),
+    ]
     assert (await execute(database_url, SCHEMA_PRIVILEGES))[1] == [("public", "USAGE")]
 
 
@@ -84,10 +87,10 @@ async def test_worker_creates_one_shipment_per_order_idempotently(seeded_db, wor
     assert rows == [(order_id, 7, 1000)]
 
 
-async def test_worker_can_check_which_orders_exist(seeded_db, worker_url):
+async def test_worker_can_check_which_orders_are_paid_now(seeded_db, worker_url):
     order_id = await an_order(seeded_db)
-    _, rows = await execute(worker_url, f"SELECT id FROM orders WHERE id IN ({order_id}, 999999)")
-    assert rows == [(order_id,)]
+    _, rows = await execute(worker_url, f"SELECT id, status FROM orders WHERE id IN ({order_id}, 999999)")
+    assert rows == [(order_id, "paid")]
 
 
 async def test_shipment_for_unknown_order_is_rejected(seeded_db, worker_url):
