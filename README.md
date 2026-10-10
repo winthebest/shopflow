@@ -40,12 +40,12 @@ flowchart LR
     orders --> pg[(Postgres<br/>CloudNativePG)]
   end
   edge --> gw
-  subgraph cdc [CDC]
+  subgraph cdc ["CDC (validated on k3d)"]
     dbz[Debezium source<br/>Kafka Connect] --> kafka[[Kafka<br/>Strimzi, KRaft]] --> sink[Iceberg sink<br/>Kafka Connect]
   end
   pg -- WAL --> dbz
   subgraph lake [Lakehouse]
-    bronze[(bronze<br/>Iceberg)] --> dbt[dbt on Trino<br/>run by Airflow] --> gold[(silver, gold<br/>Iceberg)]
+    bronze[(bronze<br/>Iceberg<br/>validated on k3d)] --> dbt[dbt on Trino<br/>run by Airflow] --> gold[(silver, gold<br/>Iceberg)]
   end
   sink --> bronze
   gold --> trino[Trino] -.-> mb[Metabase<br/>planned]:::planned
@@ -54,9 +54,9 @@ flowchart LR
   classDef wip stroke-dasharray: 2 2
 ```
 
-Iceberg data lives in SeaweedFS behind an Apache Polaris REST catalog (S3 and AWS Glue on AWS). The CDC and
-lakehouse components are merged and being validated on a cluster; the Flink deployment is in progress;
-Metabase is planned.
+Iceberg data lives in SeaweedFS behind an Apache Polaris REST catalog (S3 and AWS Glue on AWS). CDC into
+bronze is validated end to end on a local k3d cluster, not yet on AWS. dbt and Airflow are merged but not yet
+run on a cluster; the Flink deployment is in progress; Metabase is planned.
 
 **Platform and observability.** After the bootstrap, Git is the only deploy path. Every request is traced, and
 the SLIs come from those traces.
@@ -88,6 +88,7 @@ flowchart LR
 | SLIs come from span metrics in one OTel pipeline, so they kept counting while Tempo was crash-looping | [ADR 0301](docs/adr/0301-otel-collector-single-pipeline.md), [postmortem](docs/postmortems/2026-10-09-checkout-slow-noisy-neighbor.md#what-went-well) |
 | GitOps fails closed: CI builds every profile and fails if any app would not follow the deployed Git revision | [gitops.md §4](docs/contracts/gitops.md#4-profiles), [platform-validate.sh](scripts/platform-validate.sh) |
 | Security baseline: Pod Security `restricted` and default-deny NetworkPolicies (core namespaces; observability and data in progress), SOPS-encrypted secrets, admin UIs only through port-forward, Kafka over TLS + SCRAM, gitleaks, images pinned by digest | ADRs [0208](docs/adr/0208-psa-and-network-policies.md), [0204](docs/adr/0204-sops-ksops-local-secrets.md), [0205](docs/adr/0205-admin-ui-port-forward-only.md), [0404](docs/adr/0404-kafka-tls-scram-acl.md) |
+| CDC end to end on k3d (`core,obs-lite,data`): the snapshot put 100/100 customers in bronze; one order's insert, update and delete reached bronze as `c,u,d` in **47 s** (target ≤ 120 s); bronze heartbeat freshness 27 s; Debezium 3 ms behind the source when idle; ~10.6 GB RAM. Not run on AWS yet | [PR #122](https://github.com/winthebest/shopflow/pull/122), [data-cluster-check.sh](scripts/data-cluster-check.sh) |
 | AWS guardrails: a budget that excludes credits, a deny action at $25, sessions bounded by a lease and two reapers. Cost *estimate* $0.30–0.45/h, not yet measured | [docs/cost.md](docs/cost.md), ADRs [0510](docs/adr/0510-cost-guardrails-exclude-credits.md), [0501](docs/adr/0501-ephemeral-env-with-lease.md) |
 
 ## Tech stack
@@ -159,7 +160,7 @@ regenerated secrets; this is not scripted yet.
 | 1 | Shop services, compose, CI, performance baseline | Done |
 | 2 | k3d + Argo CD, edge with TLS, CloudNativePG, SOPS, Pod Security, NetworkPolicies | Done (Gate 1 passed) |
 | 3 | OpenTelemetry, Prometheus/Loki/Tempo, checkout SLOs, soak, postmortem | Done; page timing on the cluster moved to Phase 7 |
-| 4 | CDC: Debezium, Kafka, Iceberg, Polaris, Trino, CDC lag SLO | In progress: code merged, cluster validation running |
+| 4 | CDC: Debezium, Kafka, Iceberg, Polaris, Trino, CDC lag SLO | Done on a dev cluster; re-verified at Gate 2 (pending) |
 | 5 | dbt bronze → silver → gold, Airflow, Flink KPIs, Metabase, data quality | In progress: dbt and Airflow merged, Flink deploy in progress, Metabase planned |
 | 6 | AWS: OpenTofu, EKS on spot, lease and reapers, cost guardrails, security baseline | In progress: offline checks pass in CI; no AWS session run yet |
 | 7 | Chaos game days, autoscaling, restore drills, page timing | In progress: Chaos Mesh (game-day-only profile), experiments and postmortem template merged; game days not run yet |
