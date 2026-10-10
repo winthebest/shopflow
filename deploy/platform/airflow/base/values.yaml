@@ -82,6 +82,9 @@ securityContexts:
 config:
   core:
     load_examples: "False"
+    # Every cluster is new, so every DAG is "created" at startup; with Airflow's default (paused) dbt_build never ran
+    # and the gold-freshness SLI would count bad minutes after its 2-hour warm-up (batch slot 2026-10-10).
+    dags_are_paused_at_creation: "False"
     # LocalExecutor: at most this many task subprocesses (each a dbt process) in the scheduler pod.
     parallelism: "4"
   dag_processor:
