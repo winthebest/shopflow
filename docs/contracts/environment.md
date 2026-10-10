@@ -55,6 +55,7 @@ Default-deny per namespace; these flows must be allowed. Owners add rows when th
 | `shop` orders | `shop` payments, `shop-db` | 8002, 5432 | service call, DB | sf-app |
 | `envoy-gateway-system` | `shop` gateway | 8000 | ingress | sf-platform |
 | `kafka` cdc-connect | `shop` shop-db | 5432 | Debezium (replication) | sf-data |
+| `shop` shop-db (CNPG barman-cloud plugin) | `lakehouse` seaweedfs | 8333 | WAL archive + base backups to bucket `pg-backup` (local restore drill, profile `drill` or `data`) | sf-cloud |
 | `kafka` cdc-connect | `lakehouse` polaris, seaweedfs | 8181, 8333 | Iceberg sink: catalog, objects | sf-data |
 | `kafka` cdc-connect, `lakehouse` polaris-setup Job | kube-apiserver | 443/6443 | read Secret via config provider; write principal Secrets | sf-data |
 | `lakehouse` trino | `lakehouse` polaris, seaweedfs | 8181, 8333 | catalogs `lake`, `lake_ro` | sf-data |
