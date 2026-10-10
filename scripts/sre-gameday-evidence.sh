@@ -39,6 +39,8 @@ SERIES=(
   "wal-retained-bytes|max by (slot_name) (shopflow:pg_slot_wal_retained:bytes)"
   "wal-retained-ratio|max by (slot_name) (shopflow:pg_slot_wal_retained:ratio)"
   "wal-growth-bytes-per-s|max by (slot_name) (deriv(shopflow:pg_slot_wal_retained:bytes[15m]))"
+  "wal-archive-pending-segments|max by (pod) (shopflow:pg_wal_archive_pending:segments)"
+  "wal-archive-failing|max by (pod) (shopflow:pg_wal_archive_failing:bool)"
   "fulfillment-worker-replicas|max(kube_deployment_status_replicas{namespace=\"shop\", deployment=\"fulfillment-worker\"})"
 )
 
