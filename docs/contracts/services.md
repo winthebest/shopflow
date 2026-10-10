@@ -9,9 +9,10 @@ Owner: orchestrator. Changes go through a PR reviewed by the orchestrator, becau
 |---|---|---|---|
 | `gateway` | 8000 | Public API: `GET /products`, `POST /checkout`, `GET /orders/{id}` | `orders` |
 | `orders` | 8001 | Creates orders + order_items in one transaction, calls payments, sets status `pending → paid \| failed` | `payments`, Postgres |
-| `payments` | 8002 | Mock payment provider with configurable latency/failure | — |
+| `payments` | 8002 | Mock payment provider with configurable latency/failure; `POST /charges` is idempotent per `order_id` (same `charge_id` and outcome on every call, decline decided by a hash of `order_id`), so orders may retry it | — |
 
-Timeouts: gateway → orders 1s, orders → payments 800ms.
+Timeouts: gateway → orders 1s (no retry: `POST /checkout` is not idempotent), orders → payments 800ms in total: up to
+3 attempts inside that deadline, full-jitter backoff, behind a circuit breaker per orders process (ADR 0102).
 
 ### `POST /checkout` responses (gateway)
 
@@ -25,6 +26,7 @@ every gateway 5xx as bad).
 | Invalid input, unknown customer/product, total too large | `422` | `detail` |
 | Payments timed out (order settled `failed`) | `504` | `detail`, `order_id`, `status` |
 | Payments unreachable / bad answer (order settled `failed`) | `502` | `detail`, `order_id`, `status` |
+| Payments circuit open (checked before the order is created: no order) | `503` + `Retry-After` | `detail` |
 | Orders timed out / unreachable / 5xx (incl. DB errors) | `504` / `502` | `detail` |
 
 ## Common runtime contract
