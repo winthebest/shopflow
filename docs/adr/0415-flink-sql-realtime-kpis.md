@@ -80,9 +80,26 @@ epoch.
 
 - Positive: a Debezium re-snapshot cannot inflate the KPIs; the KPI path keeps working when Trino and Airflow are
   scaled down (profile `rt` alone with `data`).
+- Verified on the cluster (rt slot, 2026-10-10, `core,obs-lite,data,rt`):
+  - Checkpoints of `s3://lake/flink-ckpt/<epoch>` complete on SeaweedFS.
+  - Under k6 load (10 checkouts/s), a minute is in `serving.kpi_minute` 34 s after its window closes, 67 s after
+    the load starts.
+  - The per-minute order counts equal the `orders` table exactly (354/600/600/600/247), and payments equal orders.
+  - Grafana's `serving` datasource is healthy, and the three panels return data.
+  - JDBC 4.0.0-2.0 (built against Flink 2.0) writes from Flink 2.2 at runtime.
+  - The operator's webhook and Flink 2's configuration parsing accept the deployment (after #159 and #167),
+    PodSecurity `restricted` reports no warnings, and the namespace `flink` NetworkPolicies hold (8 probe rows).
 - Negative / risks:
-  - JDBC 4.0.0-2.0 was built against Flink 2.0. CI plans the job on 2.2, but only the cluster run proves the sink
-    at runtime.
+  - When the shop goes quiet, the last 1-2 minutes stay open until the next order. A partition without records is
+    idle after 1 minute, and when every partition is idle the watermark does not advance, so those windows close
+    only with the next event (seen: 10:56 and 10:57 appeared with the next order). Follow-up: a periodic event
+    in the union that advances the watermark without counting, e.g. Debezium's heartbeat topic.
+  - Profile `rt` needs about 12.6 GB on k3d (server 7.1 GB + agent 5.5 GB with `core,obs-lite,data,rt`; namespace
+    `flink` 1.5 GB). That is above the 11 GB budget for shared slots, so `rt` runs as an exclusive slot.
+  - CI checks the FlinkDeployment against the CRD schema only. The operator's admission webhook (a checkpoint
+    directory in `flinkConfiguration` for `upgradeMode: last-state`) and Flink 2's configuration parsing (no key
+    may be a prefix of another) are first exercised on a cluster. Before merging a FlinkDeployment change, run
+    `kubectl apply --dry-run=server` against a running operator.
   - Counting by insert assumes orders and payments get their final amount and status at insert, which is how the
     shop writes them (services/orders).
   - Argo CD does not manage the datasource Secret: it stays in `observability` when profile `rt` is removed (a
