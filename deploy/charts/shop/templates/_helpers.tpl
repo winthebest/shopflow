@@ -48,8 +48,15 @@ capabilities:
   value: {{ .root.Values.logLevel | quote }}
 - name: OTEL_SERVICE_NAME
   value: {{ .name | quote }}
+# service.instance.id = the pod name: Prometheus makes it the `instance` label, so per-process series (e.g. the
+# orders circuit-state gauge) read as pods instead of the SDK's random per-process UUID. POD_NAME must come first:
+# Kubernetes only expands $(VAR) references to variables defined earlier in the list.
+- name: POD_NAME
+  valueFrom:
+    fieldRef:
+      fieldPath: metadata.name
 - name: OTEL_RESOURCE_ATTRIBUTES
-  value: {{ printf "deployment.environment=%s" (required "environment is required (local or aws)" .root.Values.environment) | quote }}
+  value: {{ printf "deployment.environment=%s,service.instance.id=$(POD_NAME)" (required "environment is required (local or aws)" .root.Values.environment) | quote }}
 - name: OTEL_SEMCONV_STABILITY_OPT_IN
   value: http
 {{- if $otelEnabled }}
