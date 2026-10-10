@@ -1,0 +1,15 @@
+# Profile `batch` (sf-data): Airflow and its DAGs (dbt, Iceberg maintenance, reconciliation). Shape fixed by
+# docs/contracts/gitops.md section 4. Needs profile `data` in the same PROFILES: the DAGs run dbt against its Trino
+# and Airflow's copy Job reads lakehouse/trino-dbt.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../apps/airflow
+components:
+  - ../_common
+replacements:
+  - source: {kind: ConfigMap, name: git-revision, fieldPath: data.revision}
+    targets:
+      - select: {kind: Application}
+        fieldPaths:
+          - spec.sources.[repoURL=https://github.com/winthebest/shopflow.git].targetRevision
