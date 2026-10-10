@@ -40,6 +40,7 @@ A page for the same SLO silences its ticket (Alertmanager inhibit rule).
 | Postgres slow / saturated | CNPG dashboard; `kubectl -n shop get cluster shop-db` | Find the slow query or lock; scale resources in git |
 | CPU throttling / node saturation | *USE – nodes* (load per CPU > 1); `kubectl top pods -n shop` | Free resources (scale down optional profiles), raise limits in git |
 | New release regressed latency | Argo CD history of the `shop` app | Roll back the image digest in git |
+| Lab only: the Docker VM is saturated by other containers (CI validators, image builds, another k3d cluster); every hop slows at once while payments' own span stays small | `docker stats --no-stream`; *USE – nodes* CPU busy > 70% | Stop the heavy containers. During soak or timing measurements run nothing heavy on the VM ([postmortem 2026-10-09](../postmortems/2026-10-09-checkout-slow-noisy-neighbor.md)) |
 
 ## After the alert resolves
 

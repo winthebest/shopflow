@@ -3,3 +3,10 @@ prometheus-node-exporter:
   # k3d nodes are containers in the Docker Desktop VM: the host root is not a shared mount.
   hostRootFsMount:
     enabled: false
+
+# k3d nodes are containers: their clock is the Docker VM's, which node-exporter cannot see as NTP-synchronised.
+# Upstream rules would fire forever on the lab (seen on the sf-sre lane cluster); on real nodes (aws) they stay.
+defaultRules:
+  disabled:
+    NodeClockNotSynchronising: true
+    NodeClockSkewDetected: true
