@@ -59,8 +59,10 @@ sink never became Ready. Clusters that got the policies only after setup did not
 | `polaris-bootstrap`, init `create-schema` | `shop-db` | `psql` loop, 60s; the bootstrap container then shares the pod's admitted IP |
 | `polaris-setup` | `polaris:8181` | `call()` retries `URLError`/`ConnectionError`/timeouts with backoff 1–8s for 60s (`CONNECT_DEADLINE_SECONDS`) |
 | `trino-bronze-tables` | `trino:8443` | `sh` loop, 12 × 5s; every statement is `IF NOT EXISTS` |
+| `flink-serving-ddl` (profile `rt`) | `shop-db` | `psql` loop, 30 × 2s; the DDL is `IF NOT EXISTS` |
 | `*-secret-copy`, `polaris-db-copy`, `trino-pg-copy` | API server only | none needed: the API server is not a pod behind these policies |
 | Airflow migrations, create-user | `shop-db` | none: Airflow's imports take about 10s before the first connection; recheck if they fail with `Connection refused` |
 
-Long-running pods (Polaris, Trino, Kafka Connect, the exporter, the Airflow scheduler with LocalExecutor)
+Long-running pods (Polaris, Trino, Kafka Connect, the exporter, the Airflow scheduler with LocalExecutor, the
+Flink job)
 reconnect by themselves and are not affected.
