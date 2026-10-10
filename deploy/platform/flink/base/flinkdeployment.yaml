@@ -24,8 +24,10 @@ spec:
     execution.checkpointing.min-pause: 10s
     execution.checkpointing.num-retained: "2"
     state.backend.type: hashmap
-    # The checkpoint directory is set by the job itself, per CDC epoch (kpi_minute.sql). HA state lets the operator
-    # resume from the latest checkpoint after an upgrade or a restart (upgradeMode last-state).
+    # The operator's webhook refuses upgradeMode last-state without a checkpoint directory here. This is the base;
+    # the job narrows it to s3://lake/flink-ckpt/<epoch> (SET in kpi_minute.sql), so epochs never share checkpoints.
+    # HA state lets the operator resume from the latest checkpoint after an upgrade or a restart.
+    execution.checkpointing.dir: s3://lake/flink-ckpt
     high-availability.type: kubernetes
     high-availability.storageDir: s3://lake/flink-ckpt/ha
     s3.endpoint: http://seaweedfs.lakehouse.svc:8333
