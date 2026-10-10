@@ -90,10 +90,13 @@ epoch.
   - The operator's webhook and Flink 2's configuration parsing accept the deployment (after #159 and #167),
     PodSecurity `restricted` reports no warnings, and the namespace `flink` NetworkPolicies hold (8 probe rows).
 - Negative / risks:
-  - When the shop goes quiet, the last 1-2 minutes stay open until the next order. A partition without records is
-    idle after 1 minute, and when every partition is idle the watermark does not advance, so those windows close
-    only with the next event (seen: 10:56 and 10:57 appeared with the next order). Follow-up: a periodic event
-    in the union that advances the watermark without counting, e.g. Debezium's heartbeat topic.
+  - Quiet shop: when every order and payment partition is idle, the watermark stops and the last minutes would wait
+    for the next order (seen on the rt slot: 10:56 and 10:57 appeared with the next order). The job therefore reads
+    the CDC heartbeat row (`shop.public.heartbeat`, updated every 10 s) as a third, non-counting input that never
+    goes idle, so a minute closes 30-40 s after it ends (watermark 30 s behind a heartbeat every 10 s). Consequence:
+    a minute without orders is written with 0 orders, 0 GMV and a NULL failure rate instead of no row. If CDC
+    itself stops, the heartbeat stops too and the last minutes wait again (the cdc-lag SLO pages for that). Not yet
+    run on a cluster: the next `rt` slot checks it.
   - Profile `rt` needs about 12.6 GB on k3d (server 7.1 GB + agent 5.5 GB with `core,obs-lite,data,rt`; namespace
     `flink` 1.5 GB). That is above the 11 GB budget for shared slots, so `rt` runs as an exclusive slot.
   - CI checks the FlinkDeployment against the CRD schema only. The operator's admission webhook (a checkpoint
