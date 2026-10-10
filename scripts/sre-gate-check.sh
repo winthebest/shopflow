@@ -70,11 +70,22 @@ if [[ "${n:-0}" -gt 0 ]]; then pass "CNPG scraped (PodMonitor cnpg-shop)" "$n ta
 n="$(count 'traces_span_metrics_calls_total{service_name="gateway", span_kind="SPAN_KIND_SERVER"}')"
 if [[ "${n:-0}" -gt 0 ]]; then pass "OTLP span metrics (gateway)" "$n series"; else fail "OTLP span metrics (gateway)" "no series: is traffic flowing and otel-gateway up?"; fi
 
-# health "unknown" = not evaluated yet (normal right after make up): WARN; "err" = broken rule: FAIL.
+# Rule health. "unknown" = not evaluated yet (normal right after make up): WARN. Errors:
+#   "duplicate sample for timestamp": the group evaluated a timestamp it had already written (Prometheus schedules
+#     by wall clock, so a clock that steps back, as the Docker VM under k3d does, repeats one evaluation). The first
+#     value is kept and only fast-changing recording rules notice: WARN, whatever the rule.
+#   any other error: FAIL in shopflow rules, WARN in the chart's default rules (rule files observability-kps-*).
 rules="$(prom_raw rules 2>/dev/null)"
-bad="$(jq -r '[.data.groups[] | .name as $g | .rules[] | select(.health == "err") | $g + "/" + .name + ": " + (.lastError // "err")] | join("; ")' <<<"$rules")"
+rule_errors() {  # $1: jq filter on {dup, chart} selecting the errors to list
+  jq -r "[.data.groups[] | (.file | split(\"/\") | last) as \$f | .name as \$g | .rules[] | select(.health == \"err\")
+    | {r: (\$g + \"/\" + .name + \": \" + (.lastError // \"err\")), dup: ((.lastError // \"\") | test(\"duplicate sample for timestamp\")),
+       chart: (\$f | startswith(\"observability-kps-\"))} | select($1) | .r] | join(\"; \")" <<<"$rules"
+}
+bad="$(rule_errors '(.dup or .chart) | not')"
+soft="$(rule_errors '.dup or .chart')"
 unknown="$(jq -r '[.data.groups[] | .rules[] | select(.health == "unknown")] | length' <<<"$rules")"
 if [[ -n "$bad" ]]; then fail "rule groups healthy" "$bad"
+elif [[ -n "$soft" ]]; then warn "rule groups healthy" "${soft:0:400}"
 elif [[ "${unknown:-0}" -gt 0 ]]; then warn "rule groups healthy" "$unknown rule(s) not evaluated yet; re-run in a minute"
 else pass "rule groups healthy"; fi
 
