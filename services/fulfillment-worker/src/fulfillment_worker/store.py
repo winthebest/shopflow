@@ -1,4 +1,11 @@
-"""Write shipments with the privileges of role fulfillment_worker: INSERT on shipments, SELECT on orders.id."""
+"""Write shipments with the privileges of role fulfillment_worker: INSERT on shipments, SELECT on orders (id, status).
+
+A change event says an order *was* paid; Postgres says whether it *is* paid. Shipping only orders that are paid now
+keeps the stream safe after a PITR restore: an old `paid` event for an order that was lost, or restored as `pending`
+(its payment fell in the RPO window), ships nothing; when that order is paid again, the new `u` event ships it.
+Statuses are terminal (pending -> paid | failed), so the check is exact. If an id was reused by a new order that is
+also paid, it still gets exactly one shipment; only its cdc_epoch/source_lsn point at the older event.
+"""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -17,18 +24,18 @@ _INSERT = text(
     ON CONFLICT DO NOTHING
     """
 )
-_EXISTING_ORDERS = text("SELECT id FROM orders WHERE id = ANY(CAST(:ids AS bigint[]))")
+_PAID_ORDERS = text("SELECT id FROM orders WHERE id = ANY(CAST(:ids AS bigint[])) AND status = 'paid'")
 
 
 @dataclass(frozen=True)
 class BatchResult:
     created: int = 0
     duplicates: int = 0  # shipment already existed: re-delivery, rebalance or re-snapshot
-    missing_orders: int = 0  # order not in Postgres (event from a life lost in a restore): never ship it
+    not_paid_now: int = 0  # order missing, or not paid, in Postgres (e.g. after a restore): never ship it
 
 
 async def create_shipments(engine: AsyncEngine, changes: Sequence[OrderChange]) -> BatchResult:
-    """One transaction: a shipment for each order that still exists and has none yet."""
+    """One transaction: a shipment for each order that is paid in Postgres now and has none yet."""
     first_change: dict[int, OrderChange] = {}
     for change in changes:
         first_change.setdefault(change.order_id, change)
@@ -36,8 +43,8 @@ async def create_shipments(engine: AsyncEngine, changes: Sequence[OrderChange]) 
         return BatchResult()
 
     async with engine.begin() as conn:
-        existing = set(await conn.scalars(_EXISTING_ORDERS, {"ids": list(first_change)}))
-        rows = [change for order_id, change in first_change.items() if order_id in existing]
+        paid_now = set(await conn.scalars(_PAID_ORDERS, {"ids": list(first_change)}))
+        rows = [change for order_id, change in first_change.items() if order_id in paid_now]
         created = 0
         if rows:
             result = await conn.execute(

@@ -120,15 +120,28 @@ async def new_order(url: str, status: str) -> int:
         await engine.dispose()
 
 
-async def test_one_shipment_per_paid_order_even_after_a_re_snapshot(seeded_db, worker_url, bootstrap):
+async def set_status(url: str, order_id: int, status: str) -> None:
+    engine = create_engine(url)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("UPDATE orders SET status = :status WHERE id = :id"), {"status": status, "id": order_id}
+            )
+    finally:
+        await engine.dispose()
+
+
+async def test_one_shipment_per_order_paid_now_even_after_a_restore_and_a_re_snapshot(seeded_db, worker_url, bootstrap):
     paid_a, pending_b, paid_c = (
         await new_order(seeded_db, "paid"),
         await new_order(seeded_db, "pending"),
-        await new_order(seeded_db, "pending"),  # becomes paid in the stream below
+        await new_order(seeded_db, "paid"),
     )
+    # Restored order: Kafka still has its old `paid` event, but the restore brought it back as `pending`.
+    restored_d = await new_order(seeded_db, "pending")
     await ensure_topic(bootstrap)
 
-    # Epoch 1: the normal checkout stream, plus an order Postgres no longer has and a poison record.
+    # Epoch 1: the checkout stream, an order Postgres no longer has, the restored order's old event, a poison record.
     await produce(
         bootstrap,
         [
@@ -138,20 +151,26 @@ async def test_one_shipment_per_paid_order_even_after_a_re_snapshot(seeded_db, w
             (paid_c, debezium(paid_c, "pending", "c", 1, 130)),
             (paid_c, debezium(paid_c, "paid", "u", 1, 140)),
             (MISSING_ORDER, debezium(MISSING_ORDER, "paid", "u", 1, 150)),
+            (restored_d, debezium(restored_d, "paid", "u", 1, 160)),
             (0, b"not json"),
         ],
     )
     await run_worker_until_caught_up(bootstrap, worker_url)
-    assert await shipments(seeded_db) == [(paid_a, 1, 110), (paid_c, 1, 140)]
+    assert await shipments(seeded_db) == [(paid_a, 1, 110), (paid_c, 1, 140)]  # nothing for missing or restored
+
+    # The restored order is paid again: its new `u` event ships it, exactly once.
+    await set_status(seeded_db, restored_d, "paid")
+    await produce(bootstrap, [(restored_d, debezium(restored_d, "paid", "u", 2, 700))])
+    await run_worker_until_caught_up(bootstrap, worker_url)
+    assert await shipments(seeded_db) == [(paid_a, 1, 110), (paid_c, 1, 140), (restored_d, 2, 700)]
 
     # Epoch 2: a re-snapshot replays every order as a snapshot read; a restart resumes from committed offsets.
     await produce(
         bootstrap,
         [
-            (paid_a, debezium(paid_a, "paid", "r", 2, 900)),
-            (pending_b, debezium(pending_b, "pending", "r", 2, 900)),
-            (paid_c, debezium(paid_c, "paid", "r", 2, 900)),
+            (order_id, debezium(order_id, status, "r", 2, 900))
+            for order_id, status in [(paid_a, "paid"), (pending_b, "pending"), (paid_c, "paid"), (restored_d, "paid")]
         ],
     )
     await run_worker_until_caught_up(bootstrap, worker_url)
-    assert await shipments(seeded_db) == [(paid_a, 1, 110), (paid_c, 1, 140)]  # no duplicate, first event kept
+    assert await shipments(seeded_db) == [(paid_a, 1, 110), (paid_c, 1, 140), (restored_d, 2, 700)]  # no duplicate

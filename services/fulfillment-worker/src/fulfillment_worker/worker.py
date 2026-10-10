@@ -113,13 +113,13 @@ class Worker:
                     "paid_changes": len(wanted),
                     "shipments_created": result.created,
                     "duplicates": result.duplicates,
-                    "missing_orders": result.missing_orders,
+                    "not_paid_now": result.not_paid_now,
                     "malformed": malformed,
                     "cdc_epochs": sorted({change.epoch for change in changes}),
                 },
             )
-            if result.missing_orders:
-                log.warning("orders not found in Postgres, not shipped", extra={"count": result.missing_orders})
+            if result.not_paid_now:
+                log.warning("orders not paid in Postgres now, not shipped", extra={"count": result.not_paid_now})
         return len(records)
 
     async def _store_with_retry(self, wanted: Sequence[OrderChange]) -> BatchResult:
