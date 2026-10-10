@@ -90,7 +90,7 @@ Detection times, from the promtool unit tests in [`slo/tests/checkout.test.yaml`
 | Scenario | Expected | Unit test |
 |---|---|---|
 | every checkout slower than 300ms (payments at 600ms) | page after 0.144 × 60 = 8.6 min | silent at +8m, page by +10m |
-| same, but only 60 min of healthy history | the 6h window holds only that hour, so 6× over 6h + 30m fires first | silent at +3m, page by +5m |
+| same, but only 60 min of healthy history | the long windows hold only that hour: tickets within minutes, then 6× over 6h + 30m pages before 14.4× over 1h | ticket at +3m, page by +5m |
 | every checkout returns 503 | page after 0.072 × 60 = 4.3 min | silent at +3m, page by +5m |
 | 15-minute slowdown, then fixed | page resolves after the 5m window clears | page at +15m, nothing at +22m |
 | 4% of checkouts slow (4× burn), sustained | ticket after 0.03/0.04 × 24h = 18h, never a page | silent at +17h, ticket at +19h |

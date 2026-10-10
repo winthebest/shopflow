@@ -36,10 +36,11 @@ tests:
         alertname: CheckoutAvailabilityBurn
         exp_alerts: []
 
-  # Method check for live page-timing runs: with only 60 minutes of healthy history the 6h window holds just that
-  # hour, so the 6x/6h page (confirmed by its 30m short window) fires before the 14.4x/1h one: by +5m instead of
-  # 9-10m. A live test needs at least ~136 minutes of healthy traffic first (docs/slo/checkout.md).
-  - name: with only 60 minutes of healthy history the page fires early through the 6h pair
+  # Method check for live page-timing runs: with only 60 minutes of healthy history the long windows (6h, 1d, 3d)
+  # hold just that hour, so the tickets fire within ~3 minutes and the 6x/6h page (confirmed by its 30m short window)
+  # fires before the 14.4x/1h one: by +5m instead of 9-10m. A live test needs at least ~136 minutes of healthy
+  # traffic first (docs/slo/checkout.md).
+  - name: with only 60 minutes of healthy history the ticket and the page fire early
     interval: 1m
     input_series:
       - series: 'traces_span_metrics_duration_seconds_count{service_name="gateway",span_kind="SPAN_KIND_SERVER",http_route="/checkout"}'
@@ -49,7 +50,12 @@ tests:
     alert_rule_test:
       - eval_time: 63m
         alertname: CheckoutLatencyBurn
-        exp_alerts: []
+        exp_alerts:
+          - exp_labels: {severity: ticket, sloth_id: checkout-latency, sloth_service: checkout, sloth_severity: ticket, sloth_slo: latency, team: sf-sre}
+            exp_annotations:
+              summary: "Checkout requests are slower than 300ms faster than the 99% SLO allows."
+              title: "(ticket) checkout latency SLO error budget burn rate is too fast."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/checkout-latency.md
       - eval_time: 65m
         alertname: CheckoutLatencyBurn
         exp_alerts:
@@ -57,6 +63,11 @@ tests:
             exp_annotations:
               summary: "Checkout requests are slower than 300ms faster than the 99% SLO allows."
               title: "(page) checkout latency SLO error budget burn rate is too fast."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/checkout-latency.md
+          - exp_labels: {severity: ticket, sloth_id: checkout-latency, sloth_service: checkout, sloth_severity: ticket, sloth_slo: latency, team: sf-sre}
+            exp_annotations:
+              summary: "Checkout requests are slower than 300ms faster than the 99% SLO allows."
+              title: "(ticket) checkout latency SLO error budget burn rate is too fast."
               runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/checkout-latency.md
 
   # Every checkout returns 503 (the 5xx series appears with the first error). Theory: 14.4 × 0.5% = 7.2%
