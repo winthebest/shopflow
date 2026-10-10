@@ -210,7 +210,7 @@ Secret written by a Job, an operator or cert-manager never gets an ExternalSecre
 |---|---|---|---|
 | `observability/grafana-admin` (`admin-user`, `admin-password`) | `/shopflow/aws/observability/grafana-admin` | sf-sre, kube-prometheus-stack | seeded with `--prompt` (the login you use) |
 | `observability/alertmanager-webhook` (`url`) | `/shopflow/aws/observability/alertmanager-webhook` | sf-sre, kube-prometheus-stack | seeded with `--prompt` |
-| `shop/shop-db-{debezium,trino-pg,airflow,flink-serving,grafana-serving}` (basic-auth; users `debezium`, `trino_pg`, `airflow`, `flink_serving`, `grafana_serving`) | `/shopflow/aws/shop/<name>` | sf-platform, shop-db chart | `scripts/platform-secrets.sh`; role passwords must keep their first values (the roles come back with every restored database); label `cnpg.io/reload` |
+| `shop/shop-db-<role>` (basic-auth), one per login role enabled in `deploy/charts/shop-db` (`roles`); today `debezium`, `trino-pg`, `airflow`, `flink-serving`, `grafana-serving`, `fulfillment-worker` (users `debezium`, `trino_pg`, `airflow`, `flink_serving`, `grafana_serving`, `fulfillment_worker`) | `/shopflow/aws/shop/<name>` | sf-platform, shop-db chart | `scripts/platform-secrets.sh` reads the same list, so a new role is seeded without changing this runbook; role passwords must keep their first values (the roles come back with every restored database); label `cnpg.io/reload` |
 | `lakehouse/trino-internal` (`shared-secret`) | `/shopflow/aws/lakehouse/trino-internal` | sf-data, trino | |
 | `lakehouse/trino-dbt`, `lakehouse/trino-exporter` (`username`, `password`), `lakehouse/trino-password-db` (`password.db`) | `/shopflow/aws/lakehouse/<name>` | sf-data, trino | one seed group: the bcrypt file must match both passwords |
 
