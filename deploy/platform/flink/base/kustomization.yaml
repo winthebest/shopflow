@@ -1,0 +1,39 @@
+# The KPI job and what it needs in namespace flink (docs/adr/0415). Namespaces are explicit per resource:
+# secret-copy.yaml also grants Roles in namespaces kafka and shop.
+#   wave -1  flink-secret-copy  Kafka login + cluster CA, CDC epoch, serving DB login copied into flink
+#   wave  0  flink-serving-ddl  table serving.kpi_minute + SELECT for grafana_serving
+#   wave  1  kpi-minute         the FlinkDeployment
+# plus, in observability: the datasource Secret (written by the copy Job) and the KPI dashboard ConfigMap.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - secret-copy.yaml
+  - serving-ddl-job.yaml
+  - flinkdeployment.yaml
+configMapGenerator:
+  - name: flink-secret-copy-script
+    namespace: flink
+    files:
+      - copy-secret.py
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-2"
+  - name: flink-serving-ddl
+    namespace: flink
+    files:
+      - serving-kpi-minute.sql
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-2"
+  # The KPI dashboard, picked up by the Grafana sidecar (label grafana_dashboard=1) into folder Shopflow. It reads
+  # datasource uid `serving`, which the copy Job provisions (secret-copy.yaml).
+  - name: grafana-dashboard-kpi-realtime
+    namespace: observability
+    files:
+      - grafana-dashboard-kpi-realtime.json
+    options:
+      disableNameSuffixHash: true
+      labels:
+        grafana_dashboard: "1"
+      annotations:
+        grafana_folder: Shopflow

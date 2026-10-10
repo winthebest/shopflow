@@ -1,0 +1,36 @@
+# Flink Kubernetes Operator (watches namespace flink): runs the realtime KPI job (docs/adr/0415). Profile rt.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: flink-operator
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: shopflow
+    shopflow.io/profile: rt
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: flink
+  sources:
+    # dlcdn: Apache's CDN for the release tree (downloads.apache.org timed out on 2026-10-10); relative chart URLs.
+    - repoURL: https://dlcdn.apache.org/flink/flink-kubernetes-operator-1.16.1/
+      chart: flink-kubernetes-operator
+      targetRevision: 1.16.1
+      helm:
+        releaseName: flink-operator
+        valueFiles:
+          - $values/deploy/platform/flink-operator/base/values.yaml
+          - $values/deploy/platform/flink-operator/local/values.yaml
+    - repoURL: https://github.com/winthebest/shopflow.git
+      targetRevision: main
+      ref: values
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true  # the CRDs are larger than the client-side last-applied annotation allows

@@ -4,9 +4,14 @@ Database role passwords live in namespace `shop` (CNPG managed roles, SOPS-encry
 Secrets only from their own namespace. This Job copies the keys instead of keeping a second encrypted copy in git
 or decrypting with the age key (docs/contracts/gitops.md section 5), so a password change never drifts.
 
-Env: SOURCE_NAMESPACE, SOURCE_NAME, TARGET_NAMESPACE, TARGET_NAME; optional EXTRA_DATA (JSON object of fixed keys
-to add, e.g. a JDBC URL) and DERIVED_DATA (JSON object of keys built from the source's keys, e.g. a database URI:
-"postgresql://{username}:{password}@host/db"; every substituted value is percent-encoded). Standard library only.
+Env: SOURCE_NAMESPACE, SOURCE_NAME, TARGET_NAMESPACE, TARGET_NAME; optional:
+  EXTRA_DATA        JSON object of fixed keys to add, e.g. a JDBC URL;
+  DERIVED_DATA      JSON object of keys built from the source's keys, e.g. "postgresql://{username}:{password}@host/db";
+  DERIVED_ENCODING  how substituted values are encoded: `uri` (default, percent-encoded) or `json` (a quoted JSON
+                    string, safe anywhere in a YAML or JSON document, e.g. a Grafana provisioning file);
+  COPY_SOURCE_KEYS  `false` writes only EXTRA_DATA/DERIVED_DATA, not the source's own keys (default `true`);
+  TARGET_LABELS     JSON object of labels for the target Secret (e.g. one a Grafana sidecar watches).
+Standard library only.
 The same file exists in every component that needs a copy; scripts/data-validate.sh fails if the copies differ.
 """
 
@@ -40,6 +45,27 @@ def call(method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
         return error.code, {"message": error.read().decode(errors="replace")}
 
 
+ENCODERS = {"uri": lambda value: urllib.parse.quote(value, safe=""), "json": json.dumps}
+
+
+def fill_templates(derived: dict[str, str], data: dict[str, str], encoding: str) -> dict[str, str]:
+    """DERIVED_DATA filled from the source's base64 `data`, each value encoded for where it lands.
+
+    Only text keys can feed a template. Binary keys (e.g. ca.p12 of a Strimzi cluster CA) are never decoded; a
+    template that names one fails with KeyError.
+    """
+    if not derived:
+        return {}
+    encode = ENCODERS[encoding]
+    values = {}
+    for key, encoded in data.items():
+        try:
+            values[key] = encode(base64.b64decode(encoded).decode())
+        except UnicodeDecodeError:
+            continue
+    return {key: template.format_map(values) for key, template in derived.items()}
+
+
 def main() -> None:
     env = os.environ
     source_ref = f"{env['SOURCE_NAMESPACE']}/{env['SOURCE_NAME']}"
@@ -48,27 +74,23 @@ def main() -> None:
     if status != 200:
         sys.exit(f"read {source_ref}: HTTP {status} {source.get('message')}")
     extra = json.loads(env.get("EXTRA_DATA", "{}"))
-    derived = json.loads(env.get("DERIVED_DATA", "{}"))
-    # Only text keys can feed a template. Binary keys (e.g. ca.p12 of a Strimzi cluster CA) are copied as they are and
-    # never decoded; a template that names one fails with KeyError.
-    values = {}
-    for key, encoded in source.get("data", {}).items() if derived else ():
-        try:
-            values[key] = urllib.parse.quote(base64.b64decode(encoded).decode(), safe="")
-        except UnicodeDecodeError:
-            continue
-    extra.update({k: template.format_map(values) for k, template in derived.items()})
+    extra.update(
+        fill_templates(
+            json.loads(env.get("DERIVED_DATA", "{}")), source.get("data", {}), env.get("DERIVED_ENCODING", "uri")
+        )
+    )
+    data = source.get("data", {}) if env.get("COPY_SOURCE_KEYS", "true") == "true" else {}
     target = {
         "apiVersion": "v1",
         "kind": "Secret",
         "metadata": {
             "name": env["TARGET_NAME"],
             "namespace": env["TARGET_NAMESPACE"],
-            "labels": {"app.kubernetes.io/managed-by": "copy-secret"},
+            "labels": {"app.kubernetes.io/managed-by": "copy-secret", **json.loads(env.get("TARGET_LABELS", "{}"))},
             "annotations": {"shopflow.io/copied-from": source_ref},
         },
         "type": "Opaque",
-        "data": source.get("data", {}),
+        "data": data,
         "stringData": extra,
     }
     collection = f"/namespaces/{env['TARGET_NAMESPACE']}/secrets"
@@ -77,7 +99,7 @@ def main() -> None:
         status, payload = call("PUT", f"{collection}/{env['TARGET_NAME']}", target)
     if status not in (200, 201):
         sys.exit(f"write {target_ref}: HTTP {status} {payload.get('message')}")
-    print(f"copied {source_ref} -> {target_ref}: keys {sorted([*source.get('data', {}), *extra])}")
+    print(f"copied {source_ref} -> {target_ref}: keys {sorted([*data, *extra])}")
 
 
 if __name__ == "__main__":

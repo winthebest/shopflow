@@ -1,0 +1,64 @@
+# Creates serving.kpi_minute and grants SELECT to grafana_serving (serving-kpi-minute.sql), as flink_serving (owner of
+# database serving, CNPG role from sf-platform's shop-db chart). Sync hook, wave 0: after the login copy, before the
+# FlinkDeployment. Idempotent.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: flink-serving-ddl
+  namespace: flink
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: flink-serving-ddl
+        app.kubernetes.io/part-of: shopflow
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 26
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ddl
+          image: ghcr.io/cloudnative-pg/postgresql:17.11-minimal-trixie@sha256:ca2c3bb893d185fe4e5d0401a010454bd87dcb67c53003c38fd828804928f5d9
+          # Retries: a new pod's IP reaches the k3s NetworkPolicy allow-lists a few seconds after it starts.
+          command:
+            - sh
+            - -c
+            - |-
+              for attempt in $(seq 1 30); do
+                psql -v ON_ERROR_STOP=1 -qAt -f /sql/serving-kpi-minute.sql && exit 0
+                sleep 2
+              done
+              exit 1
+          env:
+            - name: PGHOST
+              value: shop-db-rw.shop.svc
+            - name: PGDATABASE
+              value: serving
+            - name: PGSSLMODE
+              value: require
+            - name: PGUSER
+              valueFrom: {secretKeyRef: {name: flink-serving, key: username}}
+            - name: PGPASSWORD
+              valueFrom: {secretKeyRef: {name: flink-serving, key: password}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: sql
+              mountPath: /sql
+              readOnly: true
+      volumes:
+        - name: sql
+          configMap:
+            name: flink-serving-ddl

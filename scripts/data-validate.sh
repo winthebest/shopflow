@@ -14,7 +14,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-COMPONENTS=(strimzi kafka kafka-connect seaweedfs iceberg-catalog trino freshness-exporter airflow)
+COMPONENTS=(strimzi kafka kafka-connect seaweedfs iceberg-catalog trino freshness-exporter airflow flink-operator flink)
 K8S_VERSION="${K8S_VERSION:-1.34.0}"
 SCHEMA_DIR="${SCHEMA_DIR:-out/data-schemas}"
 ARGOCD_CRD_VERSION=v3.5.3
@@ -22,6 +22,9 @@ CERT_MANAGER_VERSION=v1.21.2
 STRIMZI_VERSION="$(yq '.spec.sources[0].targetRevision' deploy/argocd/apps/strimzi/application.yaml 2> /dev/null || echo 1.2.0)"
 # PodMonitor / ServiceMonitor schemas come from the kube-prometheus-stack chart that sf-sre deploys.
 KPS_VERSION="$(yq '.spec.sources[0].targetRevision' deploy/argocd/apps/kube-prometheus-stack/application.yaml)"
+# FlinkDeployment schemas come from the operator chart the flink-operator app pins.
+FLINK_OPERATOR_REPO="$(yq '.spec.sources[0].repoURL' deploy/argocd/apps/flink-operator/application.yaml)"
+FLINK_OPERATOR_VERSION="$(yq '.spec.sources[0].targetRevision' deploy/argocd/apps/flink-operator/application.yaml)"
 
 # CRD (multi-document YAML on stdin) -> $SCHEMA_DIR/<group>/<kind>_<version>.json, the layout kubeconform reads.
 # Objects with declared properties are closed (additionalProperties: false) unless the CRD keeps unknown fields:
@@ -33,15 +36,18 @@ crds_to_schemas() {
     | while IFS= read -r line; do
       path="$SCHEMA_DIR/$(jq -r .path <<< "$line")"
       mkdir -p "$(dirname "$path")"
-      jq '.schema | walk(if type == "object" and .type == "object" and has("properties") and (has("additionalProperties") | not)
+      # Some CRDs (Flink's) omit the root apiVersion/kind/metadata; add them so closing the root keeps them valid.
+      jq '.schema | .properties.apiVersion //= {type: "string"} | .properties.kind //= {type: "string"}
+        | .properties.metadata //= {type: "object"}
+        | walk(if type == "object" and .type == "object" and has("properties") and (has("additionalProperties") | not)
         and ((.["x-kubernetes-preserve-unknown-fields"] // false) | not)
         then . + {additionalProperties: false} else . end)' <<< "$line" > "$path"
     done
 }
 
 generate_schemas() {
-  local stamp="strict-v2 strimzi=$STRIMZI_VERSION argocd=$ARGOCD_CRD_VERSION cert-manager=$CERT_MANAGER_VERSION"
-  stamp+=" kube-prometheus-stack=$KPS_VERSION"
+  local stamp="strict-v3 strimzi=$STRIMZI_VERSION argocd=$ARGOCD_CRD_VERSION cert-manager=$CERT_MANAGER_VERSION"
+  stamp+=" kube-prometheus-stack=$KPS_VERSION flink-operator=$FLINK_OPERATOR_VERSION"
   if [[ -f "$SCHEMA_DIR/.stamp" && "$(cat "$SCHEMA_DIR/.stamp")" == "$stamp" ]]; then
     return
   fi
@@ -54,6 +60,8 @@ generate_schemas() {
     | crds_to_schemas
   helm show crds kube-prometheus-stack --repo https://prometheus-community.github.io/helm-charts \
     --version "$KPS_VERSION" 2> /dev/null | crds_to_schemas
+  helm show crds flink-kubernetes-operator --repo "$FLINK_OPERATOR_REPO" --version "$FLINK_OPERATOR_VERSION" \
+    2> /dev/null | crds_to_schemas
   echo "$stamp" > "$SCHEMA_DIR/.stamp"
 }
 
@@ -161,7 +169,7 @@ check_secrets() {
       echo "FAIL $f: unencrypted keys: $plain" >&2
       return 1
     fi
-  done < <(find deploy/platform/{strimzi,kafka,kafka-connect,seaweedfs,iceberg-catalog,trino,airflow} -name '*.enc.yaml' 2> /dev/null)
+  done < <(find deploy/platform/{strimzi,kafka,kafka-connect,seaweedfs,iceberg-catalog,trino,airflow,flink} -name '*.enc.yaml' 2> /dev/null)
   local copy
   # Helm charts cannot read files outside the chart, so a chart keeps its own copy under files/.
   for copy in deploy/platform/*/base/copy-secret.py deploy/charts/*/files/copy-secret.py; do
@@ -193,6 +201,9 @@ SH
   grep -q -- '--context k3d-sf-ci apply' "$fake/calls.log" || { echo "FAIL cdc-epoch.sh new ignored CLUSTER" >&2; return 1; }
   [[ "$(yq -N 'select(.kind == "KafkaTopic") | .spec.topicName' "$fake/applied.yaml")" == iceberg-control-1234567890 ]] \
     || { echo "FAIL cdc-epoch.sh new: no KafkaTopic iceberg-control-<epoch>" >&2; return 1; }
+  # The fake answers every `get`, so the Flink job of profile rt exists: a new epoch must delete it.
+  grep -q -- '-n flink delete flinkdeployment kpi-minute' "$fake/calls.log" \
+    || { echo "FAIL cdc-epoch.sh new did not delete FlinkDeployment flink/kpi-minute" >&2; return 1; }
   kubeconform_strict < "$fake/applied.yaml"
   rm -rf "$fake"
   echo "cdc-epoch.sh new: Secret + KafkaTopic valid (fake kubectl)"

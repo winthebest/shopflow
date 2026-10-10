@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Applies to | Argo CD Sync/PostSync hooks of `iceberg-catalog` (`polaris-db-copy`, `polaris-bootstrap`, `polaris-setup`), `trino` (`trino-pg-copy`, `trino-bronze-tables`), `airflow` (`airflow-secret-copy`, migrations, create-user) |
+| Applies to | Argo CD Sync/PostSync hooks of `iceberg-catalog` (`polaris-db-copy`, `polaris-bootstrap`, `polaris-setup`), `trino` (`trino-pg-copy`, `trino-bronze-tables`), `airflow` (`airflow-secret-copy`, migrations, create-user), `flink` (`flink-secret-copy`, which also writes the Grafana datasource Secret, `flink-serving-ddl`) |
 | Symptom | A setup Job failed or never ran, the app shows `Synced` (sometimes `Degraded`), and pushing a fix to the Job changes nothing |
 | Seen | 2026-10-10, P4 slot on `k3d-sf-data` |
 
