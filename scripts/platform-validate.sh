@@ -4,9 +4,11 @@
 #   2. every Application in deploy/argocd/apps renders (Helm chart sources, Kustomize or Helm path sources),
 #      plus the Argo CD bootstrap chart;
 #   3. the rendered manifests pass kubeconform (Kubernetes schemas + CRDs-catalog);
-#   4. no rendered workload uses an image without a digest.
+#   4. no rendered workload uses an image without a digest;
+#   5. the image of the shop migration Job (tag sha-<commit>) contains the newest commit under
+#      services/<service>/migrations, so a chart bump cannot ship an image without a migration (needs full Git history).
 # Works on a temporary copy of deploy/ with KSOPS generators removed: CI has no age key, and the in-cluster KSOPS
-# path is exercised by `make up`. Needs: kubectl (kustomize), helm, yq, kubeconform.
+# path is exercised by `make up`. Needs: git, kubectl (kustomize), helm, yq, kubeconform.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -16,7 +18,7 @@ OUT_DIR="${OUT_DIR:-$ROOT_DIR/out/platform-validate}"
 CHECK_REVISION="platform-validate-revision"
 
 fail() { printf 'platform-validate: %s\n' "$*" >&2; exit 1; }
-for tool in kubectl helm yq kubeconform; do
+for tool in git kubectl helm yq kubeconform; do
   command -v "$tool" >/dev/null 2>&1 || fail "missing tool: $tool"
 done
 
@@ -193,3 +195,23 @@ undigested="$(yq -N 'select(.kind != "CustomResourceDefinition" and .kind != "Ap
   | grep -v '@sha256:[0-9a-f]\{64\}$' | sort -u || true)"
 [[ -z "$undigested" ]] || fail "images without a digest:"$'\n'"$undigested"
 echo "images: all pinned by digest"
+
+# 5. The migration Job runs the image of services.<migration.service>; the commit in its tag must contain the newest
+#    migration, otherwise the release deploys a schema older than what the rest of deploy/ relies on (e.g. the CDC
+#    publication that Debezium reads). Blocks on main until the chart is bumped after a migration merges.
+shop_values="$ROOT_DIR/deploy/charts/shop/values.yaml"
+migration_service="$(yq '.migration.service' "$shop_values")"
+migration_tag="$(SVC="$migration_service" yq '.services[strenv(SVC)].image.tag' "$shop_values")"
+[[ "$migration_tag" =~ ^sha-([0-9a-f]{7,40})$ ]] \
+  || fail "deploy/charts/shop: services.$migration_service.image.tag must be sha-<commit>, got: $migration_tag"
+tag_ref="${BASH_REMATCH[1]}"
+[[ "$(git -C "$ROOT_DIR" rev-parse --is-shallow-repository)" == false ]] \
+  || fail "shallow Git clone: the migration check needs full history (actions/checkout fetch-depth: 0)"
+tag_commit="$(git -C "$ROOT_DIR" rev-parse --verify -q "$tag_ref^{commit}")" \
+  || fail "deploy/charts/shop: image tag $migration_tag is not a commit of this repository"
+latest_migration="$(git -C "$ROOT_DIR" log -1 --format=%H -- "services/$migration_service/migrations")"
+[[ -n "$latest_migration" ]] || fail "no commit touches services/$migration_service/migrations"
+git -C "$ROOT_DIR" merge-base --is-ancestor "$latest_migration" "$tag_commit" \
+  || fail "deploy/charts/shop: image $migration_tag (services.$migration_service) predates migration commit" \
+    "${latest_migration:0:7}; bump the shop images to a tag built from it or later"
+echo "migrations: $migration_service image $migration_tag contains ${latest_migration:0:7}"
