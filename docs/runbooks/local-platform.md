@@ -32,8 +32,9 @@ Profile changes on an existing cluster:
   and are adopted by the new root app. Other profiles that are no longer listed are only reported, not removed.
   The app lists come from the profiles in your local checkout: pull before switching, so they match the revision
   the cluster tracks.
-- With `data`: right after the root apps, `make up` runs `scripts/cdc-epoch.sh new` (sf-data), so every `make up`
-  starts a new CDC epoch (ADR 0406).
+- With `data`: right after the root apps, `make up` runs `scripts/cdc-epoch.sh ensure` (sf-data, ADR 0406). A fresh
+  cluster gets a new CDC epoch; rerunning `make up` on a cluster that has one keeps it (the running connectors stamp
+  that epoch). A new epoch on purpose is the re-snapshot runbook's `cdc-epoch.sh new`.
 
 ## Root apps and session parameters
 

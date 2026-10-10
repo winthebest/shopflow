@@ -177,14 +177,16 @@ install_argocd() {
     --wait --timeout 10m >/dev/null
 }
 
-# Profile data: start a new CDC epoch right after the root apps (sf-data's scripts/cdc-epoch.sh, ADR 0406). It waits
-# for the Strimzi CRDs itself and prints the epoch number.
+# Profile data: make sure a CDC epoch exists right after the root apps (sf-data's scripts/cdc-epoch.sh, ADR 0406).
+# `ensure` keeps the current epoch on a cluster that already has one, so rerunning `make up` never moves the Secret
+# to a new epoch while the running connectors keep stamping the old one; on a fresh cluster it starts one like `new`.
+# It waits for the Strimzi CRDs itself and prints the epoch number.
 start_cdc_epoch() {
   has_profile data || return 0
   local epoch
-  epoch="$(CLUSTER="$CLUSTER" KUBE_CONTEXT="$KUBE_CONTEXT" "$ROOT_DIR/scripts/cdc-epoch.sh" new \
+  epoch="$(CLUSTER="$CLUSTER" KUBE_CONTEXT="$KUBE_CONTEXT" "$ROOT_DIR/scripts/cdc-epoch.sh" ensure \
     --timeout "$((WAIT_TIMEOUT > 600 ? WAIT_TIMEOUT : 600))")"
-  log "CDC epoch $epoch started"
+  log "CDC epoch $epoch (kept if it already existed)"
 }
 
 # One root app per profile, through the mechanism cloud-up uses too (scripts/platform-root-apps.sh, ADR 0206).
