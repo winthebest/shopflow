@@ -45,7 +45,7 @@ flowchart LR
   end
   pg -- WAL --> dbz
   subgraph lake [Lakehouse]
-    bronze[(bronze<br/>Iceberg<br/>validated on k3d)] --> dbt[dbt on Trino<br/>run by Airflow] --> gold[(silver, gold<br/>Iceberg)]
+    bronze[(bronze<br/>Iceberg<br/>validated on k3d)] --> dbt[dbt on Trino<br/>run by Airflow<br/>validated on k3d] --> gold[(silver, gold<br/>Iceberg)]
   end
   sink --> bronze
   gold --> trino[Trino] -.-> mb[Metabase<br/>planned]:::planned
@@ -54,8 +54,8 @@ flowchart LR
 ```
 
 Iceberg data lives in SeaweedFS behind an Apache Polaris REST catalog (S3 and AWS Glue on AWS). CDC into
-bronze and the Flink KPI job (profile `rt`) are validated end to end on a local k3d cluster, not yet on AWS.
-dbt and Airflow are merged; their cluster run is in progress. Metabase is planned.
+bronze, the Flink KPI job (profile `rt`) and dbt + Airflow (profile `batch`) are validated end to end on a local k3d
+cluster, not yet on AWS. Metabase is planned.
 
 **Platform and observability.** After the bootstrap, Git is the only deploy path. Every request is traced, and
 the SLIs come from those traces.
@@ -90,6 +90,7 @@ flowchart LR
 | Security baseline: Pod Security `restricted` in the core namespaces (`baseline` for data and Airflow, `privileged` for observability), default-deny NetworkPolicies in all of them, SOPS-encrypted secrets, admin UIs only through port-forward, Kafka over TLS + SCRAM, gitleaks, images pinned by digest | ADRs [0208](docs/adr/0208-psa-and-network-policies.md), [0204](docs/adr/0204-sops-ksops-local-secrets.md), [0205](docs/adr/0205-admin-ui-port-forward-only.md), [0404](docs/adr/0404-kafka-tls-scram-acl.md) |
 | CDC end to end on k3d (`core,obs-lite,data`): the snapshot put 100/100 customers in bronze; one order's insert, update and delete reached bronze as `c,u,d` in **47 s** (target ≤ 120 s); bronze heartbeat freshness 27 s; Debezium 3 ms behind the source when idle; ~10.6 GB RAM. Not run on AWS yet | [PR #122](https://github.com/winthebest/shopflow/pull/122), [data-cluster-check.sh](scripts/data-cluster-check.sh) |
 | Realtime KPIs with Flink SQL on k3d (`core,obs-lite,data,rt`): under k6 at 10 checkouts/s, a minute's KPIs are in Postgres 34 s after its window closes (67 s after the load starts); per-minute order counts match the `orders` table exactly; the Grafana KPI panels show data; ~12.6 GB RAM, so `rt` runs as an exclusive slot. Known gap: the last minute stays open when orders stop. Not run on AWS yet | [ADR 0415, Consequences](docs/adr/0415-flink-sql-realtime-kpis.md#consequences) |
+| dbt and Airflow on k3d (`core,obs-lite,data,batch`): `dbt_build` ran 28/28 tasks on Trino, 5 min 42 s on empty schemas and 44–46 s for later runs; after 601 k6 checkouts, gold matches Postgres exactly (601 orders: 589 paid, 12 failed; paid revenue 52,844.70 on both sides); orders deleted in bronze are absent from silver and gold. The gold-freshness SLO is not yet measured on a cluster (it needs a cluster up for more than 2 hours); only its promtool tests cover it. Not run on AWS yet | [ADR 0414, Consequences](docs/adr/0414-airflow3-local-executor-cosmos.md#consequences) |
 | AWS guardrails: a budget that excludes credits, a deny action at $25, sessions bounded by a lease and two reapers. Cost *estimate* $0.30–0.45/h, not yet measured | [docs/cost.md](docs/cost.md), ADRs [0510](docs/adr/0510-cost-guardrails-exclude-credits.md), [0501](docs/adr/0501-ephemeral-env-with-lease.md) |
 
 ## Tech stack
@@ -129,8 +130,9 @@ make down                             # delete the cluster and its registry
 ```
 
 Profiles combine: `core` (edge, Postgres, shop), `obs` or `obs-lite` (observability), `data` (needs one of the
-two), `batch` (Airflow, needs `data`). Rules: [gitops.md §4](docs/contracts/gitops.md#4-profiles); memory per
-profile: [environment.md](docs/contracts/environment.md).
+two), `rt` (Flink) and `batch` (Airflow), both needing `data`. Rules: [gitops.md §4](docs/contracts/gitops.md#4-profiles).
+`rt` and `batch` each need about 12.5 GB with `core,obs-lite,data`, so they run as exclusive slots on a 16 GB Docker
+VM; memory per profile: [environment.md](docs/contracts/environment.md).
 
 The k3d path decrypts SOPS secrets with the maintainer's age key
 ([ADR 0204](docs/adr/0204-sops-ksops-local-secrets.md)). A fork needs its own age recipient in `.sops.yaml` and
@@ -162,7 +164,7 @@ regenerated secrets; this is not scripted yet.
 | 2 | k3d + Argo CD, edge with TLS, CloudNativePG, SOPS, Pod Security, NetworkPolicies | Done (Gate 1 passed) |
 | 3 | OpenTelemetry, Prometheus/Loki/Tempo, checkout SLOs, soak, postmortem | Done (Gate 2 passed); page timing on the cluster moved to Phase 7 |
 | 4 | CDC: Debezium, Kafka, Iceberg, Polaris, Trino, CDC lag SLO | Done (Gate 2 passed, local k3d) |
-| 5 | dbt bronze → silver → gold, Airflow, Flink KPIs, Metabase, data quality | In progress: Flink KPI job validated on a dev cluster; dbt and Airflow merged, cluster run in progress; Metabase planned |
+| 5 | dbt bronze → silver → gold, Airflow, Flink KPIs, Metabase, data quality | In progress: Flink KPI job and dbt + Airflow validated on a dev cluster; gold-freshness SLO not yet measured on a cluster; Metabase planned |
 | 6 | AWS: OpenTofu, EKS on spot, lease and reapers, cost guardrails, security baseline | In progress: offline checks pass in CI; no AWS session run yet |
 | 7 | Chaos game days, autoscaling, restore drills, page timing | In progress: Chaos Mesh (game-day-only profile), experiments and postmortem template merged; KEDA and the fulfillment worker merged (code and chart), not yet run on a cluster; game days not run yet |
 | 8 | Supply chain (signed images, SBOM, admission policy) and a short demo video | Planned |
