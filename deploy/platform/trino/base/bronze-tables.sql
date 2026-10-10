@@ -85,6 +85,22 @@ CREATE TABLE IF NOT EXISTS lake.bronze.payments (
 )
 WITH (format_version = 2, partitioning = ARRAY['day(_ingested_at)']);
 
+-- shipments: one row per paid order, written by the fulfillment worker (Phase 7). cdc_epoch / source_lsn are the
+-- worker's own record of the order change it acted on; _cdc_epoch / _lsn are this row's CDC metadata.
+CREATE TABLE IF NOT EXISTS lake.bronze.shipments (
+    id            bigint,
+    order_id      bigint,
+    cdc_epoch     integer,
+    source_lsn    bigint,
+    created_at    timestamp(6) with time zone,
+    updated_at    timestamp(6) with time zone,
+    _op           varchar,
+    _lsn          bigint,
+    _source_ts_ms bigint,
+    _cdc_epoch    bigint,
+    _ingested_at  timestamp(6) with time zone
+)
+WITH (format_version = 2, partitioning = ARRAY['day(_ingested_at)']);
 CREATE TABLE IF NOT EXISTS lake.bronze.heartbeat (
     id            integer,
     beat_at       timestamp(6) with time zone,

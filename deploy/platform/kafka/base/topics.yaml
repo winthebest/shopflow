@@ -71,6 +71,19 @@ spec:
 apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
+  name: shop-public-shipments
+  labels:
+    strimzi.io/cluster: shopflow
+spec:
+  topicName: shop.public.shipments
+  partitions: 1
+  config:
+    cleanup.policy: delete
+    retention.ms: 604800000
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
   name: shop-public-heartbeat
   labels:
     strimzi.io/cluster: shopflow
