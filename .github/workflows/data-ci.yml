@@ -17,6 +17,7 @@ on:
       - deploy/platform/freshness-exporter/**
       - deploy/argocd/apps/**
       - deploy/argocd/profiles/data/**
+      - deploy/argocd/profiles/batch/**
       - data/contracts/**  # the CDC table list and bronze columns are checked against them
       - data/dbt/**
       - data/airflow/**
