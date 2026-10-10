@@ -1,12 +1,18 @@
-"""payments service: a mock provider. Each charge waits PAYMENT_LATENCY_MS, then is declined with
-probability PAYMENT_FAILURE_RATE (HTTP 402) or succeeds (HTTP 201)."""
+"""payments service: a mock provider. Each charge waits PAYMENT_LATENCY_MS, then is declined (HTTP 402) or succeeds
+(HTTP 201).
+
+Idempotent per `order_id`, like a real provider's idempotency key, so orders may retry a charge whose answer it never
+got (docs/contracts/services.md, ADR 0102): the outcome and `charge_id` are derived from the order id, not drawn at
+random, so every replica gives the same answer to every attempt. A fixed PAYMENT_FAILURE_RATE of the order ids,
+spread uniformly by a hash, is declined.
+"""
 
 import asyncio
+import hashlib
 import logging
-import random
 from decimal import Decimal
 from typing import Literal
-from uuid import UUID, uuid4
+from uuid import UUID, uuid5
 
 from fastapi import FastAPI, Response
 from pydantic import BaseModel, ConfigDict, Field
@@ -21,6 +27,8 @@ SERVICE = "payments"
 PORT = 8002
 
 log = logging.getLogger(SERVICE)
+
+CHARGE_NAMESPACE = UUID("6f1d2c4e-8a51-4c0f-9a57-2f0f5a3e9b10")  # fixed: charge ids must not change between releases
 
 
 class Settings(BaseSettings):
@@ -41,9 +49,18 @@ class ChargeResult(BaseModel):
     status: Literal["succeeded", "declined"]
 
 
-def create_app(settings: Settings | None = None, rng: random.Random | None = None) -> FastAPI:
+def charge_id_for(order_id: int) -> UUID:
+    return uuid5(CHARGE_NAMESPACE, f"order-{order_id}")
+
+
+def declined(order_id: int, failure_rate: float) -> bool:
+    """Whether this order's charge is declined: the order id hashed to a uniform number in [0, 1)."""
+    digest = hashlib.sha256(f"order-{order_id}".encode()).digest()
+    return int.from_bytes(digest[:8], "big") / 2**64 < failure_rate
+
+
+def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
-    rng = rng or random.Random()  # noqa: S311 - simulated failures, not security
     app = FastAPI(title=SERVICE)
     app.add_middleware(AccessLogMiddleware)
 
@@ -58,11 +75,11 @@ def create_app(settings: Settings | None = None, rng: random.Random | None = Non
     @app.post("/charges", status_code=201)
     async def charge(req: ChargeRequest, response: Response) -> ChargeResult:
         await asyncio.sleep(settings.payment_latency_ms / 1000)
-        if rng.random() < settings.payment_failure_rate:
+        if declined(req.order_id, settings.payment_failure_rate):
             response.status_code = 402
             log.info("charge declined", extra={"order_id": req.order_id})
             return ChargeResult(charge_id=None, status="declined")
-        return ChargeResult(charge_id=uuid4(), status="succeeded")
+        return ChargeResult(charge_id=charge_id_for(req.order_id), status="succeeded")
 
     return app
 
