@@ -68,6 +68,20 @@ tests:
       - {eval_time: 15m, alertname: CdcFreshnessProbeDown, exp_alerts: []}
       - {eval_time: 30m, alertname: CdcFreshnessProbeDown, exp_alerts: []}
 
+  # The namespace guard only covers start-up: an exporter that never comes up counts as bad after 15 minutes.
+  - name: exporter never starts - bad once namespace lakehouse is 15 minutes old
+    interval: 1m
+    input_series:
+      - series: 'kube_namespace_status_phase{namespace="lakehouse",phase="Active"}'
+        values: '1x60'
+      - series: 'kube_namespace_created{namespace="lakehouse"}'
+        values: '0x60'
+    promql_expr_test:
+      - {expr: 'cdc:bronze_heartbeat_stale:minute', eval_time: 14m, exp_samples: []}
+      - expr: cdc:bronze_heartbeat_stale:minute
+        eval_time: 16m
+        exp_samples: [{labels: 'cdc:bronze_heartbeat_stale:minute', value: 1}]
+
   - name: no SLI samples and no alerts on a cluster without the data profile
     interval: 1m
     input_series:
