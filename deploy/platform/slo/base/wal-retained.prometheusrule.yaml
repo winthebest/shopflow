@@ -1,0 +1,62 @@
+# WAL kept by the logical replication slot of Debezium (debezium_shop on shop-db). When Debezium stops reading,
+# Postgres keeps all WAL from the slot's restart_lsn. shop-db caps it with max_slot_wal_keep_size (2GB local):
+# past that, Postgres invalidates the slot and CDC needs a full re-snapshot with a new epoch. These alerts must fire
+# well before that (Phase 7 game day 3). Metrics: CloudNativePG default queries (pg_replication_slots, pg_settings;
+# max_slot_wal_keep_size is in MB), scraped by the cnpg-shop PodMonitor. Runbook: docs/runbooks/wal-retained.md.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: wal-retained
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: shopflow
+spec:
+  groups:
+    - name: shopflow-postgres-slot-wal
+      rules:
+        # Bytes of WAL held by the slot, and the cap in bytes, joined per Postgres pod.
+        - record: shopflow:pg_slot_wal_retained:bytes
+          expr: |
+            max by (namespace, pod, slot_name) (cnpg_pg_replication_slots_pg_wal_lsn_diff{slot_name="debezium_shop"})
+        - record: shopflow:pg_slot_wal_retained:ratio
+          expr: |
+            shopflow:pg_slot_wal_retained:bytes
+            / on (namespace, pod) group_left()
+            (max by (namespace, pod) (cnpg_pg_settings_setting{name="max_slot_wal_keep_size"} > 0) * 1024 * 1024)
+        - alert: PostgresSlotWALRetainedHigh
+          expr: shopflow:pg_slot_wal_retained:ratio > 0.5
+          for: 5m
+          labels:
+            severity: ticket
+            team: sf-sre
+          annotations:
+            summary: "Slot {{ $labels.slot_name }} holds more than half of max_slot_wal_keep_size on {{ $labels.pod }}."
+            runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/wal-retained.md
+        - alert: PostgresSlotWALRetainedCritical
+          expr: |
+            shopflow:pg_slot_wal_retained:ratio > 0.8
+            or
+            (
+              shopflow:pg_slot_wal_retained:ratio > 0.25
+              and on (namespace, pod, slot_name)
+              predict_linear(shopflow:pg_slot_wal_retained:bytes[30m], 3600)
+                / on (namespace, pod) group_left()
+                (max by (namespace, pod) (cnpg_pg_settings_setting{name="max_slot_wal_keep_size"} > 0) * 1024 * 1024)
+              > 1
+            )
+          for: 5m
+          labels:
+            severity: page
+            team: sf-sre
+          annotations:
+            summary: "Slot {{ $labels.slot_name }} will hit max_slot_wal_keep_size within the hour (or is past 80%): the slot is about to be invalidated."
+            runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/wal-retained.md
+        - alert: PostgresSlotInactive
+          expr: max by (namespace, pod, slot_name) (cnpg_pg_replication_slots_active{slot_name="debezium_shop"}) == 0
+          for: 10m
+          labels:
+            severity: ticket
+            team: sf-sre
+          annotations:
+            summary: "Nothing reads slot {{ $labels.slot_name }} on {{ $labels.pod }} for 10m: WAL is accumulating."
+            runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/wal-retained.md
