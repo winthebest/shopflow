@@ -1,7 +1,10 @@
 # Game day 1 — payments 800ms slower (Phase 7 scenario 1). Procedure: docs/runbooks/gameday.md.
-# Hypothesis: orders → payments has an 800ms timeout, so +800ms makes most checkouts time out: 504s burn the
-#   availability budget and slow ones the latency budget; the page fires within ~5 minutes (availability) and the
-#   fix (timeout + bounded retry with jitter + circuit breaker, sf-app) cuts the burn on the re-run.
+# Hypothesis, before the resilience fix (orders → payments: one call, 800ms timeout): every payments pod is slower,
+#   so nearly every checkout times out (504 after ~0.8s). Availability pages by +5 min, latency by +10 min.
+# Hypothesis, re-run after the fix (docs/contracts/services.md: up to 3 attempts inside the 800ms deadline, circuit
+#   breaker, 503 when open): no attempt can succeed, because every pod is slow, so retries cannot help. Once the
+#   circuit opens, checkouts fail fast (503 well under 300ms): the latency burn drops sharply, while the
+#   availability burn stays about the same (still 5xx) and still pages. Retries are proven by gd1b (partial fault).
 # Blast radius: payments pods only (namespace shop); checkout fails or is slow, browse is unaffected.
 # Stop: automatic after `duration`. Failing checkouts are the expected outcome, not a stop condition (payments
 #   50ms + 800ms ± 50ms against an 800ms timeout: nearly every checkout ends in 504, and the latency page needs
