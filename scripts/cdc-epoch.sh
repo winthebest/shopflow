@@ -24,7 +24,8 @@
 #       lake_ro), then sets snapshot_completed_at. The metric alone is not proof: a task that started before the
 #       epoch changed still reports its old snapshot, and silver would then switch to an epoch without rows. Use it
 #       only for an epoch that snapshots (new Kafka or deleted offsets): with snapshot.mode=when_needed a restart
-#       with existing offsets never snapshots, and wait times out.
+#       with existing offsets never snapshots, and wait times out. An epoch already recorded as complete returns at
+#       once, so `make up` can call wait on every run.
 #       N defaults to the value in Secret kafka/cdc-epoch.
 #
 # Cluster: CLUSTER (default sf-main) selects context k3d-<CLUSTER>, like scripts/k3d-*.sh; KUBE_CONTEXT overrides
@@ -201,6 +202,15 @@ cmd_wait() {
   fi
   valid_epoch "$epoch" || die "epoch must be a positive int4, got '$epoch'"
   until_ok "meta.cdc_epochs (Alembic)" cdc_epochs_table_ready
+  # Already recorded (make up on a running cluster): done. Checking the snapshot again could hang: after a Connect
+  # restart Debezium's metric is 0, because with existing offsets it does not snapshot again.
+  local completed
+  completed="$(run_sql <<< "SELECT 'completed ' || snapshot_completed_at FROM meta.cdc_epochs
+    WHERE epoch = $epoch AND snapshot_completed_at IS NOT NULL")"
+  if [[ "$completed" == "completed "* ]]; then
+    log "epoch $epoch: snapshot already completed at ${completed#completed } (meta.cdc_epochs)"
+    return
+  fi
   run_sql <<< "INSERT INTO meta.cdc_epochs (epoch) VALUES ($epoch) ON CONFLICT (epoch) DO NOTHING" > /dev/null
   log "epoch $epoch: recorded in meta.cdc_epochs, waiting for the Debezium snapshot"
   until_ok "the Debezium snapshot of epoch $epoch" snapshot_completed

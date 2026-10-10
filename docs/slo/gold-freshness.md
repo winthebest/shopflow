@@ -32,6 +32,11 @@ Per-minute recording rule `gold:refresh_stale:minute` (1 = bad, 0 = good, no sam
   green.
 - **Not counted** without profile `batch` (namespace `airflow` absent), during its first 2 hours (the first hourly
   run has not built gold yet), and during the first 15 minutes after the exporter (re)starts.
+- **Known gap:** the SLI measures that dbt committed a snapshot, not that gold holds data. dbt rewrites every mart
+  each hour (CREATE OR REPLACE, `append` snapshots) even when silver is empty. Seen on 2026-10-10: on a fresh cluster
+  nothing recorded the CDC epoch in `meta.cdc_epochs`, so silver joined no epoch, and gold would have been empty yet
+  "fresh". `make up` now waits for the epoch (`cdc-epoch.sh wait`). The daily reconciliation (Postgres vs gold)
+  catches an empty gold, but only a day later. A follow-up could count a mart as bad when it has no rows.
 
 ## Alerting
 
