@@ -123,7 +123,8 @@ Config that belongs to one controller may instead live inside that controller's 
 | `obs` | sf-sre | kube-prometheus-stack, slo, grafana-dashboards, loki, tempo, otel-collector (full: gateway → Tempo + log agent DaemonSet) |
 | `data` | sf-data | strimzi, kafka, kafka-connect, seaweedfs, iceberg-catalog, trino |
 | `rt`, `batch`, `bi` | sf-data | flink, airflow, metabase |
-| `ops` | sf-sre | chaos-mesh (game days only), keda (Kyverno added by Phase 8) |
+| `ops` | sf-sre | keda, always on from Phase 7 (Kyverno added by Phase 8) |
+| `chaos` | sf-sre | chaos-mesh, **game days only**: added with the session, its root app deleted right after (CI fails if any other profile lists chaos-mesh); experiments may target only namespaces annotated `chaos-mesh.org/inject=enabled` (`enableFilterNamespace`) |
 
 ## 5. Secrets (SOPS + age + KSOPS)
 

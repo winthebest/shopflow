@@ -18,7 +18,7 @@ makes the change. Shared root files are owned by the orchestrator.
 | `deploy/argocd/profiles/_common/` (incl. `platform-params.yaml`), `scripts/platform-root-apps.sh`, `deploy/charts/{shop-db,edge}/`, `deploy/argocd/bootstrap/` (incl. `values-aws.yaml`) | sf-platform | 2, 6 |
 | `deploy/argocd/apps-aws/<component>/` | owner of `<component>` | 6 |
 | `deploy/argocd/profiles-aws/<profile>/` | same owner as the local profile (`gitops.md` §4) | 6 |
-| `deploy/argocd/profiles/<profile>/` | see `gitops.md` §4 (core: sf-platform; obs, obs-lite, ops: sf-sre; data, rt, batch, bi: sf-data) | 2–7 |
+| `deploy/argocd/profiles/<profile>/` | see `gitops.md` §4 (core: sf-platform; obs, obs-lite, ops, chaos: sf-sre; data, rt, batch, bi: sf-data) | 2–7 |
 | `deploy/platform/<component>/<overlay>/secrets/*.enc.yaml` | owner of `<component>` (`deploy/secrets/` is only for cluster-wide secrets, sf-platform) | 2–7 |
 | `docs/runbooks/<topic>.md` | lane that owns the alert/topic | 3–7 |
 
