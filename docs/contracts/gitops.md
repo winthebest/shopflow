@@ -114,6 +114,7 @@ Config that belongs to one controller may instead live inside that controller's 
   is scaled by KEDA on consumer lag (revisit if Phase 8 adds a component that does not need Kafka).
 - Profile `data` needs `obs` or `obs-lite` in the same `PROFILES` (its ServiceMonitors and rules need their CRDs);
   `make up` rejects `data` without one of them.
+- `drill` and `data` are mutually exclusive (both own the `seaweedfs` app); `drill` needs `core`.
 - `obs` and `obs-lite` are mutually exclusive (both own the `otel-gateway` release in `observability`);
   `make up` rejects `PROFILES` containing both.
 - Profile files and their owners:
@@ -130,6 +131,7 @@ Each profile that creates namespaces lists its `network-policies-*` app (sync wa
 level and default-deny policies before any pod). AWS variants of the obs/data policies (443 to the VPC instead of
 6443, OpenCost → Prometheus) are pending; until then `profiles-aws` do not list them.
 | `ops` | sf-sre | keda (sf-sre) and fulfillment-worker (sf-app: a second Argo CD app of the shop chart that renders only the worker, sharing its image pins), always on from Phase 7; needs `data` |
+| `drill` | sf-cloud | local restore drill only: seaweedfs (sf-data app, bucket `pg-backup`) + the CNPG barman-cloud plugin (sf-platform); shop-db backs up to it so a drill can destroy the database and recover it (PITR) without AWS |
 | `chaos` | sf-sre | chaos-mesh, **game days only**: added with the session, its root app deleted right after (CI fails if any other profile lists chaos-mesh); experiments may target only namespaces annotated `chaos-mesh.org/inject=enabled` (`enableFilterNamespace`) |
 
 ## 5. Secrets (SOPS + age + KSOPS)
