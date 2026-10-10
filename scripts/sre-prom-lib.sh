@@ -22,9 +22,11 @@ prom_range() {
 prom_connect() {
   kc get --raw /readyz >/dev/null 2>&1 || { echo "cannot reach the API server of context $CTX" >&2; exit 2; }
   PF_LOG="$(mktemp)"
-  kc -n observability port-forward svc/kps-prometheus :9090 >"$PF_LOG" 2>&1 &
+  # kubectl itself in the background, not the kc wrapper: `kc … &` would fork a subshell, $! would be that subshell
+  # and the kill on exit would leave the kubectl port-forward running.
+  kubectl --context "$CTX" -n observability port-forward svc/kps-prometheus :9090 >"$PF_LOG" 2>&1 &
   PF_PID=$!
-  trap 'kill "$PF_PID" 2>/dev/null; rm -f "$PF_LOG"' EXIT
+  trap 'kill "$PF_PID" 2>/dev/null; wait "$PF_PID" 2>/dev/null; rm -f "$PF_LOG"' EXIT
   for _ in $(seq 1 50); do
     PF_PORT="$(grep -oE '127\.0\.0\.1:[0-9]+' "$PF_LOG" | head -1 | cut -d: -f2)"
     [[ -n "$PF_PORT" ]] && break
