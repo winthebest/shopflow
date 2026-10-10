@@ -14,6 +14,11 @@ Owner: orchestrator. Changes go through a PR reviewed by the orchestrator, becau
 Timeouts: gateway → orders 1s (no retry: `POST /checkout` is not idempotent), orders → payments 800ms in total: up to
 3 attempts inside that deadline, full-jitter backoff, behind a circuit breaker per orders process (ADR 0102).
 
+Settling a checkout is idempotent. The first settle that moves an order out of `pending` writes its payment row; any
+concurrent or later settle of the same order writes nothing and reports the order's current status. The
+`POST /checkout` answer is built from what the order and settle transactions returned, never read back afterwards. A
+checkout whose settle lost to another settle answers 201 with the order's status.
+
 ### `POST /checkout` responses (gateway)
 
 A payment decline is a business outcome, not a server error: it must never be a 5xx (the availability SLO counts
