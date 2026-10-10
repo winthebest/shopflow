@@ -51,6 +51,8 @@ jobs:
         run: |
           uv run ruff check --output-format=github .
           uv run ruff format --check .
+      - name: shellcheck (sf-app scripts)
+        run: uvx --from "shellcheck-py==0.11.0.1" shellcheck -x scripts/app-*.sh
       - name: pytest (unit + integration on real Postgres via testcontainers)
         run: uv run pytest
 
