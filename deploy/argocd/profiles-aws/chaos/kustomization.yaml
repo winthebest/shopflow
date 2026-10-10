@@ -1,0 +1,16 @@
+# Profile `chaos` (owner: sf-sre; docs/contracts/gitops.md §4): Chaos Mesh for a game day only. Created with
+# `make sre-chaos-on` at the start of the session, removed with `make sre-chaos-off` right after
+# (docs/runbooks/gameday.md). CI fails if any other profile lists chaos-mesh.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../apps-aws/chaos-mesh
+components:
+  - ../../profiles/_common
+# Must stay inline (see ../../profiles/_common/kustomization.yaml). No session parameters are consumed.
+replacements:
+  - source: {kind: ConfigMap, name: git-revision, fieldPath: data.revision}
+    targets:
+      - select: {kind: Application}
+        fieldPaths:
+          - spec.sources.[repoURL=https://github.com/winthebest/shopflow.git].targetRevision

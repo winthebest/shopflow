@@ -1,0 +1,21 @@
+# AWS variant of Chaos Mesh: aws values (EKS containerd socket) and overlay.
+# Each `test` op makes kustomize fail if the local app's source layout changes, instead of patching the wrong entry.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../apps/chaos-mesh
+patches:
+  - target: {kind: Application, name: chaos-mesh}
+    patch: |-
+      - op: test
+        path: /spec/sources/0/helm/valueFiles/1
+        value: $values/deploy/platform/chaos-mesh/local/values.yaml
+      - op: replace
+        path: /spec/sources/0/helm/valueFiles/1
+        value: $values/deploy/platform/chaos-mesh/aws/values.yaml
+      - op: test
+        path: /spec/sources/2/path
+        value: deploy/platform/chaos-mesh/local
+      - op: replace
+        path: /spec/sources/2/path
+        value: deploy/platform/chaos-mesh/aws

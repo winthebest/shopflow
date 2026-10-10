@@ -1,0 +1,3 @@
+# AWS (EKS): the node containerd socket.
+chaosDaemon:
+  socketPath: /run/containerd/containerd.sock
