@@ -1,8 +1,9 @@
 # WAL archiving of shop-db (barman-cloud plugin → object storage: SeaweedFS pg-backup locally, S3 on AWS). Postgres
 # keeps every WAL segment it has not archived yet, whatever max_slot_wal_keep_size says (that cap only applies to
-# replication slots). With archive_timeout 60s and the CDC heartbeat writing every 10s, Postgres switches segment
-# every minute: a broken archive keeps ~1 segment (16 MiB) per minute, ~1 GB/h, until the 5Gi volume is full and
-# the database stops. Metrics: CloudNativePG default query pg_stat_archiver (primary only; -1 when never) and the
+# replication slots). archive_timeout 60s switches segment every minute in which anything was written: with profile
+# data the CDC heartbeat writes every 10s, so even an idle shop makes ~1 segment (16 MiB) a minute, ~1 GB/h; without
+# it, segments come only from real writes (checkouts). A broken archive keeps them all until the 5Gi volume is full
+# and the database stops. Metrics: CloudNativePG default query pg_stat_archiver (primary only; -1 when never) and the
 # collector's count of segments in pg_wal/archive_status (`.ready` = waiting), scraped by the cnpg-shop PodMonitor.
 # Runbook: docs/runbooks/wal-archive.md.
 apiVersion: monitoring.coreos.com/v1
@@ -43,7 +44,7 @@ spec:
             summary: "WAL archiving of {{ $labels.pod }} is failing or falling behind: unarchived WAL piles up on its volume."
             runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/wal-archive.md
         # 80 segments (1.25 GiB, about 80 minutes of WAL at one segment a minute): a quarter of the 5Gi volume,
-        # roughly 3 hours left before the database stops for lack of disk.
+        # roughly 3 hours left at that rate before the database stops for lack of disk.
         - alert: ShopDbWalArchiveBacklogCritical
           expr: shopflow:pg_wal_archive_pending:segments >= 80
           for: 5m

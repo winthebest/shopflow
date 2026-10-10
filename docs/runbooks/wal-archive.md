@@ -13,15 +13,18 @@ storage: SeaweedFS bucket `pg-backup` locally, S3 on AWS. Postgres deletes a seg
 While archiving fails or hangs, every new segment stays in `pg_wal` on the database volume (5Gi).
 `max_slot_wal_keep_size` does not help: it caps replication slots only.
 
-With `archive_timeout: 60s` and the CDC heartbeat writing every 10 s, Postgres switches segment every minute even
-on an idle shop: about one 16 MiB segment a minute, ~1 GB/h, more under load. When the volume is full, Postgres
-stops and checkout fails.
+How fast it piles up depends on writes. `archive_timeout: 60s` closes a segment every minute in which anything was
+written. With profile `data`, the CDC heartbeat writes every 10 s, so even an idle shop makes about one 16 MiB
+segment a minute, ~1 GB/h, more under load. Without it (profiles `core`, `drill`), segments come only from real
+writes: an idle database makes none, steady checkouts about one a minute. When the volume is full, Postgres stops
+and checkout fails.
 
 - **Failing** (ticket): for 10 minutes the archiver's last failure is newer than its last success, or more than
   10 segments wait to be archived (an archive command that hangs records no failure). Fix within the working
   session.
-- **Backlog critical** (page): 80 segments (1.25 GiB) wait, a quarter of the volume, about 80 minutes after the
-  archive stopped at one segment a minute: roughly 3 hours remain before the database stops. Act now.
+- **Backlog critical** (page): 80 segments (1.25 GiB) wait, a quarter of the volume (about 80 minutes after the
+  archive stopped, at one segment a minute): at that rate roughly 3 hours remain before the database stops. Act
+  now. The pending rate in triage step 1 gives the real time left.
 
 Point-in-time recovery is also blind past the last archived segment while this lasts: RPO grows with the backlog.
 
