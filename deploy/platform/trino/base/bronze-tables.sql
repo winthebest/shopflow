@@ -1,6 +1,7 @@
 -- Bronze: one append-only Iceberg table per CDC source table (docs/adr/0406, 0407).
 -- Source columns mirror the Alembic schema (services/orders/migrations; Iceberg has no smallint, so heartbeat.id
--- is integer); all nullable because a delete event (_op = 'd') carries only the primary key. Metadata columns:
+-- is integer); all nullable. In a delete row (_op = 'd') only the key is real: Debezium fills the other columns with
+-- type defaults (0, '', 1970-01-01; docs/adr/0405), so readers decide by _op, never by those values. Metadata columns:
 --   _op            c | u | d | r (r = snapshot read)       _lsn           Postgres LSN, comparable within one epoch
 --   _source_ts_ms  source commit time (epoch ms)           _cdc_epoch     CDC epoch (new Kafka/Postgres life)
 --   _ingested_at   Kafka record time, the partition key

@@ -15,7 +15,8 @@ spec:
     server: https://kubernetes.default.svc
     namespace: lakehouse
   sources:
-    - repoURL: https://downloads.apache.org/polaris/helm-chart
+    # dlcdn: Apache's CDN for the same release tree (downloads.apache.org timed out for the repo-server, 2026-10-10).
+    - repoURL: https://dlcdn.apache.org/polaris/helm-chart
       chart: polaris
       targetRevision: 1.8.0
       helm:
