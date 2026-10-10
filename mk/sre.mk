@@ -1,7 +1,7 @@
 # sf-sre targets: observability stack + SLOs (docs/contracts/ownership.md). Logic lives in scripts/sre-check.sh.
 SRE_CHECK := ./scripts/sre-check.sh
 
-.PHONY: sre-ci sre-render sre-kubeconform sre-slo sre-slo-drift sre-rules sre-configs sre-lint
+.PHONY: sre-ci sre-render sre-kubeconform sre-slo sre-slo-drift sre-rules sre-configs sre-lint sre-chaos-check
 
 sre-ci: ## Run every offline sre check (same as .github/workflows/sre-ci.yml)
 	$(SRE_CHECK) all
@@ -26,3 +26,16 @@ sre-configs: ## Validate OTel Collector, Loki, Tempo, Alertmanager configs with 
 
 sre-lint: ## shellcheck, dashboard JSON, secrets encrypted, every rendered image pinned by digest
 	$(SRE_CHECK) lint
+
+# Game days (docs/runbooks/gameday.md). Local overlay; on EKS add `chaos` to the session's profiles instead.
+SRE_KUBE_CONTEXT ?= k3d-$(CLUSTER)
+
+.PHONY: sre-chaos-on sre-chaos-off
+sre-chaos-on: ## Game day start: install Chaos Mesh (profile chaos) on CLUSTER at GIT_REVISION
+	KUBE_CONTEXT=$(SRE_KUBE_CONTEXT) ./scripts/platform-root-apps.sh --overlay local --revision $(GIT_REVISION) --profiles chaos
+
+sre-chaos-off: ## Game day end: remove Chaos Mesh completely (experiments, CRDs, daemon, webhooks) and verify
+	KUBE_CONTEXT=$(SRE_KUBE_CONTEXT) ./scripts/sre-chaos-off.sh
+
+sre-chaos-check: ## Game-day experiments: CRD schema, allowed namespaces, auto-stop; chaos-mesh only in profile chaos
+	$(SRE_CHECK) chaos

@@ -12,10 +12,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${SRE_OUT:-$ROOT/out/sre}"
 KUBE_VERSION="${KUBE_VERSION:-1.34.12}"   # same schema set as scripts/platform-validate.sh
 SHOPFLOW_REPO="https://github.com/winthebest/shopflow.git"
-APPS=(kube-prometheus-stack loki tempo otel-collector otel-collector-lite slo grafana-dashboards)
-AWS_APPS=(kube-prometheus-stack loki tempo otel-collector otel-collector-lite)   # deploy/argocd/apps-aws/<app>
-COMPONENTS=(kube-prometheus-stack loki tempo otel-collector slo grafana-dashboards)   # deploy/platform/<c>
-PROFILES=(obs-lite obs)   # deploy/argocd/profiles/<p> and deploy/argocd/profiles-aws/<p>
+APPS=(kube-prometheus-stack loki tempo otel-collector otel-collector-lite slo grafana-dashboards chaos-mesh)
+AWS_APPS=(kube-prometheus-stack loki tempo otel-collector otel-collector-lite chaos-mesh)   # deploy/argocd/apps-aws/<app>
+COMPONENTS=(kube-prometheus-stack loki tempo otel-collector slo grafana-dashboards chaos-mesh)   # deploy/platform/<c>
+PROFILES=(obs-lite obs chaos)   # deploy/argocd/profiles/<p> and deploy/argocd/profiles-aws/<p>
+# Game-day experiments (chaos/*.yaml) may only target these namespaces (annotated chaos-mesh.org/inject=enabled).
+CHAOS_NAMESPACES=(shop kafka)
 
 # Tool images, pinned by digest (multi-arch index).
 SLOTH_IMAGE="ghcr.io/slok/sloth:v0.16.0@sha256:f0f0075b0d45c1cf684e92947508cc1d5bf573925f785f803a439b2306c8b9a5"
@@ -73,7 +75,7 @@ render_app() {
       done < <(yq "$src.helm.valueFiles[]" "$file")
       helm template "$(yq "$src.helm.releaseName // \"$app\"" "$file")" "$(yq "$src.chart" "$file")" \
         --repo "$(yq "$src.repoURL" "$file")" --version "$(yq "$src.targetRevision" "$file")" \
-        --namespace "$ns" --kube-version "$KUBE_VERSION" "${args[@]}"
+        --namespace "$ns" --kube-version "$KUBE_VERSION" --api-versions cert-manager.io/v1 "${args[@]}"
     elif [[ "$(yq "$src.path // \"\"" "$file")" != "" ]]; then
       [[ "$(yq "$src.repoURL" "$file")" == "$SHOPFLOW_REPO" ]] || fail "$app: path source outside this repo"
       kubectl kustomize "$OUT/work/$(yq "$src.path" "$file")"
@@ -306,8 +308,8 @@ cmd_lint() {
   [[ -z "$unpinned" ]] || fail "images not pinned by digest:"$'\n'"$unpinned"
   log "images: all pinned by digest"
   # Every Secret a rendered workload/CR needs must come from somewhere in the same environment. Local: the render
-  # itself or a SOPS file in deploy/ (KSOPS). AWS: the render itself, including ExternalSecret targets (no SOPS
-  # there). A Secret normally made by a disabled chart Job (e.g. the operator's kps-admission TLS cert), or an aws
+  # itself (Secrets, cert-manager Certificates) or a SOPS file in deploy/ (KSOPS). AWS: the render itself, including
+  # ExternalSecret targets (no SOPS there). A Secret normally made by a disabled chart Job (e.g. the operator's kps-admission TLS cert), or an aws
   # overlay without its ExternalSecret, is caught here instead of as a pod stuck in ContainerCreating.
   local local_files=() aws_files=() f
   for f in "$OUT"/rendered/*.yaml; do
@@ -326,6 +328,7 @@ check_secret_refs() {
     yq -N 'select(.kind == "Alertmanager" or .kind == "Prometheus") | .spec.secrets[]?' "$@"; } | sort -u)"
   known="$({ yq -N 'select(.kind == "Secret") | .metadata.name' "$@"
     yq -N 'select(.kind == "ExternalSecret") | .spec.target.name // .metadata.name' "$@"
+    yq -N 'select(.kind == "Certificate") | .spec.secretName' "$@"
     if [[ "$env" == local ]]; then
       find "$ROOT/deploy" -path '*/secrets/*.enc.yaml' -exec yq '.metadata.name' {} \;
     fi; } | sort -u)"
@@ -333,6 +336,43 @@ check_secret_refs() {
   [[ -z "$missing" ]] || fail "$env: Secrets referenced but never created:"$'\n'"$missing"
   local source=SOPS; [[ "$env" == aws ]] && source=ExternalSecret
   log "secrets ($env): every referenced Secret is created by the render or $source"
+}
+
+# Game days: experiments are schema-checked against the CRDs of the pinned Chaos Mesh chart (the public catalog has
+# none), may only target the allowed namespaces, must stop by themselves unless one-shot (pod-kill), and no profile
+# other than `chaos` may install Chaos Mesh (it must be gone outside game days).
+cmd_chaos() {
+  local app="$ROOT/deploy/argocd/apps/chaos-mesh/application.yaml" dir="$OUT/chaos" crd f bad prof
+  rm -rf "$dir" && mkdir -p "$dir/charts" "$dir/schemas/chaos-mesh.org"
+  helm pull "$(yq '.spec.sources[0].chart' "$app")" --repo "$(yq '.spec.sources[0].repoURL' "$app")" \
+    --version "$(yq '.spec.sources[0].targetRevision' "$app")" --untar -d "$dir/charts" >/dev/null
+  for crd in "$dir"/charts/chaos-mesh/crds/*.yaml; do
+    yq -o=json '.' "$crd" | jq -c '.spec as $s | $s.versions[] | {kind: ($s.names.kind | ascii_downcase), version: .name,
+      schema: (.schema.openAPIV3Schema | walk(if type == "object" and has("properties") and (has("additionalProperties") | not)
+        and ((.["x-kubernetes-preserve-unknown-fields"] // false) | not) then . + {additionalProperties: false} else . end))}' \
+    | while IFS= read -r line; do
+        jq '.schema' <<<"$line" > "$dir/schemas/chaos-mesh.org/$(jq -r '.kind + "_" + .version' <<<"$line").json"
+      done
+  done
+  log "kubeconform chaos/*.yaml (CRD schemas of the pinned chart, strict)"
+  kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" \
+    -schema-location "$dir/schemas/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" "$ROOT"/chaos/*.yaml
+  local allowed; allowed="$(printf '%s\n' "${CHAOS_NAMESPACES[@]}" | jq -R . | jq -sc .)"
+  for f in "$ROOT"/chaos/*.yaml; do
+    bad="$(yq -o=json '.' "$f" | jq -r --argjson ok "$allowed" '
+      [ (if (.metadata.namespace // "") as $n | $ok | index($n) | not then "metadata.namespace not allowed" else empty end),
+        (if ((.spec.selector.namespaces // []) | length) == 0 then "spec.selector.namespaces is required" else empty end),
+        ((.spec.selector.namespaces // [])[] | select(. as $n | $ok | index($n) | not) | "selector namespace \(.) not allowed"),
+        (if (.spec.action != "pod-kill") and ((.spec.duration // "") == "") then "spec.duration required (auto-stop)" else empty end)
+      ] | join("; ")')"
+    [[ -z "$bad" ]] || fail "$(basename "$f"): $bad"
+  done
+  log "chaos experiments: allowed namespaces only (${CHAOS_NAMESPACES[*]}), auto-stop unless one-shot"
+  for prof in "$ROOT"/deploy/argocd/profiles/*/kustomization.yaml "$ROOT"/deploy/argocd/profiles-aws/*/kustomization.yaml; do
+    [[ "$(basename "$(dirname "$prof")")" == chaos ]] && continue
+    ! yq '.resources[]?' "$prof" | grep -q 'chaos-mesh' || fail "$prof lists chaos-mesh: only profile chaos may"
+  done
+  log "Chaos Mesh is listed only by profile chaos"
 }
 
 usage() {
@@ -345,7 +385,8 @@ usage: $0 <step>...
   rules        runbook links + promtool check/test of our PrometheusRules
   configs      validate OTel Collector, Loki, Tempo and Alertmanager configs with their own binaries
   lint         shellcheck + dashboards JSON + encrypted secrets + image digest pinning
-  all          render kubeconform slo-drift rules configs lint
+  chaos        game-day experiments: schema, allowed namespaces, auto-stop; chaos-mesh only in profile chaos
+  all          render kubeconform slo-drift rules configs lint chaos
 EOF
   exit 2
 }
@@ -360,7 +401,8 @@ for step in "$@"; do
     rules) cmd_rules ;;
     configs) cmd_configs ;;
     lint) cmd_lint ;;
-    all) cmd_render; cmd_kubeconform; cmd_slo_drift; cmd_rules; cmd_configs; cmd_lint ;;
+    chaos) cmd_chaos ;;
+    all) cmd_render; cmd_kubeconform; cmd_slo_drift; cmd_rules; cmd_configs; cmd_lint; cmd_chaos ;;
     *) usage ;;
   esac
 done

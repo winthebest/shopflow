@@ -1,0 +1,19 @@
+# Game day 5 (EKS, 3 brokers, RF=3) — kill one Kafka broker (Phase 7 scenario 5). docs/runbooks/gameday.md.
+# Hypothesis: ISR shrinks to 2 for the partitions led by that broker, leaders move within seconds, producers
+#   (Debezium) and consumers retry without loss (min.insync.replicas=2); the pod is back and ISR full in minutes.
+# Blast radius: one broker of the `shopflow` Kafka cluster (namespace kafka).
+# Stop: one-shot kill. Abort if under-replicated partitions remain after 10 minutes.
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: gd5-kill-kafka-broker
+  namespace: kafka
+spec:
+  action: pod-kill
+  mode: one
+  gracePeriod: 0
+  selector:
+    namespaces: [kafka]
+    labelSelectors:
+      strimzi.io/cluster: shopflow
+      strimzi.io/broker-role: "true"

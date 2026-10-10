@@ -1,0 +1,35 @@
+# Lock down Chaos Mesh while it runs (Phase 7 requirement):
+# - controller-manager: only its admission webhook port is reachable (from the API server; on k3d/EKS the API
+#   server is outside the pod network, so the port is opened, not the source);
+# - chaos-daemon: only the controller-manager may call its gRPC port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: chaos-controller-manager
+  namespace: chaos-mesh
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: controller-manager
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - {protocol: TCP, port: 10250}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: chaos-daemon
+  namespace: chaos-mesh
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: chaos-daemon
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: controller-manager
+      ports:
+        - {protocol: TCP, port: 31767}

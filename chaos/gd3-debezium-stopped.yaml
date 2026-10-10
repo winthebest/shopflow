@@ -1,0 +1,20 @@
+# Game day 3 — Debezium (Kafka Connect `cdc`) down for 30 minutes (Phase 7 scenario 3). docs/runbooks/gameday.md.
+# Hypothesis: with the source connector stopped, the logical slot debezium_shop keeps WAL; the "WAL retained by
+#   slot" alert fires well before shop-db's max_slot_wal_keep_size, i.e. before the slot is invalidated and a
+#   re-snapshot is forced. The cdc-lag SLO burns; after the pods return the connector resumes from its offset.
+# Blast radius: the CDC pipeline (both connectors of the `cdc` Connect cluster); the shop keeps working.
+# Stop: automatic after 30m; earlier with `kubectl delete -f` if retained WAL passes 80% of max_slot_wal_keep_size.
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: gd3-debezium-stopped
+  namespace: kafka
+spec:
+  action: pod-failure
+  mode: all
+  selector:
+    namespaces: [kafka]
+    labelSelectors:
+      strimzi.io/cluster: cdc
+      strimzi.io/kind: KafkaConnect
+  duration: 30m

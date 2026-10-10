@@ -1,0 +1,21 @@
+# Game day 2 — kill the CNPG primary of shop-db (Phase 7 scenario 2). Procedure: docs/runbooks/gameday.md.
+# Precondition: shop-db runs 2 instances for the game day (default local is 1).
+# Hypothesis: CNPG promotes the replica in under 30s; checkouts fail with 5xx only during the switchover
+#   (measured: seconds without a successful write). The logical slot of Debezium does not survive the failover,
+#   so CDC needs a re-snapshot with a new epoch (scripts/cdc-epoch.sh): accepted behaviour, documented in the runbook.
+# Blast radius: shop-db (namespace shop); downstream CDC until the re-snapshot.
+# Stop: one-shot kill. Abort the game day if no new primary after 5 minutes (follow docs/runbooks/restore.md).
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: gd2-kill-postgres-primary
+  namespace: shop
+spec:
+  action: pod-kill
+  mode: one
+  gracePeriod: 0
+  selector:
+    namespaces: [shop]
+    labelSelectors:
+      cnpg.io/cluster: shop-db
+      cnpg.io/instanceRole: primary

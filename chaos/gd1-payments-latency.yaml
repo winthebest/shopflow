@@ -1,0 +1,25 @@
+# Game day 1 — payments 800ms slower (Phase 7 scenario 1). Procedure: docs/runbooks/gameday.md.
+# Hypothesis: orders → payments has an 800ms timeout, so +800ms makes most checkouts time out: 504s burn the
+#   availability budget and slow ones the latency budget; the page fires within ~5 minutes (availability) and the
+#   fix (timeout + bounded retry with jitter + circuit breaker, sf-app) cuts the burn on the re-run.
+# Blast radius: payments pods only (namespace shop); checkout fails or is slow, browse is unaffected.
+# Stop: automatic after `duration`; earlier with `kubectl delete -f` if the error ratio stays > 50% for 5 min or
+#   anything outside shop degrades.
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: gd1-payments-latency
+  namespace: shop
+spec:
+  action: delay
+  mode: all
+  selector:
+    namespaces: [shop]
+    labelSelectors:
+      app.kubernetes.io/name: payments
+  direction: to
+  delay:
+    latency: 800ms
+    jitter: 50ms
+    correlation: "0"
+  duration: 15m

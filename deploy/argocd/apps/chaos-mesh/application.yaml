@@ -1,0 +1,50 @@
+# Chaos Mesh for game days only: listed only in profile `chaos`, which is created at the start of a game day and
+# deleted right after (the finalizer removes CRDs, daemon and webhooks). docs/runbooks/gameday.md, ADR 0303.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: chaos-mesh
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: shopflow
+    shopflow.io/profile: chaos
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: chaos-mesh
+  sources:
+    - repoURL: https://charts.chaos-mesh.org
+      chart: chaos-mesh
+      targetRevision: 2.8.4
+      helm:
+        releaseName: chaos-mesh
+        valueFiles:
+          - $values/deploy/platform/chaos-mesh/base/values.yaml
+          - $values/deploy/platform/chaos-mesh/local/values.yaml
+    - repoURL: https://github.com/winthebest/shopflow.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://github.com/winthebest/shopflow.git
+      targetRevision: main
+      path: deploy/platform/chaos-mesh/local
+  # cert-manager's cainjector writes the webhooks' caBundle at runtime.
+  ignoreDifferences:
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+      jqPathExpressions: [".webhooks[].clientConfig.caBundle"]
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+      jqPathExpressions: [".webhooks[].clientConfig.caBundle"]
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true

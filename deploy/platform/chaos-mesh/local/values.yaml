@@ -1,0 +1,3 @@
+# Local (k3d): the k3s containerd socket.
+chaosDaemon:
+  socketPath: /run/k3s/containerd/containerd.sock
