@@ -1,0 +1,33 @@
+# Game day 1b — one of two payments pods 800ms slower (variant of scenario 1). Procedure: docs/runbooks/gameday.md.
+# Run only after the checkout resilience fix is merged (docs/contracts/services.md: idempotent POST /charges, up to
+#   3 attempts inside the 800ms orders → payments deadline, full-jitter backoff, circuit breaker per orders process).
+# Preconditions: payments at 2 replicas on the game-day cluster (values-local runs 1: use a game-day branch, since
+#   Argo CD reverts `kubectl scale`); the per-attempt timeout leaves room for a second attempt inside 800ms.
+# Hypothesis: half of the payments endpoints are slow. Without retries about half of the checkouts would end in 504
+#   (the gd1 "before" numbers scaled by the share of calls that reach the slow pod). With retries, an attempt that
+#   times out on the slow pod is retried and lands on the healthy pod about half of the time; with 3 attempts about
+#   1 checkout in 8 still fails. Availability stays far closer to the SLO than in gd1, and the circuit does not
+#   open while the healthy pod answers. Retried checkouts take longer, so the latency SLI burns.
+# Blast radius: one payments pod (namespace shop); checkout is slower or fails for part of the traffic, browse is
+#   unaffected.
+# Stop: automatic after `duration`; earlier with `kubectl delete -f` if browse errors exceed 1% for 5 min or
+#   anything outside shop degrades.
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: gd1b-payments-partial
+  namespace: shop
+spec:
+  action: delay
+  mode: fixed-percent
+  value: "50"
+  selector:
+    namespaces: [shop]
+    labelSelectors:
+      app.kubernetes.io/name: payments
+  direction: to
+  delay:
+    latency: 800ms
+    jitter: 50ms
+    correlation: "0"
+  duration: 15m
