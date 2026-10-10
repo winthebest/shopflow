@@ -71,6 +71,7 @@ Default-deny per namespace; these flows must be allowed. Owners add rows when th
 | `airflow` | `shop` shop-db; `lakehouse` trino; `observability` otel-gateway | 5432; 8443; 4317/4318 | metadata DB; dbt/maintenance/reconciliation; metrics | sf-data |
 | `flink` jobs | `kafka` brokers; `shop` shop-db; `lakehouse` seaweedfs | 9093; 5432; 8333 | CDC topics (TLS); `serving.kpi_minute`; checkpoints | sf-data |
 | `shop` fulfillment-worker | `kafka` brokers | 9093 | consume `shop.public.orders` (TLS + SCRAM, KafkaUser `fulfillment-worker`) | sf-app |
+| `shop` fulfillment-worker | `shop` shop-db | 5432 | insert `shipments` (role `fulfillment_worker`) | sf-app |
 | `keda` operator | `kafka` brokers | 9093 | read consumer lag of group `fulfillment-worker` (ScaledObject) | sf-sre |
 | `flink` operator | `flink` JobManager; kube-apiserver | 8081; 443/6443 | job lifecycle | sf-data |
 | `observability` Grafana | `shop` shop-db | 5432 | KPI datasource (`grafana_serving`, read-only) | sf-data |
