@@ -66,7 +66,13 @@ def create_app(settings: Settings | None = None, consumer: AIOKafkaConsumer | No
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         engine = create_engine(
-            settings.dsn(), connect_timeout_s=DB_CONNECT_TIMEOUT_S, command_timeout_s=DB_STATEMENT_TIMEOUT_S
+            settings.dsn(),
+            connect_timeout_s=DB_CONNECT_TIMEOUT_S,
+            command_timeout_s=DB_STATEMENT_TIMEOUT_S,
+            # One batch at a time plus the readiness check: it held 2 per replica under load (ops slot). Small, so
+            # KEDA's maximum replicas fit shop-db's connection budget.
+            pool_size=2,
+            max_overflow=0,
         )
         kafka = consumer or kafka_consumer(settings)
         await kafka.start()

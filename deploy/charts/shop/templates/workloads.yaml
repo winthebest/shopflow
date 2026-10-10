@@ -9,9 +9,9 @@ metadata:
   labels:
     {{- include "shop.labels" $ctx | nindent 4 }}
 spec:
-  {{- if not $svc.autoscaling }}
+  {{- if not (or $svc.autoscaling $svc.hpa) }}
   replicas: {{ $svc.replicas }}
-  {{- end }}{{/* with autoscaling, KEDA's HPA owns the replica count */}}
+  {{- end }}{{/* otherwise an HPA owns the replica count: KEDA's (worker) or the one below (api) */}}
   revisionHistoryLimit: 3
   selector:
     matchLabels:
@@ -111,6 +111,31 @@ spec:
       port: {{ $svc.port }}
       targetPort: http
       protocol: TCP
+{{- end }}
+{{- with $svc.hpa }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "shop.labels" $ctx | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $name }}
+  minReplicas: {{ .minReplicas }}
+  maxReplicas: {{ .maxReplicas }}
+  metrics:
+    # Absolute CPU per pod, not a percentage of requests: the threshold comes from measurement and does not move
+    # when requests are tuned for scheduling.
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: AverageValue
+          averageValue: {{ .cpuAverage | quote }}
 {{- end }}
 ---
 # Voluntary disruptions (drains, upgrades) take down at most one pod per service at a time.

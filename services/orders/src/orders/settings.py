@@ -9,6 +9,11 @@ class Settings(BaseSettings):
     database_url: SecretStr
     payments_url: str = "http://localhost:8002"
     log_level: str = "INFO"
+    # Connections one orders process may hold on shop-db. 80 checkouts/s exhausted 10 + 10 on one replica because the
+    # process was CPU-bound (881m) and requests held connections while queued; the HPA keeps a replica near 500m
+    # (~45 checkouts/s), where it held at most 10. 15 per replica fits 4 replicas into shop-db's connection budget.
+    db_pool_size: int = Field(default=10, ge=1, le=50)
+    db_max_overflow: int = Field(default=5, ge=0, le=50)
     # Retry and circuit breaker for payments (ADR 0102); the 800ms overall deadline is a contract, not a setting.
     payments_attempts: int = Field(default=3, ge=1, le=5)
     # Per attempt, and what lets a second attempt fit in the 800ms: after a 500ms timeout ~250ms remain for a retry

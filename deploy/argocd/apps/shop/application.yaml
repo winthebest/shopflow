@@ -36,3 +36,15 @@ spec:
         duration: 10s
         factor: 2
         maxDuration: 3m
+  # The chart's HPAs own these replica counts (the Deployments omit spec.replicas).
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: gateway
+      jsonPointers:
+        - /spec/replicas
+    - group: apps
+      kind: Deployment
+      name: orders
+      jsonPointers:
+        - /spec/replicas
