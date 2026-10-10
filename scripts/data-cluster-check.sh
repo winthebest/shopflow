@@ -80,16 +80,19 @@ fi
 
 customers="$(psql_shop <<< 'SELECT count(*) FROM customers')"
 deadline=$((SECONDS + TIMEOUT))
-snapshot=0
+snapshot=0 reads=0 inserts=0
 until ((snapshot >= customers)) || ((SECONDS > deadline)); do
-  snapshot="$(trino_ro "SELECT count(DISTINCT id) FROM bronze.customers WHERE _op IN ('r', 'c') AND _cdc_epoch = $epoch")" \
-    || snapshot=0
+  # One TSV row: distinct customers as r or c, those read by the snapshot (r), those streamed as inserts (c).
+  read -r snapshot reads inserts < <(trino_ro "SELECT count(DISTINCT id),
+      count(DISTINCT id) FILTER (WHERE _op = 'r'), count(DISTINCT id) FILTER (WHERE _op = 'c')
+    FROM bronze.customers WHERE _op IN ('r', 'c') AND _cdc_epoch = $epoch" || echo "0 0 0")
   ((snapshot >= customers)) || sleep 10
 done
+counts="$snapshot/$customers customers in epoch $epoch: $reads as r (snapshot) + $inserts as c (inserted after it)"
 if ((snapshot >= customers)); then
-  result PASS "snapshot in bronze: $snapshot/$customers customers as _op r or c in epoch $epoch"
+  result PASS "snapshot in bronze: $counts"
 else
-  result FAIL "snapshot in bronze: $snapshot/$customers customers as _op r or c in epoch $epoch"
+  result FAIL "snapshot in bronze: $counts"
 fi
 
 order="$(psql_shop <<< "INSERT INTO orders (customer_id, status, total)
