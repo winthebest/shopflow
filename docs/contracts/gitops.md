@@ -110,6 +110,8 @@ Config that belongs to one controller may instead live inside that controller's 
   test revision patched the same way as the root app and fails if any shopflow source is not on that revision.
 - Profiles `rt` (Flink), `batch` (Airflow) and `bi` (Metabase) need `data` in the same `PROFILES` (they read Kafka,
   Trino or shop-db through data's components); `platform-root-apps.sh` rejects them without it.
+- Profile `ops` needs `data` in the same `PROFILES`: its only workload is the fulfillment-worker, which reads Kafka and
+  is scaled by KEDA on consumer lag (revisit if Phase 8 adds a component that does not need Kafka).
 - Profile `data` needs `obs` or `obs-lite` in the same `PROFILES` (its ServiceMonitors and rules need their CRDs);
   `make up` rejects `data` without one of them.
 - `obs` and `obs-lite` are mutually exclusive (both own the `otel-gateway` release in `observability`);
@@ -123,7 +125,7 @@ Config that belongs to one controller may instead live inside that controller's 
 | `obs` | sf-sre | kube-prometheus-stack, slo, grafana-dashboards, loki, tempo, otel-collector (full: gateway → Tempo + log agent DaemonSet) |
 | `data` | sf-data | strimzi, kafka, kafka-connect, seaweedfs, iceberg-catalog, trino |
 | `rt`, `batch`, `bi` | sf-data | flink, airflow, metabase |
-| `ops` | sf-sre | keda, always on from Phase 7 (Kyverno added by Phase 8) |
+| `ops` | sf-sre | keda (sf-sre) and fulfillment-worker (sf-app: a second Argo CD app of the shop chart that renders only the worker, sharing its image pins), always on from Phase 7; needs `data` |
 | `chaos` | sf-sre | chaos-mesh, **game days only**: added with the session, its root app deleted right after (CI fails if any other profile lists chaos-mesh); experiments may target only namespaces annotated `chaos-mesh.org/inject=enabled` (`enableFilterNamespace`) |
 
 ## 5. Secrets (SOPS + age + KSOPS)
