@@ -15,7 +15,10 @@ spec:
     server: https://kubernetes.default.svc
     namespace: airflow
   sources:
-    - repoURL: https://airflow.apache.org
+    # Helm index in this repo (deploy/platform/airflow/helm-repo): the official chart, but fetched from dlcdn.apache.org
+    # because archive.apache.org, where the official index points, is unreachable from the local network. The URL
+    # follows `main`, not the session's revision; the chart version below stays pinned either way.
+    - repoURL: https://raw.githubusercontent.com/winthebest/shopflow/main/deploy/platform/airflow/helm-repo
       chart: airflow
       targetRevision: 1.22.0
       helm:
