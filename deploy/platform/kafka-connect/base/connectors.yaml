@@ -34,7 +34,7 @@ spec:
     slot.name: debezium_shop
     # Exactly the tables of publication shop_cdc = data/contracts/*.yaml (scripts/data-validate.sh fails otherwise).
     # Without a list Debezium would also snapshot tables it cannot read (alembic_version).
-    table.include.list: public.customers,public.products,public.orders,public.order_items,public.payments,public.heartbeat
+    table.include.list: public.customers,public.products,public.orders,public.order_items,public.payments,public.shipments,public.heartbeat
     # Snapshot when there is no usable offset (new Kafka, new connector, slot lost), otherwise stream.
     snapshot.mode: when_needed
     # Every 10s: emit a heartbeat and touch the single heartbeat row, so the slot advances while the shop is idle
@@ -73,7 +73,7 @@ spec:
   autoRestart:
     enabled: true
   config:
-    topics: shop.public.customers,shop.public.products,shop.public.orders,shop.public.order_items,shop.public.payments,shop.public.heartbeat
+    topics: shop.public.customers,shop.public.products,shop.public.orders,shop.public.order_items,shop.public.payments,shop.public.shipments,shop.public.heartbeat
     key.converter: org.apache.kafka.connect.json.JsonConverter
     key.converter.schemas.enable: false
     value.converter: org.apache.kafka.connect.json.JsonConverter
@@ -84,13 +84,14 @@ spec:
     transforms.topic.topic.field: _topic
     transforms.ingested.type: org.apache.kafka.connect.transforms.InsertField$Value
     transforms.ingested.timestamp.field: _ingested_at
-    iceberg.tables: bronze.customers,bronze.products,bronze.orders,bronze.order_items,bronze.payments,bronze.heartbeat
+    iceberg.tables: bronze.customers,bronze.products,bronze.orders,bronze.order_items,bronze.payments,bronze.shipments,bronze.heartbeat
     iceberg.tables.route-field: _topic
     iceberg.table.bronze.customers.route-regex: shop\.public\.customers
     iceberg.table.bronze.products.route-regex: shop\.public\.products
     iceberg.table.bronze.orders.route-regex: shop\.public\.orders
     iceberg.table.bronze.order_items.route-regex: shop\.public\.order_items
     iceberg.table.bronze.payments.route-regex: shop\.public\.payments
+    iceberg.table.bronze.shipments.route-regex: shop\.public\.shipments
     iceberg.table.bronze.heartbeat.route-regex: shop\.public\.heartbeat
     # Bronze tables are created up front by Trino with format_version = 2 (deploy/platform/trino); the sink never
     # creates or alters them.

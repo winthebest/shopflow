@@ -31,6 +31,8 @@ CDC_ROLE = "debezium"
 CDC_PASSWORD = "test-only"
 TRINO_ROLE = "trino_pg"
 TRINO_PASSWORD = "test-only"
+WORKER_ROLE = "fulfillment_worker"
+WORKER_PASSWORD = "test-only"
 
 
 def psql(pg: PostgresContainer, sql: str) -> None:
@@ -47,6 +49,7 @@ def postgres() -> Iterator[PostgresContainer]:
         psql(pg, f"CREATE ROLE {APP_ROLE} LOGIN PASSWORD '{APP_PASSWORD}'")
         psql(pg, f"CREATE ROLE {CDC_ROLE} LOGIN REPLICATION PASSWORD '{CDC_PASSWORD}'")
         psql(pg, f"CREATE ROLE {TRINO_ROLE} LOGIN PASSWORD '{TRINO_PASSWORD}'")
+        psql(pg, f"CREATE ROLE {WORKER_ROLE} LOGIN PASSWORD '{WORKER_PASSWORD}'")
         yield pg
 
 
@@ -90,12 +93,20 @@ def trino_url(postgres: PostgresContainer, database_url: str) -> str:
     return connection_url(postgres, TRINO_ROLE, TRINO_PASSWORD, "shop")
 
 
+@pytest.fixture(scope="session")
+def worker_url(postgres: PostgresContainer, database_url: str) -> str:
+    """The migrated `shop` database, connected as the fulfillment-worker role."""
+    return connection_url(postgres, WORKER_ROLE, WORKER_PASSWORD, "shop")
+
+
 @pytest.fixture
 async def seeded_db(database_url: str) -> str:
     """Empty tables (ids restart at 1), then the demo seed."""
     engine = create_engine(database_url)
     async with engine.begin() as conn:
-        await conn.execute(text("TRUNCATE payments, order_items, orders, products, customers RESTART IDENTITY CASCADE"))
+        await conn.execute(
+            text("TRUNCATE shipments, payments, order_items, orders, products, customers RESTART IDENTITY CASCADE")
+        )
     await engine.dispose()
     await seed(database_url)
     return database_url

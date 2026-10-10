@@ -32,7 +32,7 @@ def execute(url: str, sql: str) -> None:
 
 def test_contracts_hold_on_the_migrated_schema(app_database, capsys):
     assert main(["--database-url", app_database("contracts_ok")]) == 0
-    assert "data contracts OK: 6 tables" in capsys.readouterr().out
+    assert "data contracts OK: 7 tables" in capsys.readouterr().out
 
 
 def test_schema_change_without_contract_update_fails(app_database, capsys):

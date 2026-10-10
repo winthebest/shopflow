@@ -12,7 +12,7 @@ from orders.migrate import alembic_config, upgrade
 
 pytestmark = pytest.mark.integration
 
-READABLE = ["customers", "products", "orders", "order_items", "payments", "heartbeat", "meta.cdc_epochs"]
+READABLE = ["customers", "products", "orders", "order_items", "payments", "heartbeat", "shipments", "meta.cdc_epochs"]
 
 # Every privilege trino_pg holds, read from the ACLs themselves: "nothing else" is checked, not assumed.
 TABLE_PRIVILEGES = """
@@ -65,7 +65,7 @@ async def test_trino_pg_privileges_are_exactly_the_spec(database_url):
 
 @pytest.mark.parametrize("relation", READABLE)
 async def test_trino_pg_can_read(trino_url, relation):
-    await query(trino_url, f"SELECT * FROM {relation} LIMIT 1")  # noqa: S608 - fixed relation names
+    await query(trino_url, f"SELECT * FROM {relation} LIMIT 1")
 
 
 @pytest.mark.parametrize(

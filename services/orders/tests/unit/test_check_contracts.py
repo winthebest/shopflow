@@ -164,9 +164,9 @@ def test_check_fails(db, expected):
     assert any(expected in message for _, message in errors), errors
 
 
-def test_repository_contracts_cover_the_six_source_tables():
+def test_repository_contracts_cover_the_source_tables():
     contracts = load_contracts(REPO_ROOT / CONTRACTS_DIR)
-    assert set(contracts) == {"customers", "products", "orders", "order_items", "payments", "heartbeat"}
+    assert set(contracts) == {"customers", "products", "orders", "order_items", "payments", "heartbeat", "shipments"}
     assert all(table.version >= 1 and table.primary_key for table in contracts.values())
 
 

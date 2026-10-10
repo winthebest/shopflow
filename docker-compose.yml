@@ -117,3 +117,5 @@ configs:
       CREATE ROLE debezium LOGIN REPLICATION PASSWORD 'debezium';
       -- Trino catalog `pg` (Phase 5): read-only; grants come from Alembic 0003.
       CREATE ROLE trino_pg LOGIN PASSWORD 'trino_pg';
+      -- fulfillment-worker (Phase 7): INSERT on shipments; grants come from Alembic 0004.
+      CREATE ROLE fulfillment_worker LOGIN PASSWORD 'fulfillment_worker';
