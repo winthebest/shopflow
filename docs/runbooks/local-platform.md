@@ -86,8 +86,9 @@ Only for the inner dev loop; anything committed uses GHCR images pinned by diges
 3. Add `- ../../apps/<component>` to your profile's `resources`. Keep the profile's inline `replacements` block.
 4. `make platform-validate`: fails if a profile or app does not render, if any app ignores the root revision, if
    a schema check fails, if an image has no digest, or if the shop migration image (`sha-<commit>` tag of
-   `services.orders`) was built before the newest commit under `services/orders/migrations`. After a migration
-   merges, bump the shop images to a tag built from it (or later) before the next `deploy/` PR can pass.
+   `services.orders`) was built before the newest commit under `services/orders/migrations`. In platform-ci that
+   last check fails on main and on PRs that change `deploy/charts/shop`, and only warns on other PRs: after a
+   migration merges, main stays red until a PR bumps the shop images to a tag built from it (or later).
 
 ## Adding a secret
 

@@ -15,6 +15,7 @@ on:
     branches: [main]
     paths:
       - "deploy/**"
+      - "services/*/migrations/**"   # a merged migration turns main red until the shop chart runs it
       - "scripts/k3d-*.sh"
       - "scripts/platform-*.sh"
       - ".sops.yaml"
@@ -62,5 +63,15 @@ jobs:
       - name: Shellcheck platform scripts
         run: shellcheck -x scripts/k3d-*.sh scripts/platform-*.sh
 
+      # Shop migration image check: fail on main and on PRs that change deploy/charts/shop; other PRs only get a
+      # warning, so the image bump that follows a migration does not block every lane.
       - name: Render and validate deploy/
-        run: scripts/platform-validate.sh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          mode=fail
+          if [[ "$EVENT_NAME" == pull_request ]] && git diff --quiet "origin/$BASE_REF...HEAD" -- deploy/charts/shop; then
+            mode=warn
+          fi
+          SHOP_MIGRATION_CHECK="$mode" scripts/platform-validate.sh
