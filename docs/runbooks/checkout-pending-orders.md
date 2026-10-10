@@ -28,10 +28,11 @@ minutes, orders are not being settled: customers wait for a status, and fulfillm
    (`kubectl -n shop get cluster shop-db`, CNPG dashboard). While sweeps fail, the gauge keeps its last value: the
    alert stays on until a sweep succeeds.
 3. **One order stuck?** The age keeps growing while `orders_settle_recovered_total` rises for other orders: the
-   oldest order is claimed again at every lease and payments never answers for it. The sweeper retries it without
-   logging; `sum by (outcome) (rate(orders_payments_attempts_total[5m]))` shows the timeouts. Each checkout that
-   left an order pending logged `payments did not answer, order left pending` with its `order_id`: find the oldest
-   one there, then look for that order in payments' logs.
+   oldest order is claimed again at every lease (30 s) and payments never answers for it. The sweeper logs
+   `stranded order: payments did not answer, retrying later` with the `order_id` at each such retry: the same
+   `order_id` repeating is the stuck one (the checkout that left it pending logged `payments did not answer, order
+   left pending`). `sum by (outcome) (rate(orders_payments_attempts_total[5m]))` shows the timeouts. Then look for
+   that order in payments' logs.
 
 Logs: `kubectl -n shop logs deploy/orders --since=30m | grep -E 'stranded-order|did not answer|circuit open|stranded order settled'`.
 
