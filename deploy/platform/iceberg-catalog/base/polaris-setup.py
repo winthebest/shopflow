@@ -15,6 +15,7 @@ import json
 import os
 import ssl
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -24,6 +25,12 @@ CATALOG = os.environ.get("CATALOG_NAME", "lake")
 BASE_LOCATION = os.environ["CATALOG_BASE_LOCATION"]  # s3://lake/warehouse
 S3_ENDPOINT = os.environ["S3_ENDPOINT"]
 S3_REGION = os.environ.get("S3_REGION", "us-east-1")
+
+# Connection errors are retried for this long (seconds). Under the k3s NetworkPolicies a new pod's IP reaches the
+# server side's allow-list a few seconds after the pod starts; until then kube-router REJECTs its packets, which shows
+# up as "Connection refused". A Job retry does not help: its new pod hits the same window
+# (docs/runbooks/data-setup-hooks.md).
+CONNECT_DEADLINE = float(os.environ.get("CONNECT_DEADLINE_SECONDS", "60"))
 
 READ = ["NAMESPACE_LIST", "NAMESPACE_READ_PROPERTIES", "TABLE_LIST", "TABLE_READ_PROPERTIES", "TABLE_READ_DATA"]
 WRITE = ["TABLE_LIST", "TABLE_READ_PROPERTIES", "TABLE_READ_DATA", "TABLE_WRITE_DATA"]
@@ -66,16 +73,26 @@ def call(method: str, url: str, body=None, token=None, form=False, context=None)
     if not url.startswith(("http://", "https://")):
         raise ValueError(f"refusing non-HTTP URL: {url}")
     request = urllib.request.Request(url, data=data, headers=headers, method=method)  # noqa: S310 (scheme checked)
-    try:
-        with urllib.request.urlopen(request, timeout=30, context=context) as response:  # noqa: S310 (scheme checked)
-            raw = response.read()
-            return response.status, json.loads(raw) if raw else {}
-    except urllib.error.HTTPError as error:
-        raw = error.read()
+    start, delay = time.monotonic(), 1.0
+    while True:
         try:
-            return error.code, json.loads(raw) if raw else {}
-        except ValueError:
-            return error.code, {"raw": raw.decode(errors="replace")}
+            with urllib.request.urlopen(request, timeout=30, context=context) as response:  # noqa: S310 (scheme checked)
+                raw = response.read()
+                return response.status, json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as error:
+            raw = error.read()
+            try:
+                return error.code, json.loads(raw) if raw else {}
+            except ValueError:
+                return error.code, {"raw": raw.decode(errors="replace")}
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as error:
+            # Every write here is idempotent (409 counts as success, a missing Secret leads to a rotation), so
+            # repeating a request whose reply was lost is safe.
+            if time.monotonic() + delay > start + CONNECT_DEADLINE:
+                sys.exit(f"{method} {url}: {error} (gave up after {time.monotonic() - start:.0f}s)")
+            print(f"{method} {url}: {error}; retrying in {delay:.0f}s", file=sys.stderr)
+            time.sleep(delay)
+            delay = min(delay * 2, 8.0)
 
 
 def expect(status: int, payload: dict, ok: tuple[int, ...], what: str) -> dict:

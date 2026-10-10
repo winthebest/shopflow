@@ -1,6 +1,9 @@
 # Creates the bronze schema and tables (bronze-tables.sql) through Trino as `dbt`, the owner of catalog lake,
-# after every sync of this app. The Iceberg sink only appends; it never creates tables. Retries cover the window
-# in which Polaris (iceberg-catalog app, same wave) is still being set up.
+# after every sync of this app. The Iceberg sink only appends; it never creates tables. Every statement is
+# `IF NOT EXISTS`, so the file is retried as a whole: inside the pod for about 60s, because under the k3s
+# NetworkPolicies a new pod's first connections are REJECTed for a few seconds ("Connection refused") and a Job retry
+# starts a new pod with the same problem (docs/runbooks/data-setup-hooks.md); then by the Job's backoff, which covers
+# the window in which Polaris (iceberg-catalog app, same wave) is still being set up.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -27,14 +30,18 @@ spec:
       containers:
         - name: ddl
           image: trinodb/trino:483@sha256:db58cc93e593a2706553745f276bb119c9810e69918be56ecde088ba7ccb0534
+          # A PEM file is recognised as such by --truststore-path; --truststore-type only names JVM keystore types.
           command:
-            - trino
-            - --server=https://trino.lakehouse.svc:8443
-            # A PEM file is recognised as such; --truststore-type only names JVM keystore types (PEM is not one).
-            - --truststore-path=/etc/trino-ca/ca.crt
-            - --user=dbt
-            - --password
-            - --file=/sql/bronze-tables.sql
+            - /bin/sh
+            - -c
+            - |
+              for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+                trino --server=https://trino.lakehouse.svc:8443 --truststore-path=/etc/trino-ca/ca.crt \
+                  --user=dbt --password --file=/sql/bronze-tables.sql && exit 0
+                echo "bronze DDL attempt $attempt failed, retrying in 5s" >&2
+                sleep 5
+              done
+              exit 1
           env:
             # Read by the CLI instead of prompting.
             - name: TRINO_PASSWORD

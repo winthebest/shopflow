@@ -26,6 +26,15 @@ spec:
     - repoURL: https://github.com/winthebest/shopflow.git
       targetRevision: main
       ref: values
+  ignoreDifferences:
+    # The chart declares `properties: {}` (with x-kubernetes-preserve-unknown-fields) for status.clusterSecurity; the
+    # API server drops the empty map when it stores the CRD, so the app would stay OutOfSync on it forever. The live
+    # CRD and the rendered chart differ in nothing else.
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      name: kafkas.kafka.strimzi.io
+      jqPathExpressions:
+        - .spec.versions[].schema.openAPIV3Schema.properties.status.properties.clusterSecurity.properties
   syncPolicy:
     automated:
       prune: true
