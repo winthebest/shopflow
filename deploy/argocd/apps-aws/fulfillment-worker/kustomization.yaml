@@ -1,4 +1,5 @@
-# AWS variant of the worker app: environment aws, up to one consumer per partition (values-aws.yaml).
+# AWS variant of the worker app: values-aws.yaml (environment aws, telemetry on); the worker keeps the base values.yaml
+# scaling (up to one consumer per partition).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:

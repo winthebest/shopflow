@@ -76,10 +76,10 @@ services:
       DATABASE_PASSWORD: {name: shop-db-fulfillment-worker, key: password}
     autoscaling:                  # KEDA Kafka scaler (docs/adr/0304)
       minReplicaCount: 1
-      maxReplicaCount: 6          # = partitions of shop.public.orders; more consumers would idle
+      maxReplicaCount: 6          # <= partitions of shop.public.orders (6, sf-data); more consumers would idle
       lagThreshold: 50            # records per replica; re-measure with k6 before the game day
       pollingInterval: 15
-      cooldownPeriod: 120
+      scaleDownStabilizationSeconds: 60   # back to minReplicaCount 60s after the lag is drained
     resources:
       requests: {cpu: 50m, memory: 96Mi}
       limits: {memory: 256Mi}
@@ -131,5 +131,6 @@ worker:
     user: fulfillment-worker
     credentialsSecret: fulfillment-worker-kafka
     caSecret: fulfillment-worker-kafka-ca
+    protocolVersion: "3.6.0"   # KEDA scaler client protocol; >= 2.1 for Kafka 4.x. Check the ScaledObject is Ready.
   # Same pinned image as the other copy-secret Jobs (deploy/platform/*/base/secret-copy.yaml).
   copyImage: python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4

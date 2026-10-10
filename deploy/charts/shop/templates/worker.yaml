@@ -3,8 +3,9 @@
 {{- $copy := "fulfillment-worker-kafka-copy" }}
 # fulfillment-worker (app `fulfillment-worker`, profile ops): its ServiceAccount, the KEDA scaler (docs/adr/0304) and
 # in-cluster copies of its Kafka credentials. Strimzi writes the KafkaUser password and the cluster CA in namespace
-# `kafka`; pods and KEDA's TriggerAuthentication read Secrets only from their own namespace, so a Sync-hook Job copies
-# them (docs/contracts/gitops.md, cross-namespace credentials): nothing in git, no drift when Strimzi rotates them.
+# `kafka`; pods and KEDA's TriggerAuthentication read Secrets only from their own namespace, so Sync-hook Jobs copy
+# them (docs/contracts/gitops.md, cross-namespace credentials): nothing in git. The copies refresh on every sync of
+# this app; after Strimzi recreates the user or renews the cluster CA, sync it (the worker then reconnects).
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -28,7 +29,13 @@ spec:
   # At most one consumer per partition: extra replicas would idle (topic partitions, sf-data).
   maxReplicaCount: {{ $svc.autoscaling.maxReplicaCount }}
   pollingInterval: {{ $svc.autoscaling.pollingInterval }}
-  cooldownPeriod: {{ $svc.autoscaling.cooldownPeriod }}
+  # cooldownPeriod only applies to scaling to/from zero; with minReplicaCount >= 1 the HPA's scale-down window decides
+  # how fast replicas return to the minimum once the lag is drained.
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: {{ $svc.autoscaling.scaleDownStabilizationSeconds }}
   triggers:
     - type: kafka
       metadata:
@@ -37,6 +44,8 @@ spec:
         topic: {{ $kafka.topic | quote }}
         lagThreshold: {{ $svc.autoscaling.lagThreshold | quote }}
         offsetResetPolicy: earliest
+        # Kafka 4.x removed protocol versions older than 2.1 (KIP-896); the scaler's default (1.0.0) is below that.
+        version: {{ $kafka.protocolVersion | quote }}
         sasl: scram_sha512
         tls: enable
       authenticationRef:
@@ -131,6 +140,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: {{ $copy }}
+    namespace: {{ $.Release.Namespace }}
 ---
 apiVersion: v1
 kind: ConfigMap

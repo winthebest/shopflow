@@ -104,7 +104,10 @@ volumes:
      route); `worker` = app `fulfillment-worker` in profile ops (the KEDA-scaled CDC consumer, its Kafka credential
      copies and ScaledObject). Both apps read values.yaml, so one image bump covers both. */}}
 {{- define "shop.renders" -}}
-{{- $component := required "component must be web or worker" .root.Values.component -}}
+{{- $component := .root.Values.component -}}
+{{- if not (has $component (list "web" "worker")) -}}
+{{- fail (printf "component must be web or worker, got %q" $component) -}}
+{{- end -}}
 {{- if eq (.svc.kind | default "api") "worker" -}}
 {{- if eq $component "worker" }}true{{ end -}}
 {{- else if eq $component "web" -}}
