@@ -5,7 +5,7 @@
 #
 # Usage:
 #   scripts/cdc-epoch.sh ensure [--timeout S]             make up: keep the current epoch, or start one (fresh cluster)
-#   scripts/cdc-epoch.sh new  [--epoch N] [--timeout S]  re-snapshot runbook: start a new epoch, before restarting
+#   scripts/cdc-epoch.sh new  [--epoch N] [--timeout S]  re-snapshot (docs/runbooks/cdc-resnapshot.md): new epoch
 #   scripts/cdc-epoch.sh wait [--epoch N] [--timeout S]  once Postgres and Connect run: record N in meta.cdc_epochs
 #
 # ensure  Prints the epoch in Secret kafka/cdc-epoch when it exists and changes nothing: on a running cluster the
@@ -15,7 +15,7 @@
 # new   Writes Secret kafka/cdc-epoch (key epoch, read by the connectors at task start) and KafkaTopic
 #       iceberg-control-<N> (the Iceberg sink's control topic for this epoch). Needs only the Strimzi CRDs, not a
 #       running Kafka. Default N = unix time in seconds: an int4 until 2038, above every earlier local epoch.
-#       Prints N. Connectors already running keep their old epoch until restarted (the re-snapshot runbook
+#       Prints N. Connectors already running keep their old epoch until restarted (docs/runbooks/cdc-resnapshot.md
 #       restarts them). With profile rt it also deletes FlinkDeployment flink/kpi-minute, which Argo CD recreates for
 #       the new epoch from fresh state. On AWS, ESO writes the Secret from SSM and only `wait` is used.
 # wait  Inserts N into meta.cdc_epochs (as shop_app), waits until Debezium reports the snapshot as completed
@@ -191,7 +191,7 @@ cmd_ensure() {
   current="$(base64 -d <<< "$current")"
   valid_epoch "$current" || die "Secret $CONNECT_NAMESPACE/cdc-epoch holds '$current', not an epoch"
   [[ -z "$epoch" || "$epoch" == "$current" ]] \
-    || die "epoch $current is current; starting $epoch needs the re-snapshot runbook (new, restart the connectors)"
+    || die "epoch $current is current; starting $epoch is a re-snapshot (docs/runbooks/cdc-resnapshot.md)"
   log "epoch $current: Secret $CONNECT_NAMESPACE/cdc-epoch exists, kept (the running connectors stamp it)"
   echo "$current"
 }

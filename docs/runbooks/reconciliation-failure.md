@@ -29,6 +29,6 @@ the source of truth.
 ## Mitigation
 
 - Lag or a failed dbt run: rerun `dbt_build`, then clear `reconcile`.
-- Changes lost in CDC: re-snapshot into a new epoch (`scripts/cdc-epoch.sh new`, restart the connectors,
-  `scripts/cdc-epoch.sh wait`), then `dbt_build` and `reconcile`. Silver switches to the new epoch, and a quiet-point
+- Changes lost in CDC: re-snapshot into a new epoch ([cdc-resnapshot.md](cdc-resnapshot.md)), then `dbt_build`
+  and `reconcile`. Silver switches to the new epoch, and a quiet-point
   check (`--vars '{reconcile: true, reconcile_lag_minutes: 0}'` right after a rebuild) must then pass.

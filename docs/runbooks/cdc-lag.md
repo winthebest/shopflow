@@ -42,9 +42,9 @@ The Connect worker runs in a StrimziPodSet pod:
 - Restart a failed task: `kubectl -n kafka annotate kafkaconnector <name> strimzi.io/restart-task=0 --overwrite`.
 - Catalog or storage down: fix that component first; the sink resumes from its committed offsets without loss
   (exactly-once commits, docs/adr/0406).
-- If the slot or the Kafka data is lost, re-snapshot under a new epoch (`scripts/cdc-epoch.sh new`, restart the
-  connectors, `scripts/cdc-epoch.sh wait`): bronze keeps the old epoch, silver switches to the new one once its
-  snapshot completed (`meta.cdc_epochs.snapshot_completed_at`; allow one more sink commit interval before
-  trusting it, the snapshot is complete in Debezium before it is committed to bronze).
+- If the slot or the Kafka data is lost, re-snapshot under a new epoch: [cdc-resnapshot.md](cdc-resnapshot.md)
+  (new epoch, stop the source, reset its offsets, resume, restart the sink's tasks, `scripts/cdc-epoch.sh wait`). A
+  plain connector restart does not snapshot. Bronze keeps the old epoch; silver switches to the new one once `wait`
+  has recorded its snapshot (`meta.cdc_epochs.snapshot_completed_at`).
 
 While the alert fires, downstream data (silver, gold, dashboards) is stale by at least the reported lag.
