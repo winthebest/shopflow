@@ -1,5 +1,5 @@
-# k3d overlay: one replica each except payments (PDBs still allow a drain), demo data seeded, laptop hostname,
-# telemetry on.
+# k3d overlay: one replica each (gateway and orders autoscale from one) except payments (PDBs still allow a drain),
+# demo data seeded, laptop hostname, telemetry on.
 environment: local
 # Every local validation profile includes obs or obs-lite (docs/contracts/services.md); on a core-only cluster the
 # SDK only logs exporter warnings.
@@ -7,9 +7,9 @@ otel:
   enabled: true
 services:
   gateway:
-    replicas: 1
+    hpa: {minReplicas: 1, maxReplicas: 3}
   orders:
-    replicas: 1
+    hpa: {minReplicas: 1, maxReplicas: 3}
   payments:
     # Two, so a retry after a timed-out attempt can land on the other pod (game day gd1b slows one of them; ADR 0102).
     replicas: 2

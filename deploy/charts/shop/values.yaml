@@ -22,7 +22,12 @@ services:
       tag: sha-c35f922
       digest: sha256:3ecc7b3b88a5d6d0fd02d28b53e98d1a6a3b48597cf5735340a1b7387b53d48c
     port: 8000
-    replicas: 2
+    # HorizontalPodAutoscaler on average CPU per pod (replaces `replicas`). A proxy: 407m at 80 checkouts/s on one
+    # replica (docs/perf-baseline.md, 2026-10-10); it holds no database connection.
+    hpa:
+      minReplicas: 2
+      maxReplicas: 6
+      cpuAverage: 400m
     env:
       ORDERS_URL: http://orders.shop.svc:8001
     resources:
@@ -34,7 +39,13 @@ services:
       tag: sha-c35f922
       digest: sha256:40fcd26749b4bf83ead9fc0272522d38841db018ae484e4b745492627c02ac77
     port: 8001
-    replicas: 2
+    # One Python process per pod saturates near one core: 881m at 80 checkouts/s, where queued requests held their
+    # connections and the pool ran dry. 500m keeps a replica near 45 checkouts/s. maxReplicas x (DB_POOL_SIZE +
+    # DB_MAX_OVERFLOW) = 4 x 15 stays inside shop-db's max_connections (100) next to the other roles.
+    hpa:
+      minReplicas: 2
+      maxReplicas: 4
+      cpuAverage: 500m
     env:
       PAYMENTS_URL: http://payments.shop.svc:8002
     # DATABASE_URL comes from the Secret CNPG creates for the bootstrap owner `shop_app`.
