@@ -1,0 +1,145 @@
+# Profile rt: namespace flink (docs/adr/0208-psa-and-network-policies.md, flows: docs/contracts/environment.md "Network
+# flows"). Flink Kubernetes Operator (+ webhook), the KPI job's JobManager/TaskManager pods (label
+# type=flink-native-kubernetes, set by Flink's native Kubernetes integration) and two Jobs: flink-secret-copy (API
+# server) and flink-serving-ddl (Postgres). restricted: the operator chart values, the FlinkDeployment pod template and
+# both Jobs set runAsNonRoot, RuntimeDefault seccomp, no privilege escalation and drop ALL.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flink
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: flink
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: flink
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+# Operator -> JobManager REST (8081), JobManager <-> TaskManagers (RPC, blob, data): one namespace, one job.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: flink
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+---
+# The KPI job: CDC topics from the Kafka brokers (TLS listener), serving.kpi_minute in Postgres, checkpoints and HA
+# state in SeaweedFS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: flink-job-egress
+  namespace: flink
+spec:
+  podSelector:
+    matchLabels: {type: flink-native-kubernetes}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kafka}
+          podSelector:
+            matchLabels: {strimzi.io/kind: Kafka}
+      ports:
+        - {protocol: TCP, port: 9093}
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: shop}
+          podSelector:
+            matchLabels: {cnpg.io/cluster: shop-db}
+      ports:
+        - {protocol: TCP, port: 5432}
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: lakehouse}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: seaweedfs}
+      ports:
+        - {protocol: TCP, port: 8333}
+---
+# flink-serving-ddl (Sync hook) creates serving.kpi_minute in Postgres.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: serving-ddl
+  namespace: flink
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: flink-serving-ddl}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: shop}
+          podSelector:
+            matchLabels: {cnpg.io/cluster: shop-db}
+      ports:
+        - {protocol: TCP, port: 5432}
+---
+# The operator's validating/mutating webhook (Service 443 -> 9443) is called by the API server (host network: no
+# pod selector can match it).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: operator-webhook
+  namespace: flink
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: flink-kubernetes-operator}
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - {protocol: TCP, port: 9443}
+---
+# Operator (job lifecycle), JobManager (Kubernetes HA, TaskManager pods), TaskManagers (leader retrieval) and
+# flink-secret-copy all use the API server.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: apiserver
+  namespace: flink
+  labels:
+    shopflow.io/egress: apiserver
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    # API server only: k3s matches egress after the Service DNAT (kubernetes.default -> node IP:6443), so 443 stays
+    # closed. The aws overlay swaps this rule for 443 to the VPC (components/apiserver-aws).
+    - ports:
+        - {protocol: TCP, port: 6443}
