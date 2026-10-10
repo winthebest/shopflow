@@ -139,11 +139,31 @@ per order, so re-charging is safe), no read after settle, then autoscaling and p
 - `make up` again on the same revision: the epoch was kept, no new snapshot, no connector restart; a checkout placed
   afterwards carries the current epoch.
 
+### Backlog after Kafka Connect was down 30 min (game day 3, `WATCH=1`)
+
+Chaos Mesh replaced the Connect pods (12:48:01 → 13:19:09 UTC) while k6 kept 10 checkouts/s; `lagThreshold` was
+still 50.
+
+| | Result |
+|---|---|
+| 1 → 3 ready replicas | 7 s after the backlog appeared |
+| Max consumer lag | 34,845 records |
+| Lag drained | 131 s |
+| Back to 1 replica | 185 s |
+| Throughput per replica | 100 records/s (22 busy intervals) |
+| Shipments / duplicates | 59,474 / 0; no shipment for an unpaid order |
+
+No event was lost across the stop. The check reported 2 paid orders without a shipment: the newest orders, still in
+flight while k6 ran (0 unshipped paid orders older than 60 s). The check now counts only orders paid more than
+`SHIP_GRACE_SECONDS` (60) ago and reports the newer ones as in flight.
+
 ### lagThreshold from the measurement (ADR 0304)
 
-- Per-replica rate under backlog: 103.5 records/s (80/s run, 2 busy intervals; the 60/s run's 87.8 rests on a
-  single interval).
-- `lagThreshold` = rate × target drain time per replica = 103.5 × 30 s ≈ **3,100** (the chart has 50).
+- Per-replica rate under backlog: 103.5 records/s (80/s run, 2 busy intervals) and 100 records/s (game day 3,
+  22 busy intervals); the 60/s run's 87.8 rests on a single interval.
+- `lagThreshold` = rate × target drain time per replica ≈ 100 × 30 s = **3,000** (was 50), applied after game
+  day 3.
 - KEDA asks for ceil(lag / `lagThreshold`) replicas. At 80 checkouts/s one replica falls behind by ~40 records/s, so
-  with 3,100 the second replica arrives after ~75 s (19 s with 50) and a third is never needed. A backlog like game
-  day 3's (Kafka Connect down 30 min at 10 checkouts/s ≈ 36,000 records) asks for 12, capped at 3, at once.
+  with 3,000 the second replica arrives after ~75 s (19 s with 50) and a third is never needed; `make
+  app-worker-check` now expects 2 by default. Game day 3's backlog (34,845 records) asks for 12, capped at 3, at
+  once: the burst behaviour above does not change.
