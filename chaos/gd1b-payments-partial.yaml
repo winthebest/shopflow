@@ -1,13 +1,15 @@
 # Game day 1b — one of two payments pods 800ms slower (variant of scenario 1). Procedure: docs/runbooks/gameday.md.
-# Run only after the checkout resilience fix is merged (docs/contracts/services.md: idempotent POST /charges, up to
-#   3 attempts inside the 800ms orders → payments deadline, full-jitter backoff, circuit breaker per orders process).
-# Preconditions: payments at 2 replicas on the game-day cluster (values-local runs 1: use a game-day branch, since
-#   Argo CD reverts `kubectl scale`); the per-attempt timeout leaves room for a second attempt inside 800ms.
-# Hypothesis: half of the payments endpoints are slow. Without retries about half of the checkouts would end in 504
-#   (the gd1 "before" numbers scaled by the share of calls that reach the slow pod). With retries, an attempt that
-#   times out on the slow pod is retried and lands on the healthy pod about half of the time; with 3 attempts about
-#   1 checkout in 8 still fails. Availability stays far closer to the SLO than in gd1, and the circuit does not
-#   open while the healthy pod answers. Retried checkouts take longer, so the latency SLI burns.
+# Runs with the checkout resilience fix (docs/adr/0102-resilience-patterns-checkout.md): idempotent POST /charges,
+#   up to 3 attempts inside the 800ms deadline (each at most 500ms), a new connection per retry, circuit breaker
+#   (75% of >= 20 attempts over 10s). Payments runs 2 replicas locally (values-local).
+# Hypothesis (ADR 0102 estimate): one of two payments pods +800ms. A first attempt that reaches the slow pod times
+#   out at 500ms; the single retry that fits reaches the healthy pod about half of the time. Checkout errors fall
+#   from ~50% (one 800ms call) to ~25%; retried successes take ~550-600ms, so the latency SLI burns (~50% of
+#   checkouts over 300ms). Attempt failures sit near 50%, under the 75% threshold, so the circuit stays closed.
+#   With >= 2h20m of steady load before the run, these 15 minutes raise tickets but no page (promtool:
+#   slo/tests/checkout.test.yaml), where gd1 pages. Caveat: the pool favours the healthy pod (connections to the
+#   slow pod close when they time out), so the measured first-attempt failure rate will likely be lower than 50%;
+#   compare measured numbers, before and after, not the estimate.
 # Blast radius: one payments pod (namespace shop); checkout is slower or fails for part of the traffic, browse is
 #   unaffected.
 # Stop: automatic after `duration`; earlier with `kubectl delete -f` if browse errors exceed 1% for 5 min or
