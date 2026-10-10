@@ -1,3 +1,4 @@
+{{- if eq .Values.component "web" }}
 {{- if .Values.migration.enabled }}
 ---
 # Alembic `upgrade head` before the new release rolls out (Argo CD PreSync hook; the DB comes from the
@@ -42,4 +43,5 @@ spec:
         {{- include "shop.labels" (dict "root" $ "name" "shop-seed") | nindent 8 }}
     spec:
       {{- include "shop.jobPodSpec" (dict "root" $ "name" "shop-seed" "job" .Values.seed) | nindent 6 }}
+{{- end }}
 {{- end }}

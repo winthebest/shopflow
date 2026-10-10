@@ -1,0 +1,12 @@
+# AWS variant of the worker app: values-aws.yaml (environment aws, telemetry on); the worker keeps the base values.yaml
+# scaling (up to one consumer per partition).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../apps/fulfillment-worker
+patches:
+  - target: {kind: Application, name: fulfillment-worker}
+    patch: |-
+      - op: replace
+        path: /spec/sources/0/helm/valueFiles/1
+        value: values-aws.yaml

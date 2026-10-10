@@ -1,3 +1,4 @@
+{{- if eq .Values.component "web" }}
 {{- if .Values.route.enabled }}
 # The only public route: shop host (any host when route.hostname is empty) -> gateway Service. The Gateway
 # admits routes from namespace `shop` only.
@@ -24,4 +25,5 @@ spec:
       backendRefs:
         - name: {{ .Values.route.service }}
           port: {{ (index .Values.services .Values.route.service).port }}
+{{- end }}
 {{- end }}

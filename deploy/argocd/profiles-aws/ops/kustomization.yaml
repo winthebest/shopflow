@@ -1,9 +1,12 @@
-# Profile `ops` (owner: sf-sre; docs/contracts/gitops.md §4): always-on operations add-ons from Phase 7. KEDA is
-# identical on k3d and EKS. Chaos Mesh is NOT here: it lives in the game-day-only profile `chaos`.
+# Profile `ops` (owner: sf-sre; docs/contracts/gitops.md §4): always-on from Phase 7. KEDA (identical on k3d and EKS,
+# sync wave -1) and fulfillment-worker (sf-app: the shop chart rendering only the worker, wave 1, so its ScaledObject
+# finds the KEDA CRDs). Needs profile `data` (the worker consumes Kafka). Chaos Mesh is NOT here: it lives in the
+# game-day-only profile `chaos`.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../apps/keda
+  - ../../apps-aws/fulfillment-worker
 components:
   - ../../profiles/_common
 # Must stay inline (see ../../profiles/_common/kustomization.yaml). No session parameters are consumed.

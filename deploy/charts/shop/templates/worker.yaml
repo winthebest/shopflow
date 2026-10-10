@@ -1,0 +1,212 @@
+{{- if eq .Values.component "worker" }}
+{{- $kafka := .Values.worker.kafka }}
+{{- $copy := "fulfillment-worker-kafka-copy" }}
+# fulfillment-worker (app `fulfillment-worker`, profile ops): its ServiceAccount, the KEDA scaler (docs/adr/0304) and
+# in-cluster copies of its Kafka credentials. Strimzi writes the KafkaUser password and the cluster CA in namespace
+# `kafka`; pods and KEDA's TriggerAuthentication read Secrets only from their own namespace, so Sync-hook Jobs copy
+# them (docs/contracts/gitops.md, cross-namespace credentials): nothing in git. The copies refresh on every sync of
+# this app; after Strimzi recreates the user or renews the cluster CA, sync it (the worker then reconnects).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fulfillment-worker
+  labels:
+    {{- include "shop.labels" (dict "root" $ "name" "fulfillment-worker") | nindent 4 }}
+automountServiceAccountToken: false
+{{- range $name, $svc := .Values.services }}
+{{- if and (eq ($svc.kind | default "api") "worker") $svc.autoscaling }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "shop.labels" (dict "root" $ "name" $name) | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ $name }}
+  minReplicaCount: {{ $svc.autoscaling.minReplicaCount }}
+  # At most one consumer per partition: extra replicas would idle (topic partitions, sf-data).
+  maxReplicaCount: {{ $svc.autoscaling.maxReplicaCount }}
+  pollingInterval: {{ $svc.autoscaling.pollingInterval }}
+  # cooldownPeriod only applies to scaling to/from zero; with minReplicaCount >= 1 the HPA's scale-down window decides
+  # how fast replicas return to the minimum once the lag is drained.
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: {{ $svc.autoscaling.scaleDownStabilizationSeconds }}
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: {{ $kafka.bootstrapServers | quote }}
+        consumerGroup: {{ $kafka.consumerGroup | quote }}
+        topic: {{ $kafka.topic | quote }}
+        lagThreshold: {{ $svc.autoscaling.lagThreshold | quote }}
+        offsetResetPolicy: earliest
+        # Kafka 4.x removed protocol versions older than 2.1 (KIP-896); the scaler's default (1.0.0) is below that.
+        version: {{ $kafka.protocolVersion | quote }}
+        sasl: scram_sha512
+        tls: enable
+      authenticationRef:
+        name: {{ $name }}-kafka
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ $name }}-kafka
+  labels:
+    {{- include "shop.labels" (dict "root" $ "name" $name) | nindent 4 }}
+spec:
+  secretTargetRef:
+    - {parameter: username, name: {{ $kafka.credentialsSecret }}, key: username}
+    - {parameter: password, name: {{ $kafka.credentialsSecret }}, key: password}
+    - {parameter: ca, name: {{ $kafka.caSecret }}, key: ca.crt}
+{{- end }}
+{{- end }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $copy }}
+  labels:
+    {{- include "shop.labels" (dict "root" $ "name" $copy) | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $copy }}
+  namespace: {{ $kafka.namespace }}
+  labels:
+    {{- include "shop.labels" (dict "root" $ "name" $copy) | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [{{ $kafka.user }}, {{ printf "%s-cluster-ca-cert" $kafka.cluster }}]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $copy }}
+  namespace: {{ $kafka.namespace }}
+  labels:
+    {{- include "shop.labels" (dict "root" $ "name" $copy) | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $copy }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $copy }}
+    namespace: {{ $.Release.Namespace }}
+---
+# Kubernetes cannot scope `create` to a name; reading and replacing is limited to the two copies.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $copy }}
+  labels:
+    {{- include "shop.labels" (dict "root" $ "name" $copy) | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [{{ $kafka.credentialsSecret }}, {{ $kafka.caSecret }}]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $copy }}
+  labels:
+    {{- include "shop.labels" (dict "root" $ "name" $copy) | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $copy }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $copy }}
+    namespace: {{ $.Release.Namespace }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $copy }}-script
+  labels:
+    {{- include "shop.labels" (dict "root" $ "name" $copy) | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+data:
+  # Byte-identical to the shared deploy/platform/*/base/copy-secret.py (scripts/data-validate.sh compares them).
+  copy-secret.py: |-
+    {{- .Files.Get "files/copy-secret.py" | nindent 4 }}
+{{- range $job := list
+      (dict "suffix" "credentials" "source" $kafka.user "target" $kafka.credentialsSecret "extra" (dict "username" $kafka.user))
+      (dict "suffix" "ca" "source" (printf "%s-cluster-ca-cert" $kafka.cluster) "target" $kafka.caSecret "extra" (dict)) }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $copy }}-{{ $job.suffix }}
+  labels:
+    {{- include "shop.labels" (dict "root" $ "name" $copy) | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  backoffLimit: 10  # Strimzi may still be creating the KafkaUser on a fresh cluster
+  template:
+    metadata:
+      labels:
+        {{- include "shop.labels" (dict "root" $ "name" $copy) | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ $copy }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: copy
+          image: {{ $.Values.worker.copyImage }}
+          command: ["python", "-I", "/scripts/copy-secret.py"]
+          env:
+            - {name: SOURCE_NAMESPACE, value: {{ $kafka.namespace }}}
+            - {name: SOURCE_NAME, value: {{ $job.source }}}
+            - {name: TARGET_NAMESPACE, value: {{ $.Release.Namespace }}}
+            - {name: TARGET_NAME, value: {{ $job.target }}}
+            - {name: EXTRA_DATA, value: {{ toJson $job.extra | quote }}}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 64Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: scripts
+          configMap:
+            name: {{ $copy }}-script
+{{- end }}
+{{- end }}

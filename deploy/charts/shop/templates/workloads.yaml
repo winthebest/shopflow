@@ -1,5 +1,6 @@
 {{- range $name, $svc := .Values.services }}
 {{- $ctx := dict "root" $ "name" $name "svc" $svc }}
+{{- if include "shop.renders" $ctx }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -8,7 +9,9 @@ metadata:
   labels:
     {{- include "shop.labels" $ctx | nindent 4 }}
 spec:
+  {{- if not $svc.autoscaling }}
   replicas: {{ $svc.replicas }}
+  {{- end }}{{/* with autoscaling, KEDA's HPA owns the replica count */}}
   revisionHistoryLimit: 3
   selector:
     matchLabels:
@@ -23,7 +26,7 @@ spec:
       labels:
         {{- include "shop.labels" $ctx | nindent 8 }}
     spec:
-      serviceAccountName: shop
+      serviceAccountName: {{ include "shop.serviceAccountName" $ }}
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: {{ $.Values.lifecycle.terminationGracePeriodSeconds }}
       securityContext:
@@ -49,6 +52,12 @@ spec:
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
+            {{- if $svc.secretEnv }}
+            {{- include "shop.secretEnv" $ctx | nindent 12 }}
+            {{- end }}
+            {{- if eq ($svc.kind | default "api") "worker" }}
+            {{- include "shop.workerKafkaEnv" $ | nindent 12 }}
+            {{- end }}
           startupProbe:
             httpGet: {path: /healthz, port: http}
             {{- toYaml $.Values.probes.startup | nindent 12 }}
@@ -69,10 +78,23 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- if eq ($svc.kind | default "api") "worker" }}
+            - name: kafka-ca
+              mountPath: /etc/kafka-ca
+              readOnly: true
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
+        {{- if eq ($svc.kind | default "api") "worker" }}
+        - name: kafka-ca
+          secret:
+            secretName: {{ $.Values.worker.kafka.caSecret }}
+            items:
+              - {key: ca.crt, path: ca.crt}
+        {{- end }}
+{{- if ne ($svc.kind | default "api") "worker" }}
 ---
 apiVersion: v1
 kind: Service
@@ -89,6 +111,7 @@ spec:
       port: {{ $svc.port }}
       targetPort: http
       protocol: TCP
+{{- end }}
 ---
 # Voluntary disruptions (drains, upgrades) take down at most one pod per service at a time.
 apiVersion: policy/v1
@@ -102,4 +125,5 @@ spec:
   selector:
     matchLabels:
       {{- include "shop.selectorLabels" $ctx | nindent 6 }}
+{{- end }}
 {{- end }}

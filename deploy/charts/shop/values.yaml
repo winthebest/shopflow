@@ -1,6 +1,10 @@
 # Shop chart defaults (environment-neutral). Runtime contract: docs/contracts/services.md.
 # Overlays: values-local.yaml (k3d); an aws file is added in Phase 6.
 
+# Which block this release renders: `web` (app `shop`: API services, migration, seed, route) or `worker` (app
+# `fulfillment-worker`, profile ops). Both apps read this file, so one image bump covers both.
+component: web
+
 # deployment.environment resource attribute for telemetry.
 environment: ""
 logLevel: INFO
@@ -15,8 +19,8 @@ services:
   gateway:
     image:
       repository: ghcr.io/winthebest/shopflow-gateway
-      tag: sha-ac864b3
-      digest: sha256:dcb0b574d91e0e9ea80e5955b143bf85bb0486c8ca2ce7c0b09e7e4109eef7b7
+      tag: sha-0c7d9a1
+      digest: sha256:23d17f2f5f9898f667f5515d976b669ab2309d4969b75d3190a2865216c59939
     port: 8000
     replicas: 2
     env:
@@ -27,8 +31,8 @@ services:
   orders:
     image:
       repository: ghcr.io/winthebest/shopflow-orders
-      tag: sha-ac864b3
-      digest: sha256:838bf80ce64ff7b45f15744e7e44af5bb88ab673d4e080d2edb7a24b482c1ce1
+      tag: sha-0c7d9a1
+      digest: sha256:e32f7e67e31772530037fb18e256119100407dddd1ea02c86dc9885bbe68d4a6
     port: 8001
     replicas: 2
     env:
@@ -43,13 +47,41 @@ services:
   payments:
     image:
       repository: ghcr.io/winthebest/shopflow-payments
-      tag: sha-ac864b3
-      digest: sha256:2f1f553435c615aae911a79c862aacda391d9b6149e21dfeb55d5f5122a41993
+      tag: sha-0c7d9a1
+      digest: sha256:a09390169b12b4fed383ee751e9726332e46dd4ec6a3a920b31543f21b9d6409
     port: 8002
     replicas: 2
     env:
       PAYMENT_LATENCY_MS: "50"
       PAYMENT_FAILURE_RATE: "0.02"
+    resources:
+      requests: {cpu: 50m, memory: 96Mi}
+      limits: {memory: 256Mi}
+
+  # CDC consumer: one shipment per paid order (component worker only; no Service, scaled by KEDA on consumer lag).
+  fulfillment-worker:
+    kind: worker
+    image:
+      repository: ghcr.io/winthebest/shopflow-fulfillment-worker
+      tag: sha-0c7d9a1
+      digest: sha256:2508110c37dcd08eb159d7d5cad0fec8a6e4261714761815b3692fa3ed566a5b
+    port: 8003
+    env:
+      DATABASE_HOST: shop-db-rw.shop.svc
+      DATABASE_SSLMODE: require
+      # Simulated carrier call per shipment. To produce lag in a demo raise it and lower BATCH_MAX_RECORDS (default 500):
+      # latency x batch must stay <= 60s or the worker refuses to start (liveness stall bound).
+      SHIPMENT_LATENCY_MS: "20"
+    # CNPG managed role fulfillment_worker: INSERT on shipments, SELECT on orders.id (docs/contracts/services.md).
+    secretEnv:
+      DATABASE_USER: {name: shop-db-fulfillment-worker, key: username}
+      DATABASE_PASSWORD: {name: shop-db-fulfillment-worker, key: password}
+    autoscaling:                  # KEDA Kafka scaler (docs/adr/0304)
+      minReplicaCount: 1
+      maxReplicaCount: 6          # <= partitions of shop.public.orders (6, sf-data); more consumers would idle
+      lagThreshold: 50            # records per replica; re-measure with k6 before the game day
+      pollingInterval: 15
+      scaleDownStabilizationSeconds: 60   # back to minReplicaCount 60s after the lag is drained
     resources:
       requests: {cpu: 50m, memory: 96Mi}
       limits: {memory: 256Mi}
@@ -88,3 +120,19 @@ probes:
   readiness: {periodSeconds: 5, timeoutSeconds: 2, failureThreshold: 3}
   liveness: {periodSeconds: 10, timeoutSeconds: 2, failureThreshold: 3}
   startup: {periodSeconds: 2, timeoutSeconds: 2, failureThreshold: 30}
+
+# Worker wiring (component worker). The KafkaUser and its ACL are sf-data's (deploy/platform/kafka/base/users.yaml);
+# the copy Jobs write `credentialsSecret` (password + username) and `caSecret` (cluster CA) into this namespace.
+worker:
+  kafka:
+    namespace: kafka
+    cluster: shopflow
+    bootstrapServers: shopflow-kafka-bootstrap.kafka.svc:9093
+    topic: shop.public.orders
+    consumerGroup: fulfillment-worker
+    user: fulfillment-worker
+    credentialsSecret: fulfillment-worker-kafka
+    caSecret: fulfillment-worker-kafka-ca
+    protocolVersion: "3.6.0"   # KEDA scaler client protocol; >= 2.1 for Kafka 4.x. Check the ScaledObject is Ready.
+  # Same pinned image as the other copy-secret Jobs (deploy/platform/*/base/secret-copy.yaml).
+  copyImage: python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4

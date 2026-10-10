@@ -1,0 +1,48 @@
+# fulfillment-worker (profile `ops`, needs `data`): the KEDA-scaled CDC consumer, rendered from the shop chart with
+# component=worker (docs/adr/0304). Same values.yaml as app `shop`, so one image bump covers both; a different
+# release name keeps its resources apart from release `shop`. After KEDA (wave -1) in the ops root app.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: fulfillment-worker
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: shopflow
+    shopflow.io/profile: ops
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  sources:
+    - repoURL: https://github.com/winthebest/shopflow.git
+      targetRevision: main
+      path: deploy/charts/shop
+      helm:
+        releaseName: fulfillment-worker
+        valueFiles:
+          - values.yaml
+          - values-local.yaml
+        valuesObject:
+          component: worker
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: shop
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+  # KEDA's HPA owns the replica count (the Deployment omits spec.replicas).
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: fulfillment-worker
+      jsonPointers:
+        - /spec/replicas
