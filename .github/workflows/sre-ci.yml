@@ -18,6 +18,7 @@ on:
       - deploy/platform/slo/**
       - deploy/platform/grafana-dashboards/**
       - deploy/platform/chaos-mesh/**
+      - deploy/platform/keda/**
       - deploy/argocd/apps/otel-collector/**
       - deploy/argocd/apps/otel-collector-lite/**
       - deploy/argocd/apps/kube-prometheus-stack/**
@@ -38,6 +39,9 @@ on:
       - deploy/argocd/apps-aws/chaos-mesh/**
       - deploy/argocd/profiles/chaos/**
       - deploy/argocd/profiles-aws/chaos/**
+      - deploy/argocd/apps/keda/**
+      - deploy/argocd/profiles/ops/**
+      - deploy/argocd/profiles-aws/ops/**
       - chaos/**
       - deploy/argocd/profiles/_common/**
       - slo/**

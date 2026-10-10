@@ -41,6 +41,12 @@ spec:
       kind: ValidatingWebhookConfiguration
       jqPathExpressions: [".webhooks[].clientConfig.caBundle"]
   syncPolicy:
+    # The daemon is privileged (it injects faults into other pods' namespaces): the namespace says so explicitly,
+    # instead of an implicit default (docs/adr/0208-psa-and-network-policies.md). It exists only during a game day.
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: privileged
+        pod-security.kubernetes.io/warn: privileged
     automated:
       prune: true
       selfHeal: true

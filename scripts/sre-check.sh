@@ -12,10 +12,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${SRE_OUT:-$ROOT/out/sre}"
 KUBE_VERSION="${KUBE_VERSION:-1.34.12}"   # same schema set as scripts/platform-validate.sh
 SHOPFLOW_REPO="https://github.com/winthebest/shopflow.git"
-APPS=(kube-prometheus-stack loki tempo otel-collector otel-collector-lite slo grafana-dashboards chaos-mesh)
+APPS=(kube-prometheus-stack loki tempo otel-collector otel-collector-lite slo grafana-dashboards chaos-mesh keda)
 AWS_APPS=(kube-prometheus-stack loki tempo otel-collector otel-collector-lite chaos-mesh)   # deploy/argocd/apps-aws/<app>
-COMPONENTS=(kube-prometheus-stack loki tempo otel-collector slo grafana-dashboards chaos-mesh)   # deploy/platform/<c>
-PROFILES=(obs-lite obs chaos)   # deploy/argocd/profiles/<p> and deploy/argocd/profiles-aws/<p>
+COMPONENTS=(kube-prometheus-stack loki tempo otel-collector slo grafana-dashboards chaos-mesh keda)   # deploy/platform/<c>
+PROFILES=(obs-lite obs chaos ops)   # deploy/argocd/profiles/<p> and deploy/argocd/profiles-aws/<p>
 # Game-day experiments (chaos/*.yaml) may only target these namespaces (annotated chaos-mesh.org/inject=enabled).
 CHAOS_NAMESPACES=(shop kafka)
 
@@ -122,8 +122,10 @@ cmd_kubeconform() {
   else
     log "skip profile build: deploy/argocd/profiles/_common is not on this branch yet"
   fi
+  # CustomResourceDefinitions come verbatim from the pinned upstream charts (KEDA renders them as templates) and
+  # kubeconform has no schema for the CRD kind itself; every other kind is checked strictly.
   log "kubeconform (Kubernetes $KUBE_VERSION + CRD catalog)"
-  kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" \
+  kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" -skip CustomResourceDefinition \
     -schema-location default \
     -schema-location "$CRD_CATALOG/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
     "${docs[@]}"
@@ -322,9 +324,11 @@ cmd_lint() {
 # check_secret_refs <local|aws> <rendered files...>: fail on any referenced Secret that nothing creates.
 check_secret_refs() {
   local env="$1" refs known missing; shift
-  refs="$({ yq -N '.. | select(tag == "!!map") | select(has("secretName") and (.optional // false) != true) | .secretName' "$@"
-    yq -N '.. | select(tag == "!!map") | select(has("secretKeyRef") and (.secretKeyRef.optional // false) != true) | .secretKeyRef.name' "$@"
-    yq -N '.. | select(tag == "!!map") | select(has("secretRef") and (.secretRef.optional // false) != true) | .secretRef.name' "$@"
+  # CRDs are skipped: their OpenAPI schemas contain properties named secretName/secretRef.
+  local objs='select(.kind != "CustomResourceDefinition") | .. | select(tag == "!!map")'
+  refs="$({ yq -N "$objs"' | select(has("secretName") and (.secretName | tag == "!!str") and (.optional // false) != true) | .secretName' "$@"
+    yq -N "$objs"' | select(has("secretKeyRef") and (.secretKeyRef.optional // false) != true) | .secretKeyRef.name' "$@"
+    yq -N "$objs"' | select(has("secretRef") and (.secretRef.name | tag == "!!str") and (.secretRef.optional // false) != true) | .secretRef.name' "$@"
     yq -N 'select(.kind == "Alertmanager" or .kind == "Prometheus") | .spec.secrets[]?' "$@"; } | sort -u)"
   known="$({ yq -N 'select(.kind == "Secret") | .metadata.name' "$@"
     yq -N 'select(.kind == "ExternalSecret") | .spec.target.name // .metadata.name' "$@"
