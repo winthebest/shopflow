@@ -33,3 +33,18 @@ Ownership: files of the CDC and gold SLOs (`slo/{cdc,gold}*.yaml`, `slo/tests/{c
 `deploy/platform/slo/base/{cdc,gold}-*.prometheusrule.yaml`) belong to sf-data; sf-sre owns the tooling and reviews them
 (`docs/contracts/ownership.md`). The rules `kustomization.yaml` is generated, so any lane may commit the output of
 `make sre-slo`.
+
+## Lab behaviour: "duplicate sample for timestamp"
+
+On k3d, a few of the chart's default recording rules (`k8s.rules.*`, cAdvisor `irate`/`rate`) sometimes show
+`health: err` with `duplicate sample for timestamp …; overrides not allowed`, several groups within about a minute,
+then recover on their next evaluation. Cause: Prometheus schedules rule groups by wall clock (`rules/group.go`:
+`missed := time.Since(evalTimestamp)/interval - 1`). When the clock of the Docker VM under k3d steps back, a group
+evaluates again a timestamp it has already written, and a rule whose value changed in between cannot append. The
+first value is kept: no gap, no wrong number. Seen during Gate 2 on 2026-10-10: six errors in one 50-second burst,
+`node_timex_sync_status` 0 on both nodes. NodeClock* alerts are disabled locally for the same reason
+(`deploy/platform/kube-prometheus-stack/local/values.yaml`). Real nodes with NTP rarely show it.
+
+`make sre-gate-check` reports these as WARN; any other rule error FAILs in shopflow rules (and is a WARN in the
+chart's default rules). The 30-day API server availability group is disabled: its `increase30d` cannot be right
+with 3 days of retention.
