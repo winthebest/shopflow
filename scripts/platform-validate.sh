@@ -8,6 +8,7 @@
 #   5. the image of the shop migration Job (tag sha-<commit>) contains the newest commit under
 #      services/<service>/migrations, so a chart bump cannot ship an image without a migration (needs full Git history).
 #      SHOP_MIGRATION_CHECK=fail (default) exits on a stale image; warn prints a GitHub annotation and goes on.
+#      Every shop service must run the same tag (always fails otherwise).
 # Works on a temporary copy of deploy/ with KSOPS generators removed: CI has no age key, and the in-cluster KSOPS
 # path is exercised by `make up`. Needs: git, kubectl (kustomize), helm, yq, kubeconform.
 set -euo pipefail
@@ -210,6 +211,11 @@ migration_tag="$(SVC="$migration_service" yq '.services[strenv(SVC)].image.tag' 
 [[ "$migration_tag" =~ ^sha-([0-9a-f]{7,40})$ ]] \
   || fail "deploy/charts/shop: services.$migration_service.image.tag must be sha-<commit>, got: $migration_tag"
 tag_ref="${BASH_REMATCH[1]}"
+# Images are published together (one tag for gateway, orders, payments): a bump that misses a service is an error.
+mismatched="$(TAG="$migration_tag" yq '.services | to_entries | map(select(.value.image.tag != strenv(TAG)))
+  | map(.key + "=" + (.value.image.tag // "none")) | join(", ")' "$shop_values")"
+[[ -z "$mismatched" ]] \
+  || fail "deploy/charts/shop: every service must run tag $migration_tag (as services.$migration_service), got: $mismatched"
 [[ "$(git -C "$ROOT_DIR" rev-parse --is-shallow-repository)" == false ]] \
   || fail "shallow Git clone: the migration check needs full history (actions/checkout fetch-depth: 0)"
 tag_commit="$(git -C "$ROOT_DIR" rev-parse --verify -q "$tag_ref^{commit}")" \
