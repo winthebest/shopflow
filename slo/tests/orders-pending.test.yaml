@@ -1,0 +1,38 @@
+# promtool unit tests for the stranded-order alert (sf-sre). Rule file: the `.spec` of
+# deploy/platform/slo/base/orders-pending.prometheusrule.yaml, extracted next to this file by scripts/sre-check.sh.
+# Two orders processes report the same gauge (the oldest pending order in the database), as the sweeper does.
+rule_files:
+  - orders-pending.rules.yaml
+evaluation_interval: 1m
+
+tests:
+  - name: pending orders settled within seconds raise nothing
+    interval: 1m
+    input_series:
+      - series: 'orders_pending_oldest_age_seconds{job="orders",instance="orders-a"}'
+        values: '0 5 0 8 3x60'
+      - series: 'orders_pending_oldest_age_seconds{job="orders",instance="orders-b"}'
+        values: '0 5 0 8 3x60'
+    alert_rule_test:
+      - {eval_time: 60m, alertname: OrdersPendingTooOld, exp_alerts: []}
+
+  # Payments stops answering at minute 30: no order settles, the oldest pending order ages a minute per minute, over
+  # 300s from minute 35 (360s at 36) → ticket 5 minutes later (silent at 39, firing by 43). Payments back at minute
+  # 70: the sweeper settles the backlog and the alert resolves.
+  - name: orders left pending for over 5 minutes raise a ticket that resolves once they are settled
+    interval: 1m
+    input_series:
+      - series: 'orders_pending_oldest_age_seconds{job="orders",instance="orders-a"}'
+        values: '5x30 60+60x39 5x20'
+      - series: 'orders_pending_oldest_age_seconds{job="orders",instance="orders-b"}'
+        values: '5x30 60+60x39 5x20'
+    alert_rule_test:
+      - {eval_time: 39m, alertname: OrdersPendingTooOld, exp_alerts: []}
+      - eval_time: 43m
+        alertname: OrdersPendingTooOld
+        exp_alerts:
+          - exp_labels: {severity: ticket, team: sf-sre, job: orders}
+            exp_annotations:
+              summary: "The oldest pending order is 13m 0s old: orders are not being settled."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/checkout-pending-orders.md
+      - {eval_time: 75m, alertname: OrdersPendingTooOld, exp_alerts: []}

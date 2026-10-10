@@ -34,6 +34,8 @@ SERIES=(
   "checkout-requests-per-s|sum(rate(traces_span_metrics_calls_total{service_name=\"gateway\", span_kind=\"SPAN_KIND_SERVER\", http_route=\"/checkout\"}[1m]))"
   "payments-attempts-per-s|sum by (attempt, outcome) (rate(orders_payments_attempts_total[1m]))"
   "payments-circuit-state|max by (instance) (orders_payments_circuit_state)"
+  "orders-pending-oldest-age-s|max by (job) (orders_pending_oldest_age_seconds)"
+  "orders-settled-by-sweeper-per-min|sum by (status) (increase(orders_settle_recovered_total[1m]))"
   "cdc-stale-minute|cdc:bronze_heartbeat_stale:minute"
   "cdc-heartbeat-age-s|max(data_freshness_seconds{table=\"bronze.heartbeat\"})"
   "wal-retained-bytes|max by (slot_name) (shopflow:pg_slot_wal_retained:bytes)"
