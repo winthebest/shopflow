@@ -21,7 +21,7 @@ that is not finished is marked *in progress* or *planned*.
 - **SRE:** SLOs as code with multi-window burn-rate alerts, unit-tested detection times, one runbook per alert,
   load and soak tests, and a postmortem of a real incident.
 - **Data engineering:** log-based CDC into an Iceberg lakehouse, bronze → silver → gold with dbt, Airflow
-  orchestration, data contracts checked in CI, and a CDC lag SLO for the pipeline.
+  orchestration, data contracts checked in CI, and CDC lag and gold freshness SLOs for the pipeline.
 
 [Architecture](#architecture) · [Highlights](#highlights-with-evidence) · [Tech stack](#tech-stack) ·
 [Quickstart](#quickstart) · [Repository map](#repository-map) · [Status](#status-and-roadmap) ·
@@ -80,6 +80,7 @@ flowchart LR
 
 | Claim | Evidence |
 |---|---|
+| Gate 2, run on 2026-10-10 from `main`: `make up` on a fresh k3d cluster ready in 301 s (`core,obs`) and 314 s (`core,obs-lite,data`); k6 at 10 checkouts/s with 0 errors, p95 72–77 ms; CDC `c,u,d` into bronze in 34–68 s; NetworkPolicy probe 34/34; Tempo peak memory at 26% of its limit | Fixes the gate found: [#141](https://github.com/winthebest/shopflow/pull/141), [#143](https://github.com/winthebest/shopflow/pull/143). Raw output not published yet |
 | Checkout p95 **72 ms** at 20 checkouts/s on docker compose; 0 HTTP errors; every acknowledged order found in Postgres, none left pending | [docs/perf-baseline.md](docs/perf-baseline.md) |
 | Checkout SLOs as code: **99.5%** availability and **99% under 300 ms** over 28 days, with multi-window burn-rate pages and tickets | [docs/slo/checkout.md](docs/slo/checkout.md), [slo/checkout.yaml](slo/checkout.yaml) |
 | Detection times proven by promtool unit tests: a page about 9 minutes after every checkout turns slow, no NaN when the lab is idle, a ticket when the SLI goes missing | [slo/tests/checkout.test.yaml](slo/tests/checkout.test.yaml) |
@@ -87,7 +88,7 @@ flowchart LR
 | A real incident during the soak: both SLO tickets fired, the first within a minute. The postmortem covers budget used, timeline and what failed (the alert reached nobody) | [Postmortem](docs/postmortems/2026-10-09-checkout-slow-noisy-neighbor.md) |
 | SLIs come from span metrics in one OTel pipeline, so they kept counting while Tempo was crash-looping | [ADR 0301](docs/adr/0301-otel-collector-single-pipeline.md), [postmortem](docs/postmortems/2026-10-09-checkout-slow-noisy-neighbor.md#what-went-well) |
 | GitOps fails closed: CI builds every profile and fails if any app would not follow the deployed Git revision | [gitops.md §4](docs/contracts/gitops.md#4-profiles), [platform-validate.sh](scripts/platform-validate.sh) |
-| Security baseline: Pod Security `restricted` and default-deny NetworkPolicies (core namespaces; observability and data in progress), SOPS-encrypted secrets, admin UIs only through port-forward, Kafka over TLS + SCRAM, gitleaks, images pinned by digest | ADRs [0208](docs/adr/0208-psa-and-network-policies.md), [0204](docs/adr/0204-sops-ksops-local-secrets.md), [0205](docs/adr/0205-admin-ui-port-forward-only.md), [0404](docs/adr/0404-kafka-tls-scram-acl.md) |
+| Security baseline: Pod Security `restricted` in the core namespaces (`baseline` for data and Airflow, `privileged` for observability), default-deny NetworkPolicies in all of them, SOPS-encrypted secrets, admin UIs only through port-forward, Kafka over TLS + SCRAM, gitleaks, images pinned by digest | ADRs [0208](docs/adr/0208-psa-and-network-policies.md), [0204](docs/adr/0204-sops-ksops-local-secrets.md), [0205](docs/adr/0205-admin-ui-port-forward-only.md), [0404](docs/adr/0404-kafka-tls-scram-acl.md) |
 | CDC end to end on k3d (`core,obs-lite,data`): the snapshot put 100/100 customers in bronze; one order's insert, update and delete reached bronze as `c,u,d` in **47 s** (target ≤ 120 s); bronze heartbeat freshness 27 s; Debezium 3 ms behind the source when idle; ~10.6 GB RAM. Not run on AWS yet | [PR #122](https://github.com/winthebest/shopflow/pull/122), [data-cluster-check.sh](scripts/data-cluster-check.sh) |
 | AWS guardrails: a budget that excludes credits, a deny action at $25, sessions bounded by a lease and two reapers. Cost *estimate* $0.30–0.45/h, not yet measured | [docs/cost.md](docs/cost.md), ADRs [0510](docs/adr/0510-cost-guardrails-exclude-credits.md), [0501](docs/adr/0501-ephemeral-env-with-lease.md) |
 
@@ -142,7 +143,7 @@ regenerated secrets; this is not scripted yet.
 
 | Path | Contents |
 |---|---|
-| [`services/`](services) | Shop services (gateway, orders, payments), shared library, freshness exporter |
+| [`services/`](services) | Shop services (gateway, orders, payments), fulfillment worker, shared library, freshness exporter |
 | [`data/`](data) | Data contracts for CDC tables, dbt project, Airflow DAGs, Flink SQL job |
 | [`deploy/`](deploy) | Argo CD apps and profiles (local and AWS), in-repo Helm charts, per-component values and manifests |
 | [`infra/`](infra) | OpenTofu layers (bootstrap, network, cluster), Lambda reaper, cloud contract |
@@ -159,11 +160,11 @@ regenerated secrets; this is not scripted yet.
 |---|---|---|
 | 1 | Shop services, compose, CI, performance baseline | Done |
 | 2 | k3d + Argo CD, edge with TLS, CloudNativePG, SOPS, Pod Security, NetworkPolicies | Done (Gate 1 passed) |
-| 3 | OpenTelemetry, Prometheus/Loki/Tempo, checkout SLOs, soak, postmortem | Done; page timing on the cluster moved to Phase 7 |
-| 4 | CDC: Debezium, Kafka, Iceberg, Polaris, Trino, CDC lag SLO | Done on a dev cluster; re-verified at Gate 2 (pending) |
+| 3 | OpenTelemetry, Prometheus/Loki/Tempo, checkout SLOs, soak, postmortem | Done (Gate 2 passed); page timing on the cluster moved to Phase 7 |
+| 4 | CDC: Debezium, Kafka, Iceberg, Polaris, Trino, CDC lag SLO | Done (Gate 2 passed, local k3d) |
 | 5 | dbt bronze → silver → gold, Airflow, Flink KPIs, Metabase, data quality | In progress: dbt and Airflow merged, Flink deploy in progress, Metabase planned |
 | 6 | AWS: OpenTofu, EKS on spot, lease and reapers, cost guardrails, security baseline | In progress: offline checks pass in CI; no AWS session run yet |
-| 7 | Chaos game days, autoscaling, restore drills, page timing | In progress: Chaos Mesh (game-day-only profile), experiments and postmortem template merged; game days not run yet |
+| 7 | Chaos game days, autoscaling, restore drills, page timing | In progress: Chaos Mesh (game-day-only profile), experiments and postmortem template merged; KEDA and the fulfillment worker merged (code and chart), not yet run on a cluster; game days not run yet |
 | 8 | Supply chain (signed images, SBOM, admission policy) and a short demo video | Planned |
 | 9–14 | Lakehouse research lab and an LLMOps layer with a guarded lakehouse operator agent | Planned |
 
