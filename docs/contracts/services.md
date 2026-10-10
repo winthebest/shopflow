@@ -59,8 +59,11 @@ every gateway 5xx as bad).
 | gateway | `ORDERS_URL` | `http://orders.shop.svc:8001` |
 | orders | `DATABASE_URL` | from Secret `shop-db-app` key `uri` (CNPG creates it for the `bootstrap.initdb` owner `shop_app`) |
 | orders | `PAYMENTS_URL` | `http://payments.shop.svc:8002` |
+| orders | `PAYMENTS_ATTEMPTS` | `3` (attempts inside the 800ms deadline, ADR 0102) |
+| orders | `PAYMENTS_ATTEMPT_TIMEOUT_MS` | `500` (per attempt, trimmed to the time left) |
+| orders | `PAYMENTS_BREAKER_WINDOW_S` / `_MIN_CALLS` / `_FAILURE_RATIO` / `_OPEN_S` | `10` / `20` / `0.75` / `5` |
 | payments | `PAYMENT_LATENCY_MS` | `50` |
-| payments | `PAYMENT_FAILURE_RATE` | `0.02` (0–1) |
+| payments | `PAYMENT_FAILURE_RATE` | `0.02` (0–1; decided per `order_id` by hash, so a retry gets the same answer) |
 | all | `LOG_LEVEL` | `INFO` |
 
 ## Database
