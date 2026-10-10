@@ -4,7 +4,7 @@
 # needs the public age recipient in .sops.yaml; this script never decrypts and never reads the age key.
 # Secrets come in groups whose values must change together (the S3 identities and their client copies; the Trino
 # users and their bcrypt file): a group is generated when none of its files exist, kept when all exist, and refused
-# when only some do. ROTATE=1 regenerates every group, ROTATE=<group> only that one (lakehouse, airflow).
+# when only some do. ROTATE=1 regenerates every group, ROTATE=<group> only that one (lakehouse, airflow, backup).
 # Credentials owned by other lanes (CNPG role passwords) are copied in the cluster instead (secret-copy.yaml).
 # Needs: sops, openssl, htpasswd (bcrypt for Trino's password file).
 #
@@ -36,6 +36,12 @@ LAKEHOUSE_FILES=(
   deploy/platform/trino/local/secrets/trino-password-db.enc.yaml
   deploy/platform/kafka-connect/local/secrets/lake-s3-iceberg-sink.enc.yaml
   deploy/platform/flink/local/secrets/flink-s3.enc.yaml
+)
+# SeaweedFS identity of CNPG's backups (bucket pg-backup), separate from the lakehouse group so it could be added
+# without regenerating the lake's credentials: SeaweedFS's init container merges it into s3.json at start
+# (deploy/platform/seaweedfs/base/merge-s3-config.py). sf-platform copies it to shop/shop-db-backup-s3.
+BACKUP_FILES=(
+  deploy/platform/seaweedfs/local/secrets/seaweedfs-cnpg-backup.enc.yaml
 )
 # Airflow keys fixed outside the chart, so a restored metadata database stays readable (Fernet) and sessions/tokens
 # survive restarts (API secret key, JWT secret); plus the admin login created at deploy.
@@ -144,6 +150,11 @@ JSON
   secret flink flink-s3 access-key-id "$flink_key" secret-access-key "$flink_secret" | encrypt "${LAKEHOUSE_FILES[10]}"
 }
 
+generate_backup() {
+  secret lakehouse seaweedfs-cnpg-backup access-key-id "$(hex 10)" secret-access-key "$(hex 20)" \
+    | encrypt "${BACKUP_FILES[0]}"
+}
+
 # Fernet key: url-safe base64 of 32 random bytes (what cryptography.fernet expects).
 generate_airflow() {
   local fernet
@@ -169,4 +180,5 @@ generate_group() {
 }
 
 generate_group lakehouse "${LAKEHOUSE_FILES[@]}"
+generate_group backup "${BACKUP_FILES[@]}"
 generate_group airflow "${AIRFLOW_FILES[@]}"

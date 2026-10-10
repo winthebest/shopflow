@@ -3,3 +3,8 @@ kind: Kustomization
 namespace: lakehouse
 resources:
   - seaweedfs.yaml
+configMapGenerator:
+  # A changed script gets a new name, so the Deployment rolls.
+  - name: seaweedfs-merge-s3-config
+    files:
+      - merge-s3-config.py
