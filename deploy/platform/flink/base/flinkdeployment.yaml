@@ -31,7 +31,9 @@ spec:
     high-availability.type: kubernetes
     high-availability.storageDir: s3://lake/flink-ckpt/ha
     s3.endpoint: http://seaweedfs.lakehouse.svc:8333
-    s3.endpoint.region: us-east-1
+    # Flink 2 reads its configuration as nested YAML, so no key may be a prefix of another: `s3.endpoint` and
+    # `s3.endpoint.region` cannot both exist. The S3 plugin maps s3., s3a. and fs.s3a. alike to Hadoop's fs.s3a.
+    s3a.endpoint.region: us-east-1
     s3.path.style.access: "true"
   podTemplate:
     spec:
