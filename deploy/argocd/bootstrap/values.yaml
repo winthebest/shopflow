@@ -49,12 +49,13 @@ configs:
       enableOCI: "true"
 
 controller:
-  # Sized from profile rt (core,obs-lite,data,rt; sf-data's slot 2026-10-10). At 1Gi the controller was OOMKilled 6
+  # Sized from sf-data's slots (2026-10-10). Profile rt (core,obs-lite,data,rt): at 1Gi the controller was OOMKilled 6
   # times while the flink sync and its hooks kept retrying, although 30s scrapes never showed more than 773 MiB: Go
-  # lets the heap grow to about twice the live set between GCs, and the spike falls between scrapes. Profile data
-  # alone (Gate 2, core,obs-lite,data) stayed under 1Gi. At 1536Mi: 0 restarts, 660 MiB peak while resyncing
-  # everything, 466-491 MiB steady. GOMEMLIMIT (~80% of the limit) makes the GC run before the cgroup limit instead
-  # of crossing it, as for Tempo.
+  # lets the heap grow to about twice the live set between GCs, and the spike falls between scrapes. At 1536Mi: 0
+  # restarts, 660 MiB while resyncing everything, 466-491 MiB steady. Profile batch (core,obs-lite,data,batch, no
+  # rt) at 1536Mi: peak 867 MiB when all root apps were re-pointed during the hook-heavy Airflow sync, 0 restarts.
+  # The spikes follow large syncs (many apps at once, hook retries), not one profile; 1Gi was marginal for any data
+  # set. GOMEMLIMIT (~80% of the limit) makes the GC run before the cgroup limit instead of crossing it, as for Tempo.
   resources:
     requests: {cpu: 100m, memory: 512Mi}
     limits: {memory: 1536Mi}
