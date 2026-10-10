@@ -135,3 +135,30 @@ spec:
           patternType: literal
         operations: [Describe]
         host: "*"
+---
+# Fulfillment worker (sf-app, Phase 7; services/fulfillment-worker): reads order changes to create shipments.
+# Read-only on shop.public.orders, consumer group fulfillment-worker (offsets); nothing else.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: fulfillment-worker
+  labels:
+    strimzi.io/cluster: shopflow
+spec:
+  authentication:
+    type: scram-sha-512
+  authorization:
+    type: simple
+    acls:
+      - resource:
+          type: topic
+          name: shop.public.orders
+          patternType: literal
+        operations: [Describe, Read]
+        host: "*"
+      - resource:
+          type: group
+          name: fulfillment-worker
+          patternType: literal
+        operations: [Describe, Read]
+        host: "*"
