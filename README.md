@@ -87,7 +87,7 @@ flowchart LR
 | A real incident during the soak: both SLO tickets fired, the first within a minute. The postmortem covers budget used, timeline and what failed (the alert reached nobody) | [Postmortem](docs/postmortems/2026-10-09-checkout-slow-noisy-neighbor.md) |
 | SLIs come from span metrics in one OTel pipeline, so they kept counting while Tempo was crash-looping | [ADR 0301](docs/adr/0301-otel-collector-single-pipeline.md), [postmortem](docs/postmortems/2026-10-09-checkout-slow-noisy-neighbor.md#what-went-well) |
 | GitOps fails closed: CI builds every profile and fails if any app would not follow the deployed Git revision | [gitops.md §4](docs/contracts/gitops.md#4-profiles), [platform-validate.sh](scripts/platform-validate.sh) |
-| Security baseline: Pod Security `restricted`, default-deny NetworkPolicies, SOPS-encrypted secrets, admin UIs only through port-forward, Kafka over TLS + SCRAM, gitleaks, images pinned by digest | ADRs [0208](docs/adr/0208-psa-and-network-policies.md), [0204](docs/adr/0204-sops-ksops-local-secrets.md), [0205](docs/adr/0205-admin-ui-port-forward-only.md), [0404](docs/adr/0404-kafka-tls-scram-acl.md) |
+| Security baseline: Pod Security `restricted` and default-deny NetworkPolicies (core namespaces; observability and data in progress), SOPS-encrypted secrets, admin UIs only through port-forward, Kafka over TLS + SCRAM, gitleaks, images pinned by digest | ADRs [0208](docs/adr/0208-psa-and-network-policies.md), [0204](docs/adr/0204-sops-ksops-local-secrets.md), [0205](docs/adr/0205-admin-ui-port-forward-only.md), [0404](docs/adr/0404-kafka-tls-scram-acl.md) |
 | AWS guardrails: a budget that excludes credits, a deny action at $25, sessions bounded by a lease and two reapers. Cost *estimate* $0.30–0.45/h, not yet measured | [docs/cost.md](docs/cost.md), ADRs [0510](docs/adr/0510-cost-guardrails-exclude-credits.md), [0501](docs/adr/0501-ephemeral-env-with-lease.md) |
 
 ## Tech stack
@@ -146,6 +146,7 @@ regenerated secrets; this is not scripted yet.
 | [`deploy/`](deploy) | Argo CD apps and profiles (local and AWS), in-repo Helm charts, per-component values and manifests |
 | [`infra/`](infra) | OpenTofu layers (bootstrap, network, cluster), Lambda reaper, cloud contract |
 | [`slo/`](slo) | Sloth SLO specs, promtool tests, the 28-day window |
+| [`chaos/`](chaos) | Game-day experiments, applied only during a game day |
 | [`loadtest/`](loadtest) | k6 browse + checkout scenario |
 | [`images/`](images) | Kafka Connect image (Debezium + Iceberg sink) built in CI |
 | [`scripts/`](scripts), [`mk/`](mk) | Cluster, cloud, data and validation scripts; one make file per area |
@@ -161,7 +162,7 @@ regenerated secrets; this is not scripted yet.
 | 4 | CDC: Debezium, Kafka, Iceberg, Polaris, Trino, CDC lag SLO | In progress: code merged, cluster validation running |
 | 5 | dbt bronze → silver → gold, Airflow, Flink KPIs, Metabase, data quality | In progress: dbt and Airflow merged, Flink deploy in progress, Metabase planned |
 | 6 | AWS: OpenTofu, EKS on spot, lease and reapers, cost guardrails, security baseline | In progress: offline checks pass in CI; no AWS session run yet |
-| 7 | Chaos game days, autoscaling, restore drills, page timing | Planned |
+| 7 | Chaos game days, autoscaling, restore drills, page timing | In progress: Chaos Mesh (game-day-only profile), experiments and postmortem template merged; game days not run yet |
 | 8 | Supply chain (signed images, SBOM, admission policy) and a short demo video | Planned |
 | 9–14 | Lakehouse research lab and an LLMOps layer with a guarded lakehouse operator agent | Planned |
 
