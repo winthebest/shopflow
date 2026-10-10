@@ -45,5 +45,5 @@ SRE_GATE_CONTEXT ?= k3d-$(CLUSTER)
 SRE_GATE_WINDOW  ?= 2h
 
 .PHONY: sre-gate-check
-sre-gate-check: ## Gate check, read-only: targets, SLO data, WAL series, Tempo memory, alerts (SRE_GATE_CONTEXT, SRE_GATE_WINDOW)
+sre-gate-check: ## Gate check, read-only, run while make app-loadtest runs: targets, SLO data, WAL series, Tempo memory, alerts (SRE_GATE_CONTEXT, SRE_GATE_WINDOW)
 	./scripts/sre-gate-check.sh --context $(SRE_GATE_CONTEXT) --window $(SRE_GATE_WINDOW)

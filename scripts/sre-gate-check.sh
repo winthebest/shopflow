@@ -4,6 +4,9 @@
 # blocked by the observability NetworkPolicies. Prints PASS / WARN / FAIL / SKIP per check and exits non-zero on any
 # FAIL.
 #
+# Run it while load is flowing (`make app-loadtest` in another terminal): without gateway traffic in the last 5
+# minutes the checkout SLIs have no sample and their check fails.
+#
 # Usage: scripts/sre-gate-check.sh [--context CTX] [--window DURATION]
 #   --context  kube context (default: $KUBE_CONTEXT, else k3d-sf-main)
 #   --window   how far back restarts/peaks are checked (default 2h; use the time since the profiles came up)
@@ -104,13 +107,16 @@ not_counted() {  # prints why service $1 has no SLI samples by design, nothing w
 }
 
 # Every Sloth spec in slo/ must have SLI samples (one per SLO).
+traffic="$(scalar 'sum(rate(traces_span_metrics_calls_total{service_name="gateway", span_kind="SPAN_KIND_SERVER"}[5m]))')"
 for spec in "$ROOT"/slo/*.yaml; do
   svc="$(yq '.spec.service' "$spec")"; want="$(yq '.spec.slos | length' "$spec")"
   why="$(not_counted "$svc")"
   if [[ -n "$why" ]]; then skip "SLO $svc has SLI data" "$why"; continue; fi
   got="$(count "slo:sli_error:ratio_rate5m{sloth_service=\"$svc\"}")"
   if [[ "${got:-0}" -ge "$want" ]]; then pass "SLO $svc has SLI data" "$got/$want SLOs"
-  else fail "SLO $svc has SLI data" "$got/$want SLOs with a 5m sample (no traffic? run loadtest/checkout.js for a few minutes)"; fi
+  elif [[ "$svc" == checkout ]] && awk -v t="${traffic:-0}" 'BEGIN{exit !(t == 0)}'; then
+    fail "SLO $svc has SLI data" "$got/$want: no gateway traffic in the last 5 minutes; re-run while make app-loadtest runs"
+  else fail "SLO $svc has SLI data" "$got/$want SLOs with a 5m sample (SLI source missing?)"; fi
 done
 
 if [[ "${data_up:-0}" -eq 0 ]]; then
