@@ -20,6 +20,9 @@ defaultRules:
     kubeSchedulerRecording: false
     kubeProxy: false
     windows: false
+    # 30-day API server availability (increase30d) cannot be right with 3 days of retention, and it is the most
+    # expensive default group. The burn-rate rules and alerts (windows up to 3d) stay.
+    kubeApiserverAvailability: false
 
 prometheusOperator:
   image:
