@@ -2,6 +2,7 @@
 [tool.uv.workspace]
 members = [
     "services/common",
+    "services/fulfillment-worker",
     "services/gateway",
     "services/orders",
     "services/payments",
@@ -31,7 +32,7 @@ select = ["E", "F", "W", "I", "B", "UP", "S", "ASYNC", "SIM", "RUF"]
 "services/orders/migrations/**" = ["E501", "S608"]  # DDL built from module constants
 
 [tool.ruff.lint.isort]
-known-first-party = ["shopflow_common", "gateway", "orders", "payments"]
+known-first-party = ["shopflow_common", "gateway", "orders", "payments", "fulfillment_worker"]
 
 [tool.pytest.ini_options]
 testpaths = ["services"]

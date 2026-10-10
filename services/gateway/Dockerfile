@@ -11,6 +11,7 @@ WORKDIR /src
 # Third-party dependencies first: this layer is reused until uv.lock or a pyproject changes.
 COPY pyproject.toml uv.lock ./
 COPY services/common/pyproject.toml services/common/
+COPY services/fulfillment-worker/pyproject.toml services/fulfillment-worker/
 COPY services/gateway/pyproject.toml services/gateway/
 COPY services/orders/pyproject.toml services/orders/
 COPY services/payments/pyproject.toml services/payments/
