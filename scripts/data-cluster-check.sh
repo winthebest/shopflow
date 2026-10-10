@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Phase 4 acceptance on a running cluster with profile data (and obs/obs-lite): CDC end to end and the cdc-lag SLI.
 #   1. the current CDC epoch's snapshot completed (scripts/cdc-epoch.sh wait);
-#   2. snapshot: bronze.customers holds every Postgres customer as `_op = 'r'` in that epoch;
+#   2. snapshot: bronze.customers holds every Postgres customer in that epoch, as `_op = 'r'` (rows that existed when
+#      Debezium took its snapshot) or `'c'` (rows inserted after it: on a fresh cluster the shop's seed can run after
+#      the snapshot, seen on the batch slot of 2026-10-10);
 #   3. one order inserted, updated and deleted in Postgres reaches bronze.orders within CDC_CHECK_TIMEOUT seconds
 #      (default 120) as `c,u,d` in that epoch;
 #   4. Prometheus has samples of the freshness probe and of the per-minute SLI cdc:bronze_heartbeat_stale:minute.
@@ -80,14 +82,14 @@ customers="$(psql_shop <<< 'SELECT count(*) FROM customers')"
 deadline=$((SECONDS + TIMEOUT))
 snapshot=0
 until ((snapshot >= customers)) || ((SECONDS > deadline)); do
-  snapshot="$(trino_ro "SELECT count(DISTINCT id) FROM bronze.customers WHERE _op = 'r' AND _cdc_epoch = $epoch")" \
+  snapshot="$(trino_ro "SELECT count(DISTINCT id) FROM bronze.customers WHERE _op IN ('r', 'c') AND _cdc_epoch = $epoch")" \
     || snapshot=0
   ((snapshot >= customers)) || sleep 10
 done
 if ((snapshot >= customers)); then
-  result PASS "snapshot in bronze: $snapshot/$customers customers as _op = 'r' in epoch $epoch"
+  result PASS "snapshot in bronze: $snapshot/$customers customers as _op r or c in epoch $epoch"
 else
-  result FAIL "snapshot in bronze: $snapshot/$customers customers as _op = 'r' in epoch $epoch"
+  result FAIL "snapshot in bronze: $snapshot/$customers customers as _op r or c in epoch $epoch"
 fi
 
 order="$(psql_shop <<< "INSERT INTO orders (customer_id, status, total)
