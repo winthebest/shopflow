@@ -204,8 +204,23 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-      - name: Summary
+      # Ready to paste over this service's `image:` block in deploy/charts/shop/values.yaml (same indentation): after a
+      # migration merges, the chart must be bumped to this commit's images (docs/contracts/services.md).
+      - name: Summary (chart values for this image)
         env:
+          SERVICE: ${{ matrix.service }}
           TAGS: ${{ steps.meta.outputs.tags }}
           DIGEST: ${{ steps.build.outputs.digest }}
-        run: printf '%s@%s\n' "$TAGS" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          tag="${TAGS##*:}"  # one tag is configured: ghcr.io/winthebest/shopflow-<service>:sha-<short>
+          if [[ ! "$tag" =~ ^sha-[0-9a-f]{7,40}$ || ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::unexpected tag '$tag' or digest '$DIGEST' from metadata/build-push"
+            exit 1
+          fi
+          {
+            echo "### shopflow-${SERVICE} → \`services.${SERVICE}.image\` in deploy/charts/shop/values.yaml"
+            echo '```yaml'
+            printf '  %s:\n    image:\n      repository: ghcr.io/winthebest/shopflow-%s\n      tag: %s\n      digest: %s\n' \
+              "$SERVICE" "$SERVICE" "$tag" "$DIGEST"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
