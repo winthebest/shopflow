@@ -1,5 +1,6 @@
 # Namespace shop: default-deny, then exactly the flows of docs/contracts/environment.md "Network flows".
-# Pods: gateway/orders/payments/shop-migrate/shop-seed (app.kubernetes.io/name), Postgres (cnpg.io/cluster=shop-db).
+# Pods: gateway/orders/payments/fulfillment-worker/shop-migrate/shop-seed (app.kubernetes.io/name), Postgres
+# (cnpg.io/cluster=shop-db).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -36,7 +37,7 @@ metadata:
 spec:
   podSelector:
     matchExpressions:
-      - {key: app.kubernetes.io/name, operator: In, values: [gateway, orders, payments]}
+      - {key: app.kubernetes.io/name, operator: In, values: [gateway, orders, payments, fulfillment-worker]}
   policyTypes: [Egress]
   egress:
     - to:
@@ -118,6 +119,30 @@ spec:
       ports:
         - {protocol: TCP, port: 8002}
 ---
+# fulfillment-worker: consumes shop.public.orders from the Kafka brokers (TLS listener) and writes shipments to Postgres.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fulfillment-worker
+  namespace: shop
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: fulfillment-worker}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kafka}
+          podSelector:
+            matchLabels: {strimzi.io/kind: Kafka}
+      ports:
+        - {protocol: TCP, port: 9093}
+    - to:
+        - podSelector:
+            matchLabels: {cnpg.io/cluster: shop-db}
+      ports:
+        - {protocol: TCP, port: 5432}
+---
 # Migration and seed Jobs (orders image): Postgres only.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -151,7 +176,7 @@ spec:
     - from:
         - podSelector:
             matchExpressions:
-              - {key: app.kubernetes.io/name, operator: In, values: [orders, shop-migrate, shop-seed]}
+              - {key: app.kubernetes.io/name, operator: In, values: [orders, fulfillment-worker, shop-migrate, shop-seed]}
         - podSelector:
             matchLabels: {cnpg.io/cluster: shop-db}
         - namespaceSelector:
