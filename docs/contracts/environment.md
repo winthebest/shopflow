@@ -66,6 +66,7 @@ Default-deny per namespace; these flows must be allowed. Owners add rows when th
 | `lakehouse` freshness-exporter | `lakehouse` trino | 8443 | freshness probe queries (`lake_ro`, user `exporter`) | sf-data |
 | `external-secrets` controller | AWS STS/SSM; Pod Identity agent | 443; 169.254.170.23:80 | SSM → Secrets (AWS only) | sf-cloud |
 | `kube-system` aws-load-balancer-controller | AWS APIs; kube-apiserver → controller webhook | 443; 9443 | NLB for the Gateway (AWS only) | sf-cloud |
+| `kafka` cdc-connect (Iceberg sink), `lakehouse` trino, `flink` jobs (AWS only) | AWS S3 + Glue endpoints (any address: public subnets, no VPC endpoints); EKS Pod Identity agent | 443; 169.254.170.23:80 | Iceberg objects and catalog (ADR 0506); credentials through Pod Identity | sf-data |
 | `opencost` | `observability` kps-prometheus; AWS pricing | 9090; 443 | cost allocation (AWS only) | sf-cloud |
 | `observability` Prometheus | `opencost` | metrics port | scrape OpenCost (AWS only) | sf-cloud |
 | `airflow` | `shop` shop-db; `lakehouse` trino; `observability` otel-gateway | 5432; 8443; 4317/4318 | metadata DB; dbt/maintenance/reconciliation; metrics | sf-data |
