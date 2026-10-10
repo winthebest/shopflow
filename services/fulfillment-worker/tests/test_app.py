@@ -8,8 +8,31 @@ from pydantic import ValidationError
 
 from fulfillment_worker.main import create_app
 from fulfillment_worker.settings import Settings
+from shopflow_common.db import async_dsn
 
 UNREACHABLE_DB = "postgresql://fulfillment_worker:x@127.0.0.1:1/shop"
+
+
+def test_database_url_from_parts_is_percent_encoded_and_maps_sslmode():
+    settings = Settings(
+        kafka_bootstrap_servers="kafka:9092",
+        kafka_security_protocol="PLAINTEXT",
+        database_host="shop-db-rw.shop.svc",
+        database_user="fulfillment_worker",
+        database_password="p@ss/w:rd%",
+        database_sslmode="require",
+    )
+    assert (
+        settings.dsn()
+        == "postgresql://fulfillment_worker:p%40ss%2Fw%3Ard%25@shop-db-rw.shop.svc:5432/shop?sslmode=require"
+    )
+    assert async_dsn(settings.dsn()).startswith("postgresql+asyncpg://fulfillment_worker:p%40ss%2Fw%3Ard%25@")
+    assert async_dsn(settings.dsn()).endswith("/shop?ssl=require")
+
+
+def test_database_settings_are_required():
+    with pytest.raises(ValidationError, match="DATABASE_URL"):
+        Settings(kafka_bootstrap_servers="kafka:9092", kafka_security_protocol="PLAINTEXT")
 
 
 def test_sasl_ssl_needs_credentials_and_ca():

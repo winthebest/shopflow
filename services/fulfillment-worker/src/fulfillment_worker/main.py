@@ -60,7 +60,7 @@ def create_app(settings: Settings | None = None, consumer: AIOKafkaConsumer | No
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        engine = create_engine(settings.database_url.get_secret_value())
+        engine = create_engine(settings.dsn())
         kafka = consumer or kafka_consumer(settings)
         await kafka.start()
         worker = Worker(
