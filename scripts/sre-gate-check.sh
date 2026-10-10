@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Gate check for the sf-sre components on a running cluster (read-only). Prometheus is queried through a
-# `kubectl port-forward` on a random local port (killed on exit): unlike the API server's service proxy, it is not
-# blocked by the observability NetworkPolicies. Prints PASS / WARN / FAIL / SKIP per check and exits non-zero on any
+# `kubectl port-forward` (scripts/sre-prom-lib.sh): unlike the API server's service proxy, it is not blocked by the
+# observability NetworkPolicies. Prints PASS / WARN / FAIL / SKIP per check and exits non-zero on any
 # FAIL.
 #
 # Run it while load is flowing (`make app-loadtest` in another terminal): without gateway traffic in the last 5
@@ -37,30 +37,9 @@ warn() { printf 'WARN  %-34s %s\n' "$1" "${2:-}"; }
 fail() { printf 'FAIL  %-34s %s\n' "$1" "${2:-}"; FAILS=$((FAILS + 1)); }
 skip() { printf 'SKIP  %-34s %s\n' "$1" "${2:-}"; }
 
-kc() { kubectl --context "$CTX" "$@"; }
-enc() { jq -rn --arg v "$1" '$v | @uri'; }
-PF_PORT=""
-prom_raw() { curl -fsS --max-time 20 "http://127.0.0.1:${PF_PORT}/api/v1/$1"; }
-# prom '<promql>' → instant-query result array (JSON), [] on error
-prom() { prom_raw "query?query=$(enc "$1")" 2>/dev/null | jq -c '.data.result // []' 2>/dev/null || echo '[]'; }
-# scalar '<promql>' → first sample value, empty when none
-scalar() { prom "$1" | jq -r '.[0].value[1] // empty'; }
-count() { prom "$1" | jq 'length'; }
-
-kc get --raw /readyz >/dev/null 2>&1 || { echo "cannot reach the API server of context $CTX" >&2; exit 2; }
-PF_LOG="$(mktemp)"
-kc -n observability port-forward svc/kps-prometheus :9090 >"$PF_LOG" 2>&1 &
-PF_PID=$!
-trap 'kill "$PF_PID" 2>/dev/null; rm -f "$PF_LOG"' EXIT
-for _ in $(seq 1 50); do
-  PF_PORT="$(grep -oE '127\.0\.0\.1:[0-9]+' "$PF_LOG" | head -1 | cut -d: -f2)"
-  [[ -n "$PF_PORT" ]] && break
-  sleep 0.2
-done
-if [[ -z "$PF_PORT" ]] || ! prom_raw "status/buildinfo" >/dev/null 2>&1; then
-  echo "Prometheus (observability/kps-prometheus) not reachable through port-forward" >&2
-  exit 2
-fi
+# shellcheck source=scripts/sre-prom-lib.sh
+. "$ROOT/scripts/sre-prom-lib.sh"
+prom_connect
 echo "sre gate check — context $CTX, window $WINDOW"
 
 # ---- pipeline -------------------------------------------------------------------------------------------------

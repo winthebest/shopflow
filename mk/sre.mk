@@ -47,3 +47,8 @@ SRE_GATE_WINDOW  ?= 2h
 .PHONY: sre-gate-check
 sre-gate-check: ## Gate check, read-only, run while make app-loadtest runs: targets, SLO data, WAL series, Tempo memory, alerts (SRE_GATE_CONTEXT, SRE_GATE_WINDOW)
 	./scripts/sre-gate-check.sh --context $(SRE_GATE_CONTEXT) --window $(SRE_GATE_WINDOW)
+
+# Game-day evidence (read-only): alert timeline + key series as CSV, before the cluster goes away.
+.PHONY: sre-gameday-evidence
+sre-gameday-evidence: ## Export alerts.tsv + series CSVs for a postmortem (FROM=RFC3339|unix, TO=, SRE_GATE_CONTEXT)
+	./scripts/sre-gameday-evidence.sh --context $(SRE_GATE_CONTEXT) --from "$(FROM)" $(if $(TO),--to "$(TO)")
