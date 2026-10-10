@@ -73,20 +73,20 @@ def main() -> None:
     status, source = call("GET", f"/namespaces/{env['SOURCE_NAMESPACE']}/secrets/{env['SOURCE_NAME']}")
     if status != 200:
         sys.exit(f"read {source_ref}: HTTP {status} {source.get('message')}")
+    encoding = env.get("DERIVED_ENCODING", "uri")
+    if encoding not in ENCODERS:
+        sys.exit(f"DERIVED_ENCODING={encoding!r}: expected one of {sorted(ENCODERS)}")
     extra = json.loads(env.get("EXTRA_DATA", "{}"))
-    extra.update(
-        fill_templates(
-            json.loads(env.get("DERIVED_DATA", "{}")), source.get("data", {}), env.get("DERIVED_ENCODING", "uri")
-        )
-    )
-    data = source.get("data", {}) if env.get("COPY_SOURCE_KEYS", "true") == "true" else {}
+    extra.update(fill_templates(json.loads(env.get("DERIVED_DATA", "{}")), source.get("data", {}), encoding))
+    data = source.get("data", {}) if env.get("COPY_SOURCE_KEYS", "true") != "false" else {}
     target = {
         "apiVersion": "v1",
         "kind": "Secret",
         "metadata": {
             "name": env["TARGET_NAME"],
             "namespace": env["TARGET_NAMESPACE"],
-            "labels": {"app.kubernetes.io/managed-by": "copy-secret", **json.loads(env.get("TARGET_LABELS", "{}"))},
+            # TARGET_LABELS cannot override managed-by.
+            "labels": {**json.loads(env.get("TARGET_LABELS", "{}")), "app.kubernetes.io/managed-by": "copy-secret"},
             "annotations": {"shopflow.io/copied-from": source_ref},
         },
         "type": "Opaque",

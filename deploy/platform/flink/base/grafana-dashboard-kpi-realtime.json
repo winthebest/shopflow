@@ -1,7 +1,7 @@
 {
   "uid": "shopflow-kpi-realtime",
   "title": "Shopflow / KPI – realtime",
-  "description": "Per-minute shop KPIs from the Flink job (serving.kpi_minute, docs/adr/0415). Inserts only; a CDC re-snapshot does not move them.",
+  "description": "Per-minute shop KPIs from the Flink job (serving.kpi_minute, docs/adr/0415). Inserts only; a CDC re-snapshot does not move them. window_start is UTC: the job parses Debezium UTC timestamps into TIMESTAMP(3), which table.local-time-zone does not shift.",
   "tags": [
     "shopflow",
     "flink",
@@ -62,7 +62,7 @@
     {
       "id": 2,
       "type": "timeseries",
-      "title": "GMV per minute",
+      "title": "GMV per minute (sum of order totals)",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "serving"
