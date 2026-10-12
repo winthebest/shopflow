@@ -10,9 +10,14 @@ spec:
   imageName: {{ required "image is required" .Values.image }}
   enableSuperuserAccess: false
   {{- if .Values.databases.airflow.enabled }}
-  # Extra exporter queries (templates/monitoring-queries.yaml), on top of CNPG's defaults.
+  # Extra exporter queries (templates/monitoring-queries.yaml), on top of CNPG's defaults. CNPG's webhook puts its
+  # default-queries ConfigMap first in this list when default queries are on; listing it here keeps the declared spec
+  # equal to the live one, otherwise Argo CD sees shop-db OutOfSync forever. Name and key are the operator's defaults
+  # (MONITORING_QUERIES_CONFIGMAP is not set in deploy/platform/cnpg).
   monitoring:
     customQueriesConfigMap:
+      - name: cnpg-default-monitoring
+        key: queries
       - name: shop-db-monitoring
         key: queries.yaml
   {{- end }}
