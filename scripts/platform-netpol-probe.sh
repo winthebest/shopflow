@@ -62,6 +62,8 @@ PROBES=(
   "metabase|app.kubernetes.io/name=probe|shop|cnpg.io/cluster=shop-db|5432|open"
   "metabase|app.kubernetes.io/name=probe|lakehouse|app.kubernetes.io/name=trino|8443|open"
   "metabase|app.kubernetes.io/name=probe|lakehouse|app.kubernetes.io/name=polaris|8181|blocked"
+  "metabase|app.kubernetes.io/name=probe|metabase|app.kubernetes.io/name=metabase|3000|open"
+  "default|app.kubernetes.io/name=probe|metabase|app.kubernetes.io/name=metabase|3000|blocked"
   # observability
   "observability|app.kubernetes.io/name=prometheus|shop|cnpg.io/cluster=shop-db|9187|open"
   "observability|app.kubernetes.io/name=prometheus|kafka|strimzi.io/kind=KafkaConnect|9404|open"
