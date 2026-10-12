@@ -22,18 +22,26 @@ def async_dsn(url: str) -> str:
 
 
 def create_engine(
-    url: str, *, connect_timeout_s: float = CONNECT_TIMEOUT_S, command_timeout_s: float | None = None
+    url: str,
+    *,
+    connect_timeout_s: float = CONNECT_TIMEOUT_S,
+    command_timeout_s: float | None = None,
+    pool_size: int = 10,
+    max_overflow: int = 10,
 ) -> AsyncEngine:
     """Defaults fit orders (1s request budget). Background consumers pass longer connect timeouts and a statement
-    timeout, so a half-open connection fails fast instead of stalling a partition."""
+    timeout, so a half-open connection fails fast instead of stalling a partition.
+
+    `pool_size + max_overflow` is what one process may hold on shop-db, whose `max_connections` (100) every replica of
+    every service shares: callers size it from their measured use (docs/perf-baseline.md, connection budget)."""
     connect_args: dict = {"timeout": connect_timeout_s}
     if command_timeout_s is not None:
         connect_args["command_timeout"] = command_timeout_s
     return create_async_engine(
         async_dsn(url),
         pool_pre_ping=True,
-        pool_size=10,
-        max_overflow=10,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
         pool_timeout=POOL_TIMEOUT_S,
         connect_args=connect_args,
     )
