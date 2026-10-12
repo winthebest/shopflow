@@ -8,5 +8,6 @@ resources:
   - checkout-slo.prometheusrule.yaml
   - gold-freshness-sli.prometheusrule.yaml
   - gold-freshness-slo.prometheusrule.yaml
+  - orders-pending.prometheusrule.yaml
   - wal-archive.prometheusrule.yaml
   - wal-retained.prometheusrule.yaml
