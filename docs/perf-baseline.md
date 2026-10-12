@@ -167,3 +167,109 @@ flight while k6 ran (0 unshipped paid orders older than 60 s). The check now cou
   with 3,000 the second replica arrives after ~75 s (19 s with 50) and a third is never needed; `make
   app-worker-check` now expects 2 by default. Game day 3's backlog (34,845 records) asks for 12, capped at 3, at
   once: the burst behaviour above does not change.
+
+## 2026-10-12: k3d app slot, 80 checkouts/s with autoscaling, sweeper and Idempotency-Key
+
+### Setup
+
+- Cluster `sf-app` (k3d, 1 server + 1 agent; Docker VM with 10 vCPUs and 15.8 GiB), profiles core, obs-lite, data
+  and ops, revision `b0b9333`, images `sha-2372d7c`. HPAs on average CPU per pod: gateway 1–3 at 400m, orders 1–3
+  at 500m; payments 2 replicas; orders pool 10 + 5 with a 0.5 s wait; fulfillment-worker 1–3 (KEDA, `lagThreshold`
+  3,000).
+- Load started more than 10 minutes after `make up`, with the node clocks within 0.2 s of the host. A quiet-host
+  check ran around every run: node clock offset, wall-clock steps, Prometheus clock warnings, container churn, macOS
+  sleep, and host load sampled every 10 s. Runs 1 and 1b were clean. In run 2, one 15 s step (09:04:10 UTC, during
+  the sweeper's drain) had half of the non-shop pods above twice their median CPU; run 2 passed all its checks.
+- k6 ran with `RETRIES=1`: a checkout answered 409, 502, 503 or 504 is sent once more with the same
+  `Idempotency-Key` after `Retry-After` (else 1 s).
+
+### Correctness: no duplicate order, no duplicate key, every stranded order settled
+
+| | Run 1 (80/s) | Run 1b (80/s, warm) | Run 2 (settle fault, 20/s) |
+|---|---|---|---|
+| Acked checkouts / distinct order ids | 17,945 / 17,945 | 20,414 / 20,414 | 4,306 / 4,306 |
+| Acked after a retry with the same key | 1,884 | 1,161 | 70 |
+| Ack's key equals the order's stored key | 100 % | 100 % | 100 % |
+
+Across the slot (53,737 orders): 0 orders without a key, 0 duplicate keys, 0 orders `pending` for more than 60 s,
+0 duplicate shipments, 0 paid orders without a shipment; 1,075 declined (2.0 %, payments' simulated rate). A retry
+always got back the order of its first attempt, never a second one.
+
+`scripts/app-settle-fault.sh` (run 2) blocked every settle for 20 s at the database after 60 s of load. Payments
+still charged and the orders stayed `pending`:
+
+| | Result |
+|---|---|
+| Orders stranded by the block | 401 |
+| All settled by the sweeper | 70 s after the unblock |
+| `settle failed` lines with a charge id | 143, each re-settled with that same charge (0 different) |
+| k6 retries during the run | 502, none created a second order |
+| Blocking constraint after the run | removed |
+
+### 80 checkouts/s: not met on this laptop
+
+| | Run 1: step from 0 to 80/s | Run 1b: warm replicas, then 80/s |
+|---|---|---|
+| Replicas when 80/s starts | 1 orders, 1 gateway | 3 orders, 2 gateway (3 after 2 min) |
+| Checkout first attempts failed | 25.9 % | 13.4 % |
+| Checkouts answered 201 (at most one retry) | 82.8 % | 91.8 % |
+| `GET /products` answered 200 | 87.3 % | 92.4 % |
+| Checkout p99 | 1.46 s | 1.65 s |
+| Iterations dropped by k6 (200 VUs) | 2,340 | 1,775 |
+
+Run 1 is `RETRIES=1 make app-worker-check CLUSTER=sf-app LOAD_RATE=80 LOAD_DURATION=5m`. Run 1b first warmed the
+HPAs with load: `PROFILE=ramp RATE=60 RAMP_UP=3m` until orders had 3 ready replicas and gateway 2 (216 s). It then
+ran `RATE=80 DURATION=5m RETRIES=1` of `loadtest/checkout.js`, and only those 5 minutes count.
+
+The orders 500s in the retained logs were SQLAlchemy `QueuePool` timeouts (0.5 s wait), apart from 11 plain
+timeouts; the gateway answered 504 after its 1 s timeout, or 502. The worker side passed in run 1: 1 → 2 replicas
+132 s after the load started, max lag 4,978 records, lag drained 18 s after the load ended, back to 1 replica after
+54 s, 92.5 records/s per replica (the 3,000 threshold stands), 19,714 shipments with no duplicate.
+
+Two causes:
+
+- **(A) Step load on one replica.** 80/s from t = 0 is beyond one orders replica (about 45/s). The HPAs took about
+  100 s to reach 3 orders replicas (2 at 75 s), and the client retries added ~19 requests/s on average to the
+  overload: a retry storm. Errors were continuous until 08:53:45 UTC, then came only in bursts. Run 1b, with the
+  replicas already up, halved the failure rate.
+- **(B) VM CPU saturation at steady state.** CPU was read every 5 s from inside the k3d nodes: each pod's cgroup
+  `cpu.stat` and the VM's `/proc/stat`. That is exact, unlike the 30 s Prometheus series. Errors in run 1b follow
+  the VM's busy cores:
+
+  | VM busy cores (of 10), per 5 s step | Steps | 5xx | Steps with more than 50 |
+  |---|---|---|---|
+  | under 5 | 23 | 2 | 0 |
+  | 5–6 | 7 | 18 | 0 |
+  | 6–7 | 11 | 746 | 3 |
+  | 7–8 | 9 | 2,347 | 8 |
+  | 8 and more | 5 | 1,482 | 5 |
+
+  The shop alone averaged 3.1 cores (orders 1.62, gateway 0.84, shop-db 0.49, payments 0.19). Periodic platform
+  bursts took the VM to 7–9 cores:
+  - the Iceberg sink commit, every ~61 s (Kafka Connect up to 0.7 core and Polaris up to 0.6);
+  - Argo CD reconciling, up to 1.25 cores;
+  - Trino, up to 1 core every ~65 s.
+
+  Four of the five commits fell in error steps, but 11 of the 16 heavy error steps had no commit. The largest
+  burst, 771 errors at 09:14:20 UTC, was a Trino spike. In run 1, payments, which has no database, saw its p99 go
+  from 60 ms to 130–226 ms during the bursts. So the event loops were starved of CPU and the database was not
+  slow: orders held its connections past the 0.5 s pool wait, and the gateway timed out. There was no CPU
+  throttling (shop pods have no CPU limit), no steal time reported, and iowait was near 0.
+
+At 80/s this laptop cluster hits the VM CPU ceiling; it is a capacity limit, not an application fault. During run
+1b's warm-up, up to 60/s on replicas still scaling gave no 5xx (09:07–09:10 UTC), but only about 36 s ran at a full
+60/s: too short to call that the capacity. The exact figure is for the capacity test on EKS.
+
+The same 80/s gave 4.06 % errors on 2026-10-10 with one orders replica, images `sha-c35f922` and no client
+retries. Orders then used 881m on one replica (the figure in the chart's `values.yaml`). Today it used 1.62 cores
+for about 84 checkouts/s, retries included, plus 74 product reads/s: roughly 1.8× the CPU per request served. This
+is not isolated. The candidates are the `Idempotency-Key` read on every checkout, the client retries, and three
+processes instead of one; the measurement methods also differ.
+
+Mitigations, proposed only (nothing changed):
+
+- `minReplicas` sized for the expected peak: AWS already runs 2, and local 1 is what makes a step load fail;
+- a faster HPA `behavior.scaleUp` for step loads;
+- client retries with backoff, jitter and a retry budget: k6 retries after `Retry-After` or a flat 1 s, the
+  pattern that turned (A) into a retry storm;
+- profiling orders' CPU per checkout against `sha-c35f922` before the EKS capacity test.
