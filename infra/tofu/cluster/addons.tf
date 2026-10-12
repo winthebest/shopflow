@@ -12,9 +12,11 @@ locals {
     "eks-pod-identity-agent" = null
   }
 
-  # Need running nodes to become healthy.
+  # Need running nodes to become healthy. metrics-server serves metrics.k8s.io, which HPAs read (EKS has none
+  # by default, k3s ships one): without it every CPU-based HPA shows <unknown> targets and never scales.
   addons_after_nodes = {
-    "coredns" = null
+    "coredns"        = null
+    "metrics-server" = null
     "aws-ebs-csi-driver" = jsonencode({
       controller = {
         extraVolumeTags = { project = local.project, env = local.env }

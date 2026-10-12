@@ -92,8 +92,13 @@ run "addons_and_pod_identity_follow_the_contract" {
   command = plan
 
   assert {
-    condition     = toset(concat(keys(aws_eks_addon.before_nodes), keys(aws_eks_addon.after_nodes))) == toset(["vpc-cni", "kube-proxy", "eks-pod-identity-agent", "coredns", "aws-ebs-csi-driver"])
-    error_message = "The five managed addons are installed."
+    condition     = toset(concat(keys(aws_eks_addon.before_nodes), keys(aws_eks_addon.after_nodes))) == toset(["vpc-cni", "kube-proxy", "eks-pod-identity-agent", "coredns", "aws-ebs-csi-driver", "metrics-server"])
+    error_message = "The six managed addons are installed."
+  }
+
+  assert {
+    condition     = contains(keys(aws_eks_addon.after_nodes), "metrics-server")
+    error_message = "metrics-server (metrics.k8s.io for the HPAs) installs after the nodes, which it needs to become healthy."
   }
 
   assert {
