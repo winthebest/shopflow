@@ -125,7 +125,21 @@ def test_profile_drill_must_be_healthy(fake, drill):
     assert result.returncode != 0 and "profile drill is not Synced/Healthy" in result.stderr
 
 
-def run_ready(fake: Harness) -> None:
+def shop_db_app(old: str, new: str, mark: str | None = None) -> dict:
+    """The shop-db Application once root-core has rendered the recovery params."""
+    values = {"backup": {"serverName": new}, "recovery": {"fromServerName": old, "targetTime": mark}}
+    return {"spec": {"sources": [{"path": "deploy/charts/shop-db", "helm": {"valuesObject": values}}, {"path": "x"}]}}
+
+
+def run_ready(fake: Harness, mark: str | None = None, bootstrap: str = "recovery") -> None:
+    fake.on("kubectl", r"-n argocd get applications.argoproj.io shop-db -o json", json_out=shop_db_app(OLD, NEW, mark))
+    created = "Primary instance (from backup)" if bootstrap == "recovery" else "Primary instance (initdb)"
+    events = [
+        {"lastTimestamp": "2026-01-01T00:00:00Z", "message": "Primary instance (from backup)"},  # an older cluster
+        # after the disaster, which happens while the script runs
+        {"lastTimestamp": (datetime.now(UTC) + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ"), "message": created},
+    ]
+    fake.on("kubectl", r"-n shop get events --field-selector .*reason=CreatingInstance", json_out={"items": events})
     (fake.tmp / "out").mkdir(exist_ok=True)
     (fake.tmp / "out" / "pointer.json").write_text(json.dumps({"serverName": OLD, "backupId": "B0", "backup": f"{OLD}-base-1"}))
     fake.on("kubectl", rf"backups.postgresql.cnpg.io {OLD}-base-1 -o jsonpath", "completed")
@@ -143,11 +157,16 @@ def test_drill_destroys_recovers_and_measures(fake, drill):
     assert result.returncode == 0, result.stderr
     order = [
         r"scale statefulset argocd-application-controller --replicas=0",
+        r"annotate applications.argoproj.io shop-db argocd.argoproj.io/skip-reconcile=true",
         r"delete pod -l cnpg.io/cluster=shop-db --grace-period=0 --force",
         r"delete clusters.postgresql.cnpg.io shop-db",
         r"delete pvc -l cnpg.io/cluster=shop-db",
         r"scale statefulset argocd-application-controller --replicas=1",
-        r"exec pod/shop-db-1 -c postgres -- psql",
+        r"get applications.argoproj.io shop-db -o json",
+        r"annotate applications.argoproj.io shop-db argocd.argoproj.io/skip-reconcile-",
+        r"get events --field-selector involvedObject.kind=Cluster,involvedObject.name=shop-db,reason=CreatingInstance",
+        r"exec pod/shop-db-1 -c postgres -- psql -d shop -At -c SELECT id FROM orders",
+        r"(?s)exec pod/shop-db-1 -c postgres -- psql .*setval\(pg_get_serial_sequence\('orders', 'id'\), GREATEST\(.*, 10\) \+ 1000\)",
         r"curl .*-X POST .*/checkout",
         rf"apply -f .*backup-{NEW}-base.yaml",
     ]
@@ -169,13 +188,14 @@ def test_drill_destroys_recovers_and_measures(fake, drill):
 
 def test_pitr_passes_the_mark_and_checks_both_sides(fake, drill):
     env, record = drill
-    run_ready(fake)
+    mark = (datetime.now(UTC) - timedelta(seconds=14)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    run_ready(fake, mark=mark)
 
-    result = fake.run("restore-drill.sh", "run", "--warmup", "1", "--pitr", "14", env=env)
+    result = fake.run("restore-drill.sh", "run", "--warmup", "1", "--pitr-at", mark, env=env)
 
     assert result.returncode == 0, result.stderr
     hook = record.read_text()
-    assert "--param pg.recoveryTargetTime=" in hook
+    assert f"--param pg.recoveryTargetTime={mark}" in hook
     out = json.loads((fake.tmp / "out" / f"run-{STAMP}" / "result.json").read_text())
     assert out["pitr_mark"] and {"pitr_before_mark_lost", "pitr_after_mark_kept"} <= out.keys()
 
@@ -191,7 +211,37 @@ def test_a_failed_recovery_restarts_the_argo_controller(fake, drill, tmp_path):
 
     assert result.returncode != 0
     assert fake.index_of(r"--replicas=0") < fake.index_of(r"--replicas=1"), "the trap scales the controller back"
+    assert fake.index_of(r"skip-reconcile=true") < fake.index_of(r"skip-reconcile-"), "the trap releases the shop-db app"
     assert "restarting the Argo CD application controller" in result.stderr
+
+
+def test_an_initdb_bootstrap_is_not_a_recovery(fake, drill):
+    env, _ = drill
+    run_ready(fake, bootstrap="initdb")
+
+    result = fake.run("restore-drill.sh", "run", "--warmup", "1", env=env)
+
+    assert result.returncode != 0 and "was not created from the backup" in result.stderr
+    assert not any("psql" in c.argv for c in fake.calls("kubectl")), "nothing is measured on an empty database"
+
+
+def test_the_app_is_held_until_root_core_renders_the_recovery_params(fake, drill):
+    env, _ = drill
+    run_ready(fake)
+    fake.rules.insert(
+        0,
+        {
+            "tool": "kubectl",
+            "match": r"get applications.argoproj.io shop-db -o json",
+            "stdout": json.dumps(shop_db_app("x", "y")),
+            "exit": 0,
+        },
+    )
+
+    result = fake.run("restore-drill.sh", "run", "--warmup", "1", env={**env, "DRILL_APP_TIMEOUT": "1"})
+
+    assert result.returncode != 0 and "did not render the recovery params" in result.stderr
+    assert "releasing the shop-db Application" in result.stderr, "never released into initdb; the trap releases it"
 
 
 def test_dry_run_changes_nothing(fake, drill):
@@ -204,6 +254,32 @@ def test_dry_run_changes_nothing(fake, drill):
     assert not fake.mutations()
     assert not record.exists()
     assert "DRY-RUN: env KUBECONFIG=" in result.stderr and "pg.recoveryFrom=shop-db" in result.stderr
+
+
+@pytest.mark.parametrize(("cluster", "expected"), [("sf-main", ":9443"), ("sf-cloud", ":8447")])
+def test_the_https_port_comes_from_k3d_lib(fake, drill, cluster, expected):
+    env, _ = drill
+    run_ready(fake)
+    fake.rules.insert(
+        0, {"tool": "kubectl", "match": r"config view --minify --flatten --context k3d-", "stdout": "apiVersion: v1\n", "exit": 0}
+    )
+
+    result = fake.run("restore-drill.sh", "run", "--dry-run", "--cluster", cluster, env=env)
+
+    assert result.returncode == 0, result.stderr
+    assert f"against https://shop.127.0.0.1.sslip.io{expected}," in result.stderr
+
+
+def test_an_unknown_cluster_needs_base_url(fake, drill):
+    env, _ = drill
+    run_ready(fake)
+    fake.rules.insert(
+        0, {"tool": "kubectl", "match": r"config view --minify --flatten --context k3d-", "stdout": "apiVersion: v1\n", "exit": 0}
+    )
+
+    result = fake.run("restore-drill.sh", "run", "--dry-run", "--cluster", "lab-x", env=env)
+
+    assert result.returncode != 0 and "no HTTPS port for cluster lab-x" in result.stderr
 
 
 def test_profiles_must_include_drill(fake, drill):

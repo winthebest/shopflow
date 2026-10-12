@@ -7,10 +7,11 @@
 #   restore-drill.sh run       k6 writes -> shop-db is destroyed -> recovery from the chain (latest, or --pitr N:
 #                              N seconds before the disaster) -> RPO, acked orders lost, RTO
 #
-# Options: --cluster NAME (sf-main)  --warmup SECONDS (120)  --rate CHECKOUTS_PER_S (20)  --pitr SECONDS  --dry-run
+# Options: --cluster NAME (sf-main)  --warmup SECONDS (120)  --rate CHECKOUTS_PER_S (20)  --dry-run
+#          --pitr SECONDS (mark = SECONDS before the disaster) or --pitr-at RFC3339 (an absolute mark)
 #          --profiles LIST, --revision REV: default to what the cluster's root apps already use (root-* apps, the
 #          revision of root-core), so the recovery never moves the other apps to another revision.
-# Environment: BASE_URL (https://shop.127.0.0.1.sslip.io:<the cluster's HTTPS port>).
+# Environment: BASE_URL (default https://shop.127.0.0.1.sslip.io:<HTTPS port of the cluster in scripts/k3d-lib.sh>).
 # Output: out/drill/run-<stamp>/{acks.jsonl,k6.log,survivors.txt,result.json}; the head of the chain in
 # out/drill/pointer.json.
 #
@@ -29,6 +30,7 @@ ROOT_APPS_HOOK="${ROOT_APPS_HOOK:-$REPO_ROOT/scripts/platform-root-apps.sh}"
 K6_SCRIPT="$REPO_ROOT/loadtest/checkout.js"
 POINTER_FILE="$OUT_DIR/pointer.json"
 RECOVERY_TIMEOUT="${DRILL_RECOVERY_TIMEOUT:-1800}"
+APP_TIMEOUT="${DRILL_APP_TIMEOUT:-300}"
 PITR_TOLERANCE=2 # seconds around the PITR mark where an order may land on either side
 
 K3D_CLUSTER=sf-main
@@ -37,13 +39,15 @@ REVISION=""
 WARMUP=120
 RATE=20
 PITR=""
+PITR_AT=""
 COMMAND=""
 
 ARGO_PAUSED=0
+APP_HELD=0
 K6_PID=""
 
 usage() {
-  sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 parse_args() {
@@ -59,6 +63,7 @@ parse_args() {
       --warmup) WARMUP="${2:?--warmup needs a value}"; shift ;;
       --rate) RATE="${2:?--rate needs a value}"; shift ;;
       --pitr) PITR="${2:?--pitr needs a value}"; shift ;;
+      --pitr-at) PITR_AT="${2:?--pitr-at needs a value}"; shift ;;
       *) usage >&2; die "unknown argument: $1" ;;
     esac
     shift
@@ -80,18 +85,14 @@ resolve_root_args() {
   log "root apps: profiles $PROFILES, revision $REVISION"
 }
 
-# HTTPS load-balancer port of each cluster (docs/contracts/environment.md).
+# The cluster's HTTPS load-balancer port comes from scripts/k3d-lib.sh, the table make up uses (and its HTTPS_PORT
+# override), read in a subshell so nothing else from it leaks in. BASE_URL overrides the whole URL.
 base_url() {
+  [ -z "${BASE_URL:-}" ] || { printf '%s' "$BASE_URL"; return 0; }
   local port
-  case "$K3D_CLUSTER" in
-    sf-main) port=9443 ;;
-    sf-platform) port=8443 ;;
-    sf-sre) port=8444 ;;
-    sf-data) port=8445 ;;
-    sf-app) port=8446 ;;
-    *) port=443 ;;
-  esac
-  printf '%s' "${BASE_URL:-https://shop.127.0.0.1.sslip.io:$port}"
+  port="$(CLUSTER="$K3D_CLUSTER" bash -c 'source "$1" && printf %s "$HTTPS_PORT"' _ "$REPO_ROOT/scripts/k3d-lib.sh" 2>/dev/null)" || true
+  [ -n "$port" ] || die "no HTTPS port for cluster $K3D_CLUSTER in scripts/k3d-lib.sh: set HTTPS_PORT or BASE_URL"
+  printf 'https://shop.127.0.0.1.sslip.io:%s' "$port"
 }
 
 # A kubeconfig with only this cluster's context, so every kubectl call and the root-app hook hit the same cluster.
@@ -179,6 +180,38 @@ argo_controller() {
   run kube -n argocd scale statefulset argocd-application-controller --replicas="$1" >/dev/null
 }
 
+# While held, Argo CD leaves the shop-db Application alone. Without the hold, the restarted controller syncs shop-db
+# with its old values (initdb) before root-core has rendered the recovery params, and CNPG bootstraps an empty
+# database: bootstrap only runs when the Cluster is created.
+SKIP_RECONCILE=argocd.argoproj.io/skip-reconcile
+hold_shop_db_app() {
+  run kube -n argocd annotate applications.argoproj.io shop-db "$SKIP_RECONCILE=true" --overwrite >/dev/null
+  APP_HELD=1
+}
+release_shop_db_app() {
+  run kube -n argocd annotate applications.argoproj.io shop-db "$SKIP_RECONCILE-" >/dev/null
+  APP_HELD=0
+}
+
+# The shop-db Application carries the recovery params rendered by root-core (chain, and the PITR mark if any).
+app_has_recovery_params() {
+  kube -n argocd get applications.argoproj.io shop-db -o json 2>/dev/null | jq -e --arg from "$1" --arg new "$2" --arg mark "$3" '
+    [.spec.sources[] | .helm.valuesObject? // empty][0] as $v
+    | $v.recovery.fromServerName == $from and $v.backup.serverName == $new
+      and (if $mark == "" then ($v.recovery.targetTime // "") == "" else $v.recovery.targetTime == $mark end)' >/dev/null
+}
+
+# How CNPG created the primary since the disaster: its CreatingInstance event says "Primary instance (from backup)"
+# or "Primary instance (initdb)". The bootstrap Job is no evidence: CNPG removes it once it has succeeded, and the
+# Cluster spec is no evidence either: a recovery stanza added after creation never ran.
+bootstrapped_by_recovery() {
+  kube -n shop get events --field-selector involvedObject.kind=Cluster,involvedObject.name=shop-db,reason=CreatingInstance \
+    -o json 2>/dev/null | jq -e --argjson since "$1" '
+    [.items[] | {t: ((.lastTimestamp // .eventTime // .metadata.creationTimestamp) | sub("\\.[0-9]+"; "") | fromdateiso8601),
+                 m: .message} | select(.t >= $since)]
+    | sort_by(.t) | (last.m // "") | test("from backup")' >/dev/null
+}
+
 controller_stopped() {
   [ -z "$(kube -n argocd get pods -l app.kubernetes.io/name=argocd-application-controller -o name 2>/dev/null)" ]
 }
@@ -208,12 +241,31 @@ ack_count() {
   printf '%s' "${n:-0}"
 }
 
-# Order ids present after the recovery, read before anything can write again (k6 is stopped).
-survivors() {
+primary_pod() {
   local pod
   pod="$(kube -n shop get pods -l cnpg.io/cluster=shop-db,cnpg.io/instanceRole=primary -o name | head -n 1)"
   [ -n "$pod" ] || die "no shop-db primary after the recovery"
-  kube -n shop exec "$pod" -c postgres -- psql -d shop -At -c "SELECT id FROM orders ORDER BY id"
+  printf '%s' "$pod"
+}
+
+# Order ids present after the recovery, read before anything can write again (k6 is stopped).
+survivors() {
+  kube -n shop exec "$(primary_pod)" -c postgres -- psql -d shop -At -c "SELECT id FROM orders ORDER BY id"
+}
+
+# After a recovery the id sequences restart from the restored database, below ids already acked to customers: new
+# orders would reuse the ids of lost ones (a customer's order id would show someone else's order; payment
+# reconciliation by order id would match the wrong one). Before the shop takes traffic again, every sequence moves
+# past the highest acked order id plus a margin; payments by the order-id gap plus the margin.
+ID_MARGIN="${DRILL_ID_MARGIN:-1000}"
+bump_sequences() {
+  local acks="$1" max_acked
+  max_acked="$(jq -Rn '[inputs | fromjson? | .ack? // empty | .order_id | numbers] | max // 0' "$acks")"
+  run kube -n shop exec "$(primary_pod)" -c postgres -- psql -d shop -At -v ON_ERROR_STOP=1 \
+    -c "SELECT setval(pg_get_serial_sequence('payments', 'id'),
+          (SELECT coalesce(max(id), 0) FROM payments) + GREATEST($max_acked - (SELECT coalesce(max(id), 0) FROM orders), 0) + $ID_MARGIN)" \
+    -c "SELECT setval(pg_get_serial_sequence('orders', 'id'), GREATEST((SELECT coalesce(max(id), 0) FROM orders), $max_acked) + $ID_MARGIN)" >&2
+  log "id sequences moved past the highest acked order id $max_acked (+$ID_MARGIN)"
 }
 
 checkout_answers() {
@@ -225,12 +277,14 @@ checkout_answers() {
 }
 
 # acks.jsonl + survivors.txt -> result JSON. Timestamps are k6's (acked_at), so no clock is compared with another.
+# Every ack in the log counts: k6 stops right after the kill, so the log ends before the recovery, and an ack in the
+# second between the disaster mark and the pod's death is still a promise made to a customer.
 metrics() {
-  local acks="$1" survivors="$2" disaster="$3" mark="${4:-}"
-  jq -Rn --rawfile ids "$survivors" --argjson disaster "$disaster" --arg mark "$mark" --argjson tolerance "$PITR_TOLERANCE" '
+  local acks="$1" survivors="$2" mark="${3:-}"
+  jq -Rn --rawfile ids "$survivors" --arg mark "$mark" --argjson tolerance "$PITR_TOLERANCE" '
     def ts: (.[0:19] + "Z" | fromdateiso8601) + ((.[20:23] | tonumber? // 0) / 1000);
     ($ids | split("\n") | map(select(length > 0)) | map({key: ., value: true}) | from_entries) as $alive
-    | [inputs | fromjson? | .ack? // empty | {id: (.order_id | tostring), t: (.acked_at | ts)} | select(.t < $disaster)] as $acked
+    | [inputs | fromjson? | .ack? // empty | {id: (.order_id | tostring), t: (.acked_at | ts)}] as $acked
     | [$acked[] | select($alive[.id])] as $kept
     | ($acked | map(.t) | max) as $last
     | ($kept | map(.t) | max) as $last_kept
@@ -269,15 +323,22 @@ drill() {
   if [ -n "$PITR" ]; then
     mark=$(($(now_epoch) - PITR))
     mark_iso="$(iso_from_epoch "$mark")"
+  elif [ -n "$PITR_AT" ]; then
+    mark="$(epoch_from_iso "$PITR_AT")"
+    [ -n "$mark" ] || die "--pitr-at: not an RFC 3339 UTC time: $PITR_AT"
+    mark_iso="$(iso_from_epoch "$mark")"
+  fi
+  if [ -n "$mark_iso" ]; then
     pitr_args=(--param "pg.recoveryTargetTime=$mark_iso")
-    log "PITR mark: $mark_iso (${PITR}s before the disaster)"
+    log "PITR mark: $mark_iso"
   fi
 
   step 3 "disaster: shop-db is destroyed without a final backup"
-  disaster="$(now_epoch)"
   ARGO_PAUSED=1 # Argo CD would recreate the Cluster with initdb and the old chain name before the recovery params land
   argo_controller 0
   wait_until 120 "the Argo CD application controller stopped" controller_stopped || die "the Argo CD controller did not stop"
+  hold_shop_db_app
+  disaster="$(now_epoch)" # the moment the database dies: acks up to here count
   run kube -n shop delete pod -l cnpg.io/cluster=shop-db --grace-period=0 --force --wait=false >&2
   run kube -n shop delete clusters.postgresql.cnpg.io shop-db --wait=false >&2
   run kube -n shop delete pvc -l cnpg.io/cluster=shop-db --wait=false >&2
@@ -290,7 +351,11 @@ drill() {
   root_apps --param "pg.serverName=$new_server" --param "pg.recoveryFrom=$old_server" ${pitr_args[@]+"${pitr_args[@]}"}
   argo_controller 1
   ARGO_PAUSED=0
+  wait_until "$APP_TIMEOUT" "the shop-db Application carries the recovery params" app_has_recovery_params "$old_server" "$new_server" "$mark_iso" ||
+    die "root-core did not render the recovery params into the shop-db Application"
+  release_shop_db_app
   wait_until "$RECOVERY_TIMEOUT" "shop-db recovered and Ready" cnpg_ready || die "shop-db did not recover"
+  dry_run || bootstrapped_by_recovery "$disaster" || die "shop-db was not created from the backup of $old_server (initdb?)"
   db_back="$(now_epoch)"
 
   if dry_run; then
@@ -299,9 +364,10 @@ drill() {
   fi
   step 5 "measure"
   survivors >"$dir/survivors.txt"
+  bump_sequences "$dir/acks.jsonl"
   wait_until 600 "a checkout through $url succeeds" checkout_answers "$url" || die "the shop did not come back"
   service_back="$(now_epoch)"
-  metrics "$dir/acks.jsonl" "$dir/survivors.txt" "$disaster" "$mark" |
+  metrics "$dir/acks.jsonl" "$dir/survivors.txt" "$mark" |
     jq --arg from "$old_server" --arg to "$new_server" --arg mark "$mark_iso" \
       --argjson db "$((db_back - disaster))" --argjson service "$((service_back - disaster))" \
       '. + {recovered_from: $from, new_chain: $to, pitr_mark: (if $mark == "" then null else $mark end),
@@ -317,6 +383,10 @@ drill() {
 on_exit() {
   local status=$?
   stop_k6
+  if [ "$APP_HELD" = 1 ]; then
+    warn "releasing the shop-db Application (the drill stopped while it was held)"
+    kube -n argocd annotate applications.argoproj.io shop-db "$SKIP_RECONCILE-" >/dev/null 2>&1 || warn "remove $SKIP_RECONCILE by hand"
+  fi
   if [ "$ARGO_PAUSED" = 1 ]; then
     warn "restarting the Argo CD application controller (the drill stopped while it was paused)"
     kube -n argocd scale statefulset argocd-application-controller --replicas=1 >/dev/null 2>&1 || warn "scale it back by hand"
@@ -328,6 +398,7 @@ on_exit() {
 main() {
   parse_args "$@"
   trap on_exit EXIT
+  trap 'exit 130' INT TERM
   dry_run && log "DRY-RUN: reads only; changes are printed"
   case "$COMMAND" in
     prepare) prepare ;;
