@@ -1,10 +1,20 @@
 # Game day 2 — kill the CNPG primary of shop-db (Phase 7 scenario 2). Procedure: docs/runbooks/gameday.md.
-# Precondition: shop-db runs 2 instances for the game day (default local is 1).
-# Hypothesis: CNPG promotes the replica in under 30s; checkouts fail with 5xx only during the switchover
-#   (measured: seconds without a successful write). The logical slot of Debezium does not survive the failover,
-#   so CDC needs a re-snapshot with a new epoch (scripts/cdc-epoch.sh): accepted behaviour, documented in the runbook.
-# Blast radius: shop-db (namespace shop); downstream CDC until the re-snapshot.
-# Stop: one-shot kill. Abort the game day if no new primary after 5 minutes (follow docs/runbooks/restore.md).
+# Two runs on fresh clusters from the same main revision, shop-db with 2 instances; only logical slot sync differs:
+#   H-A: make up PG_INSTANCES=2 PG_LOGICAL_SLOT_SYNC=off: the standby keeps no copy of debezium_shop.
+#   H-B: make up PG_INSTANCES=2: debezium_shop is created with failover=true and synced to the standby (CNPG
+#        synchronizeLogicalDecoding). Before the kill the replica must show it with failover = t, synced = t.
+# Hypothesis, both runs: CNPG promotes the replica within ~30 s (Cluster status: currentPrimaryFailingSinceTimestamp,
+#   then targetPrimaryTimestamp, then currentPrimary = targetPrimary). Checkouts fail only until orders reconnects to
+#   the new primary through shop-db-rw (seconds without an ack in k6's log). Replication is asynchronous, so an order
+#   acked just before the kill can be lost: every acked order_id is looked up in Postgres after the failover.
+# H-A: debezium_shop does not exist on the new primary, so CDC breaks. Either the task fails (CdcConnectorFailed, then
+#   the cdc-lag page), or Debezium creates a new slot at the current LSN and streams on: a gap with no alert (the
+#   heartbeat stays fresh and PostgresSlotInactive cannot fire on a missing slot). The gap is measured as order ids in
+#   Postgres missing from bronze.orders around the kill; recovery: docs/runbooks/cdc-resnapshot.md (new epoch).
+# H-B: Debezium reconnects to the promoted standby's synced slot and resumes from its offset: a lag spike, no gap, no
+#   re-snapshot.
+# Blast radius: shop-db (namespace shop): checkout writes for seconds; CDC downstream (in H-A until the re-snapshot).
+# Stop: one-shot kill. No new primary within 3 minutes: stop the load, record, `make down` (a fresh game-day cluster).
 apiVersion: chaos-mesh.org/v1alpha1
 kind: PodChaos
 metadata:
