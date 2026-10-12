@@ -4,7 +4,7 @@ CONNECT_IMAGE ?= shopflow-kafka-connect:dev
 AIRFLOW_IMAGE ?= shopflow-airflow:dev
 FLINK_IMAGE ?= shopflow-flink:dev
 
-.PHONY: data-connect-image data-connect-smoke data-validate data-exporter-test data-dbt-check data-airflow-image \
+.PHONY: data-connect-image data-connect-smoke data-validate data-exporter-test data-metabase-test data-dbt-check data-airflow-image \
 	data-airflow-check data-flink-image data-flink-check
 
 data-connect-image: ## Build the Kafka Connect image for this machine's architecture (CONNECT_IMAGE)
@@ -19,6 +19,9 @@ data-validate: ## Render data components like Argo CD and validate them (kubecon
 data-exporter-test: ## Lint and unit-test services/freshness-exporter
 	cd services/freshness-exporter && uv run --frozen ruff check . && uv run --frozen ruff format --check . \
 		&& uv run --frozen pytest
+
+data-metabase-test: ## Unit-test Metabase's provisioning script against a fake API (standard library only)
+	python3 -I -m unittest discover -s deploy/platform/metabase/tests -v
 
 data-dbt-check: ## dbt parse (with and without reconciliation tests) + sqlfluff of data/dbt; no database needed
 	cd data/dbt && export DBT_TRINO_PASSWORD=parse-only && uv run --frozen dbt parse --no-partial-parse \

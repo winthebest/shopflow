@@ -1,0 +1,121 @@
+# Metabase OSS (docs/adr/0416): one pod, application database `metabase` in shop-db, queries gold through Trino
+# (lake_ro, user metabase). The admin, the Trino connection and the dashboard come from provision-job.yaml. UI by
+# port-forward only (no ingress): kubectl -n metabase port-forward svc/metabase 3000.
+# Pod Security restricted: non-root (the image's entrypoint then runs java directly), read-only root filesystem,
+# emptyDir for the plugins Metabase unpacks at start (MB_PLUGINS_DIR) and for /tmp, also its working directory.
+# No internet egress: update checks and anonymous tracking off.
+apiVersion: v1
+kind: Service
+metadata:
+  name: metabase
+  namespace: metabase
+  labels:
+    app.kubernetes.io/name: metabase
+    app.kubernetes.io/part-of: shopflow
+spec:
+  selector:
+    app.kubernetes.io/name: metabase
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metabase
+  namespace: metabase
+  labels:
+    app.kubernetes.io/name: metabase
+    app.kubernetes.io/part-of: shopflow
+spec:
+  replicas: 1
+  # One instance at a time: two would run the application database migrations concurrently.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: metabase
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: metabase
+        app.kubernetes.io/part-of: shopflow
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 2000
+        runAsGroup: 2000
+        fsGroup: 2000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: metabase
+          # OSS v0.63.18 (multi-arch index), released 2026-09-16.
+          image: metabase/metabase:v0.63.18@sha256:1160b570cb11c107bce00e71293552df8a8363e01a32c2c7a048cee002dc8a73
+          workingDir: /tmp
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: MB_DB_CONNECTION_URI
+              valueFrom: {secretKeyRef: {name: metabase-db, key: connection-uri}}
+            - name: MB_PLUGINS_DIR
+              value: /plugins
+            - name: MB_CHECK_FOR_UPDATES
+              value: "false"
+            - name: MB_ANON_TRACKING_ENABLED
+              value: "false"
+            # Heap below the memory limit; the rest is metaspace, threads and the JDBC drivers.
+            - name: JAVA_OPTS
+              value: -Xmx768m
+          resources:
+            requests:
+              cpu: 250m
+              memory: 1Gi
+            limits:
+              memory: 1536Mi
+          # The first start migrates the application database: up to ~5 minutes before /api/health answers ok.
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+            failureThreshold: 36
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 4
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: plugins
+              mountPath: /plugins
+            - name: tmp
+              mountPath: /tmp
+            - name: trino-ca
+              mountPath: /etc/trino-ca
+              readOnly: true
+      volumes:
+        - name: plugins
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: trino-ca
+          secret:
+            secretName: metabase-trino-ca
+            items:
+              - key: ca.crt
+                path: ca.crt

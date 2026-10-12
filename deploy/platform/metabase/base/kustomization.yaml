@@ -1,0 +1,29 @@
+# Metabase (profile bi, docs/adr/0416) and what it needs in namespace metabase. Namespaces are explicit per resource:
+# secret-copy.yaml also grants Roles in namespaces shop and lakehouse.
+#   wave -1   metabase-secret-copy  application database login + Trino login copied into metabase
+#   wave  0   metabase              Deployment, Service, Trino CA (cert-manager)
+#   PostSync  metabase-provision    admin, Trino connection, questions and dashboard from dashboard/
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - secret-copy.yaml
+  - certificate.yaml
+  - metabase.yaml
+  - provision-job.yaml
+configMapGenerator:
+  - name: metabase-secret-copy-script
+    namespace: metabase
+    files:
+      - copy-secret.py
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-2"
+  # A changed question or script changes this ConfigMap's name, so auto-sync runs the PostSync Job again.
+  - name: metabase-provision
+    namespace: metabase
+    files:
+      - provision.py
+      - dashboard/dashboard.json
+      - dashboard/daily-revenue.sql
+      - dashboard/payment-success-rate.sql
+      - dashboard/top-products.sql

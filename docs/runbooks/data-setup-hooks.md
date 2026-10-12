@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Applies to | Argo CD Sync/PostSync hooks of `iceberg-catalog` (`polaris-db-copy`, `polaris-bootstrap`, `polaris-setup`), `trino` (`trino-pg-copy`, `trino-bronze-tables`), `airflow` (`airflow-secret-copy`, migrations, create-user), `flink` (`flink-secret-copy`, which also writes the Grafana datasource Secret, `flink-serving-ddl`) |
+| Applies to | Argo CD Sync/PostSync hooks of `iceberg-catalog` (`polaris-db-copy`, `polaris-bootstrap`, `polaris-setup`), `trino` (`trino-pg-copy`, `trino-bronze-tables`), `airflow` (`airflow-secret-copy`, migrations, create-user), `flink` (`flink-secret-copy`, which also writes the Grafana datasource Secret, `flink-serving-ddl`), `metabase` (`metabase-secret-copy`, PostSync `metabase-provision`, see [metabase](metabase.md)) |
 | Symptom | A setup Job failed or never ran, the app shows `Synced` (sometimes `Degraded`), and pushing a fix to the Job changes nothing |
 | Seen | 2026-10-10, P4 slot on `k3d-sf-data` |
 
@@ -61,6 +61,7 @@ sink never became Ready. Clusters that got the policies only after setup did not
 | `trino-bronze-tables` | `trino:8443` | `sh` loop, 12 × 5s; every statement is `IF NOT EXISTS` |
 | `flink-serving-ddl` (profile `rt`) | `shop-db` | `psql` loop, 30 × 2s; the DDL is `IF NOT EXISTS` |
 | `*-secret-copy`, `polaris-db-copy`, `trino-pg-copy` | API server only | none needed: the API server is not a pod behind these policies |
+| `metabase-provision` (profile `bi`) | `metabase:3000` | `wait_ready()` retries connection errors and an unhealthy `/api/health` every 5s for up to 15 minutes (the first start migrates Metabase's database) |
 | Airflow migrations, create-user | `shop-db` | none: Airflow's imports take about 10s before the first connection; recheck if they fail with `Connection refused` |
 
 Long-running pods (Polaris, Trino, Kafka Connect, the exporter, the Airflow scheduler with LocalExecutor, the
