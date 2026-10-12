@@ -86,7 +86,7 @@ cache_args() {
 }
 
 # `k3d cluster create`, retried once when the agent did not register in time. That is a Docker/k3d start-up race
-# (seen at Gate 2; the retry registered after ~9s), and k3d has already rolled the cluster back. Any other failure,
+# (observed once: the retry registered after ~9s), and k3d has already rolled the cluster back. Any other failure,
 # or a second one, stops `make up`.
 k3d_create() {
   local out
