@@ -332,9 +332,15 @@ EOF
     wait_until 1800 "Backup $name completed" backup_settled "$name" || die "Backup $name did not finish"
     [ "$(cnpg_backup_phase "$name")" = completed ] || die "Backup $name failed: $(kube -n shop get backups.postgresql.cnpg.io "$name" -o jsonpath='{.status.error}')"
   fi
-  local pointer
-  pointer="$(kube -n shop get backups.postgresql.cnpg.io "$name" -o json | jq -ce '{serverName: .status.serverName, backupId: .status.backupId}')" ||
-    die "Backup $name has no serverName/backupId in its status"
+  # A plugin Backup's status has no serverName (only backupId and pluginMetadata): the chain is the one the Cluster
+  # archives to, read from its barman-cloud plugin parameters.
+  local pointer chain
+  chain="$(kube -n shop get clusters.postgresql.cnpg.io shop-db -o json |
+    jq -r '[.spec.plugins[]? | select(.name == "barman-cloud.cloudnative-pg.io") | .parameters.serverName] | first // empty')"
+  pointer="$(kube -n shop get backups.postgresql.cnpg.io "$name" -o json | jq -ce --arg chain "$chain" '
+    {serverName: (.status.serverName // (if $chain == "" then null else $chain end)), backupId: .status.backupId}
+    | select(.serverName != null and .backupId != null)')" ||
+    die "Backup $name: no backup chain (Cluster plugin serverName) or no backupId"
   save_pg_pointer "$pointer" "$name"
   log "backup pointer -> $pointer"
 }

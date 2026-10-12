@@ -45,7 +45,15 @@ def session_world(h: Harness, *, cluster: str = "ACTIVE", desired: str = "2") ->
     h.on(
         "kubectl",
         rf"backups.postgresql.cnpg.io {FINAL} -o json",
-        json_out={"status": {"serverName": "shop-db-20261009t120000z", "backupId": "20261009T170000"}},
+        # A plugin Backup's status has no serverName; the chain comes from the Cluster's plugin parameters.
+        json_out={"status": {"backupId": "20261009T170000", "method": "plugin"}},
+    )
+    h.on(
+        "kubectl",
+        r"clusters.postgresql.cnpg.io shop-db -o json",
+        json_out={
+            "spec": {"plugins": [{"name": "barman-cloud.cloudnative-pg.io", "parameters": {"serverName": "shop-db-20261009t120000z"}}]}
+        },
     )
     # Evidence
     h.on("kubectl", r"get pods -l app.kubernetes.io/name=prometheus", "prometheus-0")

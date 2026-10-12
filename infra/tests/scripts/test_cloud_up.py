@@ -12,7 +12,10 @@ from script_harness import REPO_ROOT, Harness, operator
 POINTER = {"serverName": "shop-db-20261001t080000z", "backupId": "20261001T110000"}
 NODES = {"items": [{"status": {"conditions": [{"type": "Ready", "status": "True"}]}}]}
 APPS = {"items": [{"status": {"sync": {"status": "Synced"}, "health": {"status": "Healthy"}}}]}
-CNPG = {"status": {"conditions": [{"type": "Ready", "status": "True"}]}}
+CNPG = {
+    "spec": {"plugins": [{"name": "barman-cloud.cloudnative-pg.io", "parameters": {"serverName": "shop-db-new"}}]},
+    "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+}
 TRINO_PASSWORD = "trino-smoke-password-value"
 ARGOCD_PASSWORD = "argocd-admin-password-value"
 PROBE_BLOCKED = '{"dns": "ok", "postgres": "timeout", "internet": "timeout"}\n'
@@ -144,7 +147,7 @@ def full_session(h: Harness) -> Harness:
     h.on(
         "kubectl",
         r"backups.postgresql.cnpg.io shop-db-\S+-initial -o json",
-        json_out={"status": {"serverName": "shop-db-new", "backupId": "B1"}},
+        json_out={"status": {"backupId": "B1", "method": "plugin"}},  # no serverName in a plugin Backup's status
     )
     h.on("kubectl", r"-n envoy-gateway-system get svc", json_out=GATEWAY_SVC)
     h.on("curl", r"-X POST .*/checkout", json_out={"id": 42, "status": "paid"})
@@ -200,6 +203,9 @@ def test_first_session_initdb_end_to_end(fake, hooks):
     ]
     positions = [fake.index_of(s) for s in steps]
     assert positions == sorted(positions), list(zip(steps, positions, strict=True))
+
+    pointer = next(c for c in fake.calls("aws") if "put-parameter" in c.argv and "/shopflow/aws/control/pg-backup-pointer" in c.argv)
+    assert json.loads(pointer.argv[pointer.argv.index("--value") + 1]) == {"serverName": "shop-db-new", "backupId": "B1"}
 
     marker = next(c for c in fake.calls("aws") if "/shopflow/aws/control/pg-initialized" in c.argv)
     assert "--overwrite" not in marker.argv, "the marker is write-once"
