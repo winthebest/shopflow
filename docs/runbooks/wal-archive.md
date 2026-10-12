@@ -28,6 +28,11 @@ and checkout fails.
 
 Point-in-time recovery is also blind past the last archived segment while this lasts: RPO grows with the backlog.
 
+Verified on a cluster (drill slot, 2026-10-12; profiles core,obs-lite,drill; 5 checkouts/s). With the object store
+blocked at 04:01:48Z, the archiver failed fast (one attempt every few seconds), and `ShopDbWalArchiveFailing` fired
+at 04:13:03Z (+11m15s) with 11 segments waiting. Once the store was back (04:13:36Z), the 11 segments were archived
+in under 40 s and the alert resolved within a minute. The page threshold (80 segments) was not reached.
+
 ## Triage
 
 1. How bad and how fast, in Grafana Explore:
