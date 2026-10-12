@@ -13,6 +13,8 @@
 # Also printed: bronze.orders rows with _op = 'r' ingested since --from, the bronze-side proof of such a snapshot.
 # Reads Postgres as shop_app and bronze through Trino as `exporter` (catalog lake_ro); passwords go to the pods on stdin.
 # Writes pg.tsv, bronze.tsv and one file per finding into --out; prints the counts.
+# Run it once CDC has caught up (cdc-lag green, or a minute after the load stops): an order changed in the last seconds
+#   would otherwise show as a status difference.
 # Usage: scripts/sre-cdc-gap.sh --from RFC3339 --to RFC3339 [--context CTX] [--epoch N] [--acks acks.jsonl] [--out DIR]
 set -uo pipefail
 
@@ -72,11 +74,22 @@ echo "epoch stamped on new rows: $stamped; epoch silver reads: ${read_by_silver:
 psql_shop <<SQL | sort -k1,1 > "$OUT/pg.tsv" || { echo "Postgres query failed" >&2; exit 1; }
 SELECT id, status FROM orders WHERE created_at >= '$A+00' AND created_at < '$B+00' ORDER BY id;
 SQL
-# id, seen_c, seen_r, status as silver will rank it, deleted — the latest row by (_op <> 'r', _lsn), like latest_state.
-trino_ro "SELECT id, bool_or(_op = 'c'), bool_or(_op = 'r'),
-    max_by(status, ROW(_op <> 'r', _lsn)), max_by(_op, ROW(_op <> 'r', _lsn)) = 'd'
-  FROM bronze.orders
-  WHERE _cdc_epoch = $EPOCH AND created_at >= TIMESTAMP '$A UTC' AND created_at < TIMESTAMP '$B UTC'
+# id, seen_c, seen_r, status as silver will rank it, deleted. Ids come from the window on rows other than deletes (a
+# delete carries only its key: Debezium fills created_at with a zero value under the default replica identity), then
+# every row of those ids is ranked exactly like latest_state: snapshot rows last, then the highest _lsn.
+trino_ro "WITH window_ids AS (
+    SELECT DISTINCT id FROM bronze.orders
+    WHERE _cdc_epoch = $EPOCH AND _op <> 'd'
+      AND created_at >= TIMESTAMP '$A UTC' AND created_at < TIMESTAMP '$B UTC'
+  ), ranked AS (
+    SELECT b.id, b._op, b.status,
+      row_number() OVER (PARTITION BY b.id ORDER BY (b._op <> 'r') DESC, b._lsn DESC) AS rk
+    FROM bronze.orders b JOIN window_ids w ON b.id = w.id
+    WHERE b._cdc_epoch = $EPOCH
+  )
+  SELECT id, bool_or(_op = 'c'), bool_or(_op = 'r'),
+    max(CASE WHEN rk = 1 THEN status END), max(CASE WHEN rk = 1 THEN _op END) = 'd'
+  FROM ranked
   GROUP BY id" | sort -k1,1 > "$OUT/bronze.tsv" || { echo "Trino query failed" >&2; exit 1; }
 
 resnapshot_rows="$(trino_ro "SELECT count(*) FROM bronze.orders WHERE _op = 'r' AND _ingested_at >= TIMESTAMP '$A UTC'")"
