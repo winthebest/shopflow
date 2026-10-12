@@ -19,6 +19,13 @@ concurrent or later settle of the same order writes nothing and reports the orde
 `POST /checkout` answer is built from what the order and settle transactions returned, never read back afterwards. A
 checkout whose settle lost to another settle answers 201 with the order's status.
 
+Stranded orders are settled by a sweeper. An order can stay `pending` when payments did not answer, or when its
+settle transaction failed after the charge. Every orders process claims `pending` orders untouched for 30 s (a lease,
+so claims never overlap), charges them again (payments answers the same for the same order, so there is no second
+charge) and settles the answer: succeeded → `paid`, declined → `failed`. While the payments circuit is open the
+sweeper waits, so `pending` orders accumulate and `orders_pending_oldest_age_seconds` grows. Orders may therefore
+stay `pending` for tens of seconds, or for as long as a payments outage lasts.
+
 ### `POST /checkout` responses (gateway)
 
 A payment decline is a business outcome, not a server error: it must never be a 5xx (the availability SLO counts
@@ -29,8 +36,8 @@ every gateway 5xx as bad).
 | Paid | `201` | order, `status: "paid"` |
 | Declined by payments | `201` | order, `status: "failed"` |
 | Invalid input, unknown customer/product, total too large | `422` | `detail` |
-| Payments timed out (order settled `failed`) | `504` | `detail`, `order_id`, `status` |
-| Payments unreachable / bad answer (order settled `failed`) | `502` | `detail`, `order_id`, `status` |
+| Payments timed out (order left `pending`; the stranded-order sweeper settles it) | `504` | `detail`, `order_id`, `status: "pending"` |
+| Payments unreachable / bad answer (order left `pending`; the stranded-order sweeper settles it) | `502` | `detail`, `order_id`, `status: "pending"` |
 | Payments circuit open (checked before the order is created: no order) | `503` + `Retry-After` | `detail` |
 | Orders timed out / unreachable / 5xx (incl. DB errors) | `504` / `502` | `detail` |
 
