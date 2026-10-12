@@ -35,7 +35,7 @@ Per-minute recording rule `gold:refresh_stale:minute` (1 = bad, 0 = good, no sam
 - **Known gap:** the SLI measures that dbt committed a snapshot, not that gold holds data. dbt rewrites every mart
   each hour (CREATE OR REPLACE, `append` snapshots) even when silver is empty. Seen on 2026-10-10: on a fresh cluster
   nothing recorded the CDC epoch in `meta.cdc_epochs`, so silver joined no epoch, and gold would have been empty yet
-  "fresh". `make up` now waits for the epoch (`cdc-epoch.sh wait`, #189). The dbt test
+  "fresh". `make up` now waits for the epoch's snapshot (`cdc-epoch.sh wait`). The dbt test
   `assert_completed_cdc_epoch_exists` would fail that `dbt_build` run, but a failed run shows only in the Airflow UI
   (no alert pages for it), and gold still gets fresh `append` snapshots, so `GoldFreshnessBurn` stays quiet. The
   daily reconciliation (Postgres vs gold) catches an empty gold a day later. Follow-up: count a mart with no rows as
