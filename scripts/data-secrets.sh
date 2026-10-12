@@ -4,15 +4,16 @@
 # needs the public age recipient in .sops.yaml; this script never decrypts and never reads the age key.
 # Secrets come in groups whose values must change together (the S3 identities and their client copies; the Trino
 # users and their bcrypt file): a group is generated when none of its files exist, kept when all exist, and refused
-# when only some do. ROTATE=1 regenerates every group, ROTATE=<group> only that one (lakehouse, airflow, backup).
+# when only some do. ROTATE=1 regenerates every group, ROTATE=<group> only that one (lakehouse, trino, backup,
+# airflow).
 # Credentials owned by other lanes (CNPG role passwords) are copied in the cluster instead (secret-copy.yaml).
 # Needs: sops, openssl, htpasswd (bcrypt for Trino's password file).
 #
 # --aws-json: print the origin Secrets an AWS cluster needs as JSON for SSM, and nothing else:
 #   scripts/data-secrets.sh --aws-json | scripts/aws-seed-params.sh
 # Only Trino's: on AWS the catalog is Glue (docs/adr/0506, no Polaris) and S3 uses Pod Identity (no SeaweedFS, no S3
-# keys). trino-dbt, trino-exporter and trino-password-db form one group (the bcrypt hashes are of those passwords), so
-# they are always printed and seeded together. Refuses a terminal as stdout. Needs openssl, htpasswd, jq.
+# keys). trino-dbt, trino-exporter, trino-metabase and trino-password-db form one group (the bcrypt hashes are of
+# those passwords), so they are always printed and seeded together. Refuses a terminal as stdout. Needs openssl, htpasswd, jq.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -31,11 +32,16 @@ LAKEHOUSE_FILES=(
   deploy/platform/trino/local/secrets/lake-s3-trino.enc.yaml
   deploy/platform/trino/local/secrets/lake-s3-trino-ro.enc.yaml
   deploy/platform/trino/local/secrets/trino-internal.enc.yaml
-  deploy/platform/trino/local/secrets/trino-dbt.enc.yaml
-  deploy/platform/trino/local/secrets/trino-exporter.enc.yaml
-  deploy/platform/trino/local/secrets/trino-password-db.enc.yaml
   deploy/platform/kafka-connect/local/secrets/lake-s3-iceberg-sink.enc.yaml
   deploy/platform/flink/local/secrets/flink-s3.enc.yaml
+)
+# Trino users with password login and their bcrypt file, separate from the lakehouse group so a user can be added
+# (ROTATE=trino) without regenerating the lake's credentials.
+TRINO_FILES=(
+  deploy/platform/trino/local/secrets/trino-dbt.enc.yaml
+  deploy/platform/trino/local/secrets/trino-exporter.enc.yaml
+  deploy/platform/trino/local/secrets/trino-metabase.enc.yaml
+  deploy/platform/trino/local/secrets/trino-password-db.enc.yaml
 )
 # SeaweedFS identity of CNPG's backups (bucket pg-backup), separate from the lakehouse group so it could be added
 # without regenerating the lake's credentials: SeaweedFS's init container merges it into s3.json at start
@@ -53,11 +59,12 @@ AIRFLOW_FILES=(
 hex() { openssl rand -hex "$1"; }
 
 # Trino users with password login (rules.json). The password file holds bcrypt hashes only (cost 10, $2y$) of the
-# same passwords as trino-dbt and trino-exporter: the three Secrets only work together.
+# same passwords as trino-dbt, trino-exporter and trino-metabase: the four Secrets only work together.
 trino_users() {
-  dbt_password="$(hex 24)" exporter_password="$(hex 24)"
+  dbt_password="$(hex 24)" exporter_password="$(hex 24)" metabase_password="$(hex 24)"
   password_db="$(htpasswd -niB -C 10 dbt <<< "$dbt_password")
-$(htpasswd -niB -C 10 exporter <<< "$exporter_password")"
+$(htpasswd -niB -C 10 exporter <<< "$exporter_password")
+$(htpasswd -niB -C 10 metabase <<< "$metabase_password")"
 }
 
 # JSON input of scripts/aws-seed-params.sh: {"_groups": [[...]], "<namespace>": {"<secret>": {"<key>": "<value>"}}}.
@@ -72,12 +79,15 @@ if ((AWS_JSON)); then
     --rawfile internal <(printf '%s' "$(hex 32)") \
     --rawfile dbt <(printf '%s' "$dbt_password") \
     --rawfile exporter <(printf '%s' "$exporter_password") \
+    --rawfile metabase <(printf '%s' "$metabase_password") \
     --rawfile password_db <(printf '%s' "$password_db") \
-    '{_groups: [["lakehouse/trino-dbt", "lakehouse/trino-exporter", "lakehouse/trino-password-db"]],
+    '{_groups: [["lakehouse/trino-dbt", "lakehouse/trino-exporter", "lakehouse/trino-metabase",
+                 "lakehouse/trino-password-db"]],
       lakehouse: {
         "trino-internal": {"shared-secret": $internal},
         "trino-dbt": {username: "dbt", password: $dbt},
         "trino-exporter": {username: "exporter", password: $exporter},
+        "trino-metabase": {username: "metabase", password: $metabase},
         "trino-password-db": {"password.db": $password_db}}}'
   exit 0
 fi
@@ -138,16 +148,18 @@ JSON
   secret lakehouse lake-s3-trino-ro access-key-id "$trino_ro_key" secret-access-key "$trino_ro_secret" \
     | encrypt "${LAKEHOUSE_FILES[4]}"
   secret lakehouse trino-internal shared-secret "$(hex 32)" | encrypt "${LAKEHOUSE_FILES[5]}"
-
-  trino_users
-  secret lakehouse trino-dbt username dbt password "$dbt_password" | encrypt "${LAKEHOUSE_FILES[6]}"
-  secret lakehouse trino-exporter username exporter password "$exporter_password" | encrypt "${LAKEHOUSE_FILES[7]}"
-  secret lakehouse trino-password-db password.db "$password_db" | encrypt "${LAKEHOUSE_FILES[8]}"
-
   secret kafka lake-s3-iceberg-sink access-key-id "$sink_key" secret-access-key "$sink_secret" \
-    | encrypt "${LAKEHOUSE_FILES[9]}"
+    | encrypt "${LAKEHOUSE_FILES[6]}"
   # Flink checkpoints (deploy/platform/flink): only below lake/flink-ckpt/ (SeaweedFS wildcard actions).
-  secret flink flink-s3 access-key-id "$flink_key" secret-access-key "$flink_secret" | encrypt "${LAKEHOUSE_FILES[10]}"
+  secret flink flink-s3 access-key-id "$flink_key" secret-access-key "$flink_secret" | encrypt "${LAKEHOUSE_FILES[7]}"
+}
+
+generate_trino() {
+  trino_users
+  secret lakehouse trino-dbt username dbt password "$dbt_password" | encrypt "${TRINO_FILES[0]}"
+  secret lakehouse trino-exporter username exporter password "$exporter_password" | encrypt "${TRINO_FILES[1]}"
+  secret lakehouse trino-metabase username metabase password "$metabase_password" | encrypt "${TRINO_FILES[2]}"
+  secret lakehouse trino-password-db password.db "$password_db" | encrypt "${TRINO_FILES[3]}"
 }
 
 generate_backup() {
@@ -180,5 +192,6 @@ generate_group() {
 }
 
 generate_group lakehouse "${LAKEHOUSE_FILES[@]}"
+generate_group trino "${TRINO_FILES[@]}"
 generate_group backup "${BACKUP_FILES[@]}"
 generate_group airflow "${AIRFLOW_FILES[@]}"
