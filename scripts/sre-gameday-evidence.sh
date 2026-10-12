@@ -2,6 +2,7 @@
 # Export the numbers a game-day postmortem needs from Prometheus before the cluster goes away (read-only).
 #   alerts.tsv        every alert that fired in the window: first and last firing time (UTC+7), severity
 #   <name>.csv        one series per row of SERIES below, sampled every STEP: time (UTC+7), labels, value
+# Burn rates are the SLI error ratio over the window divided by the error budget (1 = spending it exactly on time).
 # Time zone of the output: TZ (default Asia/Saigon). Times passed to --from/--to: RFC 3339 or Unix seconds.
 #
 # Usage: scripts/sre-gameday-evidence.sh --from TIME [--to TIME] [--context CTX] [--out DIR] [--step 60s]
@@ -30,8 +31,13 @@ done
 SERIES=(
   "checkout-availability-error-5m|slo:sli_error:ratio_rate5m{sloth_service=\"checkout\", sloth_slo=\"availability\"}"
   "checkout-latency-error-5m|slo:sli_error:ratio_rate5m{sloth_service=\"checkout\", sloth_slo=\"latency\"}"
+  "checkout-burn-5m|max by (sloth_slo) (slo:sli_error:ratio_rate5m{sloth_service=\"checkout\"}) / on (sloth_slo) max by (sloth_slo) (slo:error_budget:ratio{sloth_service=\"checkout\"})"
+  "checkout-burn-30m|max by (sloth_slo) (slo:sli_error:ratio_rate30m{sloth_service=\"checkout\"}) / on (sloth_slo) max by (sloth_slo) (slo:error_budget:ratio{sloth_service=\"checkout\"})"
+  "checkout-burn-1h|max by (sloth_slo) (slo:sli_error:ratio_rate1h{sloth_service=\"checkout\"}) / on (sloth_slo) max by (sloth_slo) (slo:error_budget:ratio{sloth_service=\"checkout\"})"
   "error-budget-remaining|slo:period_error_budget_remaining:ratio"
   "checkout-requests-per-s|sum(rate(traces_span_metrics_calls_total{service_name=\"gateway\", span_kind=\"SPAN_KIND_SERVER\", http_route=\"/checkout\"}[1m]))"
+  "checkout-responses-per-min|sum by (http_response_status_code) (increase(traces_span_metrics_calls_total{service_name=\"gateway\", span_kind=\"SPAN_KIND_SERVER\", http_route=\"/checkout\"}[1m]))"
+  "checkout-latency-p99-s|histogram_quantile(0.99, sum by (le) (rate(traces_span_metrics_duration_seconds_bucket{service_name=\"gateway\", span_kind=\"SPAN_KIND_SERVER\", http_route=\"/checkout\"}[1m])))"
   "payments-attempts-per-s|sum by (attempt, outcome) (rate(orders_payments_attempts_total[1m]))"
   "payments-circuit-state|max by (instance) (orders_payments_circuit_state)"
   "orders-pending-oldest-age-s|max by (job) (orders_pending_oldest_age_seconds)"
@@ -43,7 +49,8 @@ SERIES=(
   "wal-growth-bytes-per-s|max by (slot_name) (deriv(shopflow:pg_slot_wal_retained:bytes[15m]))"
   "wal-archive-pending-segments|max by (pod) (shopflow:pg_wal_archive_pending:segments)"
   "wal-archive-failing|max by (pod) (shopflow:pg_wal_archive_failing:bool)"
-  "fulfillment-worker-replicas|max(kube_deployment_status_replicas{namespace=\"shop\", deployment=\"fulfillment-worker\"})"
+  "shop-replicas|max by (deployment) (kube_deployment_status_replicas{namespace=\"shop\"})"
+  "payments-ready-pods|sum(kube_pod_status_ready{namespace=\"shop\", condition=\"true\", pod=~\"payments-.*\"})"
 )
 
 # shellcheck source=scripts/sre-prom-lib.sh
