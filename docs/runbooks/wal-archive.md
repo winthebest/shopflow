@@ -34,11 +34,14 @@ Point-in-time recovery is also blind past the last archived segment while this l
    - `shopflow:pg_wal_archive_pending:segments`: segments waiting (×16 MiB);
    - `deriv(shopflow:pg_wal_archive_pending:segments[15m]) * 60`: segments a minute;
    - `cnpg_pg_stat_archiver_failed_count`, `cnpg_pg_stat_archiver_seconds_since_last_archival`.
-2. Why, from the plugin sidecar (`plugin-barman-cloud`; `kubectl -n shop get pod shop-db-1 -o
-   jsonpath='{.spec.containers[*].name}'` lists the containers):
+2. Why, from the plugin sidecar `plugin-barman-cloud`. It runs as a native sidecar (an init container with
+   `restartPolicy: Always`), so it is listed by `kubectl -n shop get pod shop-db-1 -o
+   jsonpath='{.spec.initContainers[*].name}'`, not under `.spec.containers` (confirmed in the drill slot):
    `kubectl -n shop logs shop-db-1 -c plugin-barman-cloud --since=30m | tail -50`, and Postgres' own view:
    `kubectl -n shop exec shop-db-1 -c postgres -- psql -c 'select * from pg_stat_archiver'`.
-3. Typical messages:
+3. Typical messages. Each failed attempt logs `Error invoking barman-cloud-wal-archive` with the `walName`, then
+   `Failed archiving WAL: PostgreSQL will retry` (seen in the drill slot: one attempt every few seconds, ~6.5 s each,
+   against `--endpoint-url http://seaweedfs.lakehouse.svc:8333`). The cause is in the lines around it:
    - `AccessDenied` / `InvalidAccessKeyId` / `401`: credentials. Locally the Secret `shop/shop-db-backup-s3` (copied
      by the `cnpg-barman-plugin` app from SeaweedFS' identity in `lakehouse`); on AWS the pod's IAM role.
    - connection refused / timeout to port 8333: SeaweedFS down (`kubectl -n lakehouse get pods`), or the
