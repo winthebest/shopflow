@@ -35,7 +35,11 @@ login in Secret `airflow/airflow-admin`). By task:
 - `models.<model>.test`: a data test failed. Find the failing rows with
   `dbt test --select <test> --store-failures` or the compiled SQL in the log. Typical causes: a new status value in
   Postgres (accepted_values; update `models/silver/silver.yml` with the Alembic CHECK constraint), duplicates in
-  silver (unique; a bronze row without `_lsn`?), relationships broken by a delete in Postgres.
+  silver (unique; a bronze row without `_lsn`?), relationships broken by a delete in Postgres. A `not_null` failure on
+  a column the contract makes NOT NULL usually means a column was renamed or dropped in Postgres without a contract
+  change. Bronze then gets NULL, because the sink drops unknown fields. Compare `\d <table>` in Postgres with
+  `data/contracts/<table>.yaml`. Once the schema is back, re-emit the affected rows (an UPDATE that touches them) or
+  re-snapshot ([cdc-resnapshot](cdc-resnapshot.md)). Only then rerun.
 - `models.relationships_*`: runs after both parents; a failure is a real orphan, not an ordering problem.
 - `source_freshness`: `bronze.heartbeat` older than 30 minutes, which means CDC is behind. It does not block the
   models, see [cdc-lag](cdc-lag.md).
