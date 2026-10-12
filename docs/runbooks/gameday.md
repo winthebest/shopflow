@@ -26,8 +26,9 @@ Chaos Mesh exists in the cluster only during the game day ([ADR 0303](../adr/030
 
 ## After
 
-1. `make sre-chaos-off CLUSTER=…`: deletes root-chaos, every experiment (while the controller still runs), then
-   the Chaos Mesh Application. It fails unless no chaos CRD, daemon pod or webhook is left.
+1. `make sre-chaos-off CLUSTER=…`: deletes root-chaos, every experiment (while the controller still runs), the
+   Chaos Mesh Application, then the chaos-mesh.org CRDs (Argo CD does not track a chart's `crds/`, so deleting the
+   Application leaves them). It fails unless no chaos CRD, daemon pod or webhook is left.
 2. Export the numbers the postmortem needs before the cluster goes away:
    `make sre-gameday-evidence SRE_GATE_CONTEXT=k3d-<cluster> FROM=<start, RFC 3339 or Unix> [TO=…]` writes
    `out/gameday-<UTC>/alerts.tsv` (first/last firing time of every alert, UTC+7) and one CSV per key series
