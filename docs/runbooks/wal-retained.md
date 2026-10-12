@@ -38,6 +38,13 @@ the ticket comes at ~3h and the page ~1h before the cap.
 | Cannot recover before the cap | Let Postgres invalidate the slot (do not raise the cap blindly: it only moves the disk risk). Then re-snapshot under a new epoch with `scripts/cdc-epoch.sh` (sf-data), and check the Phase 5 reconciliation |
 | Planned stop (game day 3) | Stop the experiment (`kubectl delete -f chaos/gd3-debezium-stopped.yaml`) before retained WAL passes 80% |
 
+After the connector is back, retained WAL keeps growing for another 2–3 minutes: the slot only moves when Debezium
+flushes its offsets (about once a minute) after it has caught up. In game day 3b it peaked at 78% of the cap 2.5
+minutes after Connect returned, then dropped to one segment. Do not raise the cap because the number still climbs
+right after the fix. The catch-up also loads the primary: Debezium decodes the whole backlog on shop-db (≈ 385 MB in
+game day 3b), which shares the database with checkout; one checkout timed out (504) at that minute. Expect a short
+bump in database load and checkout latency while CDC catches up.
+
 ## After
 
 Record in the postmortem: time from stop to each alert, retained bytes at the peak, whether the slot survived,

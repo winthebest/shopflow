@@ -7,7 +7,8 @@
 #   (secondary observation; the WAL, CDC and alert numbers are the goal).
 # Blast radius: the CDC pipeline (both connectors of the `cdc` Connect cluster) and, with profile ops, fulfillment
 #   (shipments delayed, not lost); checkout keeps working.
-# Stop: automatic after 30m; earlier with `kubectl delete -f` if retained WAL passes 80% of max_slot_wal_keep_size.
+# Stop: automatic after 30m; earlier with `kubectl delete -f` once retained WAL + 3 minutes of growth would pass 80% of
+#   max_slot_wal_keep_size (the slot keeps growing until Debezium's first offset flush after it returns).
 apiVersion: chaos-mesh.org/v1alpha1
 kind: PodChaos
 metadata:
