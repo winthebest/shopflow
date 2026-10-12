@@ -9,7 +9,8 @@ from datetime import datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import insert, select, text, update
+from sqlalchemy import select, text, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orders.models import Customer, Order, OrderItem, Payment, Product
@@ -23,6 +24,19 @@ MAX_TOTAL = Decimal("9999999999.99")  # Numeric(12, 2)
 
 class InvalidCheckoutError(Exception):
     """The request names a customer or product that does not exist, or its total does not fit the schema."""
+
+
+class DuplicateIdempotencyKeyError(Exception):
+    """Another checkout with the same `Idempotency-Key` created its order first (concurrent duplicate)."""
+
+
+@dataclass(frozen=True)
+class KeyedOrder:
+    """The order an `Idempotency-Key` already created: enough to replay, refuse or ask the client to wait."""
+
+    id: int
+    status: str
+    request_hash: str
 
 
 class ProductOut(BaseModel):
@@ -77,8 +91,27 @@ async def list_products(session: AsyncSession) -> list[ProductOut]:
     return [ProductOut.model_validate(p) for p in products]
 
 
-async def create_pending_order(sessionmaker: async_sessionmaker[AsyncSession], req: CheckoutRequest) -> PendingOrder:
-    """Insert the order (`pending`) and its items in one transaction, priced from the catalog."""
+async def find_keyed_order(sessionmaker: async_sessionmaker[AsyncSession], idempotency_key: str) -> KeyedOrder | None:
+    async with sessionmaker() as session:
+        row = (
+            await session.execute(
+                select(Order.id, Order.status, Order.request_hash).where(Order.idempotency_key == idempotency_key)
+            )
+        ).one_or_none()
+    return None if row is None else KeyedOrder(row.id, row.status, row.request_hash)
+
+
+async def create_pending_order(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    req: CheckoutRequest,
+    idempotency_key: str | None = None,
+    request_hash: str | None = None,
+) -> PendingOrder:
+    """Insert the order (`pending`) and its items in one transaction, priced from the catalog.
+
+    With an `Idempotency-Key`, a concurrent checkout that stored the same key first wins: the insert does nothing
+    (`ON CONFLICT DO NOTHING` waits for that transaction) and DuplicateIdempotencyKeyError is raised, nothing written.
+    """
     async with sessionmaker.begin() as session:
         if await session.get(Customer, req.customer_id) is None:
             raise InvalidCheckoutError(f"unknown customer {req.customer_id}")
@@ -93,13 +126,23 @@ async def create_pending_order(sessionmaker: async_sessionmaker[AsyncSession], r
         total = sum((prices[item.product_id] * item.quantity for item in req.items), Decimal(0))
         if total > MAX_TOTAL:
             raise InvalidCheckoutError(f"order total {total} exceeds {MAX_TOTAL}")
-        order_id, created_at = (
+        inserted = (
             await session.execute(
                 insert(Order)
-                .values(customer_id=req.customer_id, status="pending", total=total)
+                .values(
+                    customer_id=req.customer_id,
+                    status="pending",
+                    total=total,
+                    idempotency_key=idempotency_key,
+                    request_hash=request_hash,
+                )
+                .on_conflict_do_nothing(index_elements=[Order.idempotency_key])
                 .returning(Order.id, Order.created_at)
             )
-        ).one()
+        ).one_or_none()
+        if inserted is None:
+            raise DuplicateIdempotencyKeyError(idempotency_key)
+        order_id, created_at = inserted
         items = [
             OrderItemOut(product_id=item.product_id, quantity=item.quantity, unit_price=prices[item.product_id])
             for item in req.items

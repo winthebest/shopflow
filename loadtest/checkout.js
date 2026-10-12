@@ -8,9 +8,14 @@
 // time it was acked. After a restore, RPO = max(acked_at) - max(orders.created_at), and acked ids missing from the
 // database are lost orders. `make app-loadtest` writes these lines to out/ (git-ignored).
 //
+// Every checkout carries a fresh Idempotency-Key (a UUID). With RETRIES > 0, a checkout answered 409/502/503/504
+// is retried up to RETRIES times with the same key and body, after the server's Retry-After (else 1s): the retry
+// gets the order the first attempt created, never a second one. Retries are tagged `checkout_retry`, so the
+// checkout SLO thresholds still measure first attempts.
+//
 // Env: BASE_URL (http://localhost:8000), PROFILE (constant|ramp), RATE (checkouts/s, 20), DURATION (5m),
-//      RAMP_UP (1m), CUSTOMERS (100: seed ids 1..100), MAX_VUS (200).
-import { check } from 'k6';
+//      RAMP_UP (1m), CUSTOMERS (100: seed ids 1..100), MAX_VUS (200), RETRIES (0).
+import { check, sleep } from 'k6';
 import http from 'k6/http';
 import { Counter } from 'k6/metrics';
 
@@ -21,6 +26,8 @@ const DURATION = __ENV.DURATION || '5m';
 const RAMP_UP = __ENV.RAMP_UP || '1m';
 const CUSTOMERS = Number(__ENV.CUSTOMERS || 100);
 const MAX_VUS = Number(__ENV.MAX_VUS || 200);
+const RETRIES = Number(__ENV.RETRIES || 0);
+const RETRYABLE = new Set([409, 502, 503, 504]);
 
 // Each iteration = 1 browse + 1 checkout, so HTTP requests/s = 2 x RATE.
 const SCENARIOS = {
@@ -64,6 +71,7 @@ export const options = {
 
 const ordersPaid = new Counter('orders_paid');
 const ordersFailed = new Counter('orders_failed');
+const checkoutRetries = new Counter('checkout_retries');
 
 export function setup() {
   const res = http.get(`${BASE_URL}/products`, { tags: { name: 'setup' } });
@@ -95,10 +103,13 @@ export default function (data) {
   check(browse, { 'products 200': (r) => r.status === 200 });
 
   const payload = JSON.stringify({ customer_id: randomInt(1, CUSTOMERS), items: pickItems(data.productIds) });
-  const res = http.post(`${BASE_URL}/checkout`, payload, {
-    headers: { 'Content-Type': 'application/json' },
-    tags: { name: 'checkout' },
-  });
+  const headers = { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() };
+  let res = http.post(`${BASE_URL}/checkout`, payload, { headers, tags: { name: 'checkout' } });
+  for (let retry = 1; retry <= RETRIES && RETRYABLE.has(res.status); retry++) {
+    sleep(Number(res.headers['Retry-After']) || 1);
+    res = http.post(`${BASE_URL}/checkout`, payload, { headers, tags: { name: 'checkout_retry' } });
+    checkoutRetries.add(1);
+  }
   const acked = check(res, { 'checkout 201': (r) => r.status === 201 });
   if (!acked) {
     return;

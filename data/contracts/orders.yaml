@@ -24,3 +24,10 @@ columns:
   - name: updated_at
     type: timestamp with time zone
     nullable: false
+  # Optional Idempotency-Key of the checkout that created the order (POST /checkout), and the SHA-256 of that request.
+  - name: idempotency_key
+    type: text
+    nullable: true
+  - name: request_hash
+    type: text
+    nullable: true

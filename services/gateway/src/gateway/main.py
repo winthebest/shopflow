@@ -1,7 +1,8 @@
 """gateway service: the only public API (`GET /products`, `POST /checkout`, `GET /orders/{id}`).
 
-It validates input at the edge, forwards to `orders` with a 1s total deadline (never retried: `POST /checkout` is not
-idempotent), and turns downstream failures into explicit 502 (unreachable or broken) / 504 (too slow) responses.
+It validates input at the edge, forwards to `orders` with a 1s total deadline, and turns downstream failures into
+explicit 502 (unreachable or broken) / 504 (too slow) responses. It never retries `POST /checkout` itself: only the
+client can make a retry safe, by sending the same `Idempotency-Key`.
 """
 
 import asyncio
@@ -11,12 +12,12 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
 import httpx
-from fastapi import FastAPI, Path, Request, Response
+from fastapi import FastAPI, Header, Path, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic_settings import BaseSettings
 
 from shopflow_common.log import AccessLogMiddleware, configure_logging
-from shopflow_common.schemas import MAX_ID, CheckoutRequest
+from shopflow_common.schemas import IDEMPOTENCY_KEY_HEADER, IDEMPOTENCY_KEY_PATTERN, MAX_ID, CheckoutRequest
 from shopflow_common.server import serve
 from shopflow_common.telemetry import setup_telemetry
 
@@ -32,11 +33,13 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
 
-async def forward(request: Request, method: str, path: str, json: Any = None) -> Response:
+async def forward(
+    request: Request, method: str, path: str, json: Any = None, headers: dict[str, str] | None = None
+) -> Response:
     client: httpx.AsyncClient = request.app.state.orders
     try:
         async with asyncio.timeout(ORDERS_TIMEOUT_S):
-            upstream = await client.request(method, path, json=json)
+            upstream = await client.request(method, path, json=json, headers=headers)
     except (TimeoutError, httpx.TimeoutException):
         log.warning("orders timed out", extra={"upstream_path": path})
         return JSONResponse({"detail": "orders service timed out"}, status_code=504)
@@ -50,7 +53,7 @@ async def forward(request: Request, method: str, path: str, json: Any = None) ->
             {"detail": "orders service error", "upstream_status": upstream.status_code}, status_code=502
         )
     # 2xx/4xx, and 502/503/504 that orders already mapped from its own dependency (payments), pass through as-is;
-    # so does `Retry-After` (sent with 503 while the payments circuit is open).
+    # so does `Retry-After` (503 while the payments circuit is open, 409 while a keyed checkout is in progress).
     retry_after = upstream.headers.get("retry-after")
     return Response(
         content=upstream.content,
@@ -93,8 +96,16 @@ def create_app(settings: Settings | None = None, orders_transport: httpx.AsyncBa
         return await forward(request, "GET", "/products")
 
     @app.post("/checkout")
-    async def checkout(body: CheckoutRequest, request: Request) -> Response:
-        return await forward(request, "POST", "/orders", json=body.model_dump(mode="json"))
+    async def checkout(
+        body: CheckoutRequest,
+        request: Request,
+        idempotency_key: Annotated[
+            str | None, Header(alias=IDEMPOTENCY_KEY_HEADER, pattern=IDEMPOTENCY_KEY_PATTERN)
+        ] = None,
+    ) -> Response:
+        # The key makes a retried checkout safe: orders answers with the order it already created.
+        headers = {IDEMPOTENCY_KEY_HEADER: idempotency_key} if idempotency_key else None
+        return await forward(request, "POST", "/orders", json=body.model_dump(mode="json"), headers=headers)
 
     @app.get("/orders/{order_id}")
     async def get_order(order_id: Annotated[int, Path(gt=0, le=MAX_ID)], request: Request) -> Response:
