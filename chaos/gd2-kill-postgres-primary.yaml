@@ -7,12 +7,15 @@
 #   then targetPrimaryTimestamp, then currentPrimary = targetPrimary). Checkouts fail only until orders reconnects to
 #   the new primary through shop-db-rw (seconds without an ack in k6's log). Replication is asynchronous, so an order
 #   acked just before the kill can be lost: every acked order_id is looked up in Postgres after the failover.
-# H-A: debezium_shop does not exist on the new primary, so CDC breaks. Either the task fails (CdcConnectorFailed, then
-#   the cdc-lag page), or Debezium creates a new slot at the current LSN and streams on: a gap with no alert (the
-#   heartbeat stays fresh and PostgresSlotInactive cannot fire on a missing slot). The gap is measured as order ids in
-#   Postgres missing from bronze.orders around the kill; recovery: docs/runbooks/cdc-resnapshot.md (new epoch).
-# H-B: Debezium reconnects to the promoted standby's synced slot and resumes from its offset: a lag spike, no gap, no
-#   re-snapshot.
+# H-A: debezium_shop does not exist on the new primary. Debezium (snapshot.mode when_needed) finds its stored offset
+#   unavailable ("Last recorded offset is no longer available on the server"), snapshots every table again into the
+#   SAME epoch, then streams. Bronze gets the rows again as r, but silver's latest_state ranks streamed c/u above r: an
+#   order updated or deleted during the gap stays stale in silver, and the Flink KPI (it counts c) misses orders created
+#   in it. Nothing alerts (the heartbeat stays fresh) until the daily reconciliation. Measured with
+#   scripts/sre-cdc-gap.sh; recovery: docs/runbooks/cdc-resnapshot.md (a new epoch).
+# H-B: Debezium finds the promoted standby's synced slot ("Obtained valid replication slot", snapshot SKIPPED) and
+#   resumes from its offset: a lag spike, no gap, no re-snapshot. A synced slot that was invalidated fails the task
+#   instead (CdcConnectorFailed), which is loud.
 # Blast radius: shop-db (namespace shop): checkout writes for seconds; CDC downstream (in H-A until the re-snapshot).
 # Stop: one-shot kill. No new primary within 3 minutes: stop the load, record, `make down` (a fresh game-day cluster).
 apiVersion: chaos-mesh.org/v1alpha1
