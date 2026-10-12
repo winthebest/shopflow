@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Signal | Task `reconcile` of DAG `reconciliation` failed (daily 04:45 UTC) |
+| Signal | `AirflowDagRunFailed{dag_id="reconciliation"}` (ticket): task `reconcile` failed (daily 04:45 UTC, no retry); resolves when a later run succeeds. A run that never ends raises nothing (the Airflow UI shows whether today's run finished) |
 | Test | [`data/dbt/tests/generic/reconciles_with_postgres.sql`](../../data/dbt/tests/generic/reconciles_with_postgres.sql) on every silver table |
 | Decision | docs/adr/0413 (silver), 0412 (reconciliation tests, var `reconcile`) |
 

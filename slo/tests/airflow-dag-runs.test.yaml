@@ -1,0 +1,85 @@
+# promtool unit tests for the failed-DAG-run alerts (sf-data). Rule file: the `.spec` of
+# deploy/platform/slo/base/airflow-dag-runs.prometheusrule.yaml, extracted next to this file by scripts/sre-check.sh.
+# cnpg_airflow_dag_run_last_failed{dag_id} is 1 while the DAG's latest finished run failed (CNPG custom query on
+# shop-db, primary only), 0 once a later run succeeded.
+rule_files:
+  - airflow-dag-runs.rules.yaml
+evaluation_interval: 1m
+
+tests:
+  # dbt_build's run fails at minute 31 (after its retry) → ticket 5 minutes later (silent at 35, firing at 37). The
+  # next run succeeds at minute 72 and the alert resolves.
+  - name: a failed run raises a ticket that resolves once a later run succeeds
+    interval: 1m
+    input_series:
+      - series: 'cnpg_airflow_dag_run_last_failed{dag_id="dbt_build",namespace="shop",pod="shop-db-1"}'
+        values: '0x30 1x40 0x30'
+    alert_rule_test:
+      - {eval_time: 30m, alertname: AirflowDagRunFailed, exp_alerts: []}
+      - {eval_time: 35m, alertname: AirflowDagRunFailed, exp_alerts: []}
+      - eval_time: 37m
+        alertname: AirflowDagRunFailed
+        exp_alerts:
+          - exp_labels: {severity: ticket, team: sf-data, dag_id: dbt_build}
+            exp_annotations:
+              summary: "The latest run of DAG dbt_build failed: silver and gold stay at their previous version."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/dbt-failure.md
+      - {eval_time: 75m, alertname: AirflowDagRunFailed, exp_alerts: []}
+
+  # Without profile batch, Airflow's tables do not exist: the custom query is skipped and exports no series.
+  - name: no Airflow tables, no series, no alert
+    interval: 1m
+    input_series:
+      - series: 'cnpg_collector_up{namespace="shop",pod="shop-db-1"}'
+        values: '1x60'
+    alert_rule_test:
+      - {eval_time: 60m, alertname: AirflowDagRunFailed, exp_alerts: []}
+
+  # dbt_build fails from minute 11 on, iceberg_maintenance from 21 to 50, reconciliation keeps succeeding: one alert
+  # per failed DAG, each with its own runbook.
+  - name: each DAG alerts on its own with its runbook
+    interval: 1m
+    input_series:
+      - series: 'cnpg_airflow_dag_run_last_failed{dag_id="dbt_build",namespace="shop",pod="shop-db-1"}'
+        values: '0x10 1x60'
+      - series: 'cnpg_airflow_dag_run_last_failed{dag_id="reconciliation",namespace="shop",pod="shop-db-1"}'
+        values: '0x70'
+      - series: 'cnpg_airflow_dag_run_last_failed{dag_id="iceberg_maintenance",namespace="shop",pod="shop-db-1"}'
+        values: '0x20 1x29 0x20'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: AirflowDagRunFailed
+        exp_alerts:
+          - exp_labels: {severity: ticket, team: sf-data, dag_id: dbt_build}
+            exp_annotations:
+              summary: "The latest run of DAG dbt_build failed: silver and gold stay at their previous version."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/dbt-failure.md
+          - exp_labels: {severity: ticket, team: sf-data, dag_id: iceberg_maintenance}
+            exp_annotations:
+              summary: "The latest run of DAG iceberg_maintenance failed: small files and old snapshots pile up meanwhile."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/iceberg-maintenance-failure.md
+      - eval_time: 60m
+        alertname: AirflowDagRunFailed
+        exp_alerts:
+          - exp_labels: {severity: ticket, team: sf-data, dag_id: dbt_build}
+            exp_annotations:
+              summary: "The latest run of DAG dbt_build failed: silver and gold stay at their previous version."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/dbt-failure.md
+
+  # A failover at minute 21 moves the series from shop-db-1 to shop-db-2: still one alert for reconciliation, which
+  # keeps firing (it does not go back to pending under new labels).
+  - name: a failover keeps one alert per DAG
+    interval: 1m
+    input_series:
+      - series: 'cnpg_airflow_dag_run_last_failed{dag_id="reconciliation",namespace="shop",pod="shop-db-1"}'
+        values: '1x20 _x20'
+      - series: 'cnpg_airflow_dag_run_last_failed{dag_id="reconciliation",namespace="shop",pod="shop-db-2"}'
+        values: '_x20 1x20'
+    alert_rule_test:
+      - eval_time: 23m
+        alertname: AirflowDagRunFailed
+        exp_alerts:
+          - exp_labels: {severity: ticket, team: sf-data, dag_id: reconciliation}
+            exp_annotations:
+              summary: "The latest run of DAG reconciliation failed: silver and Postgres disagree, or the check did not run."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/reconciliation-failure.md

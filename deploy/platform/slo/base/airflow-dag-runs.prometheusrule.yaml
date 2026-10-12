@@ -1,0 +1,48 @@
+# A failed Airflow DAG run. cnpg_airflow_dag_run_last_failed{dag_id} comes from a CNPG custom query on shop-db
+# over Airflow's metadata database (deploy/charts/shop-db, ConfigMap shop-db-monitoring): 1 while the DAG's latest
+# finished run failed, 0 once a later run succeeds. A run counts as failed only after its tasks' retries. Without
+# profile batch, Airflow's tables do not exist, the query is skipped and there is no series. The query runs on the
+# primary only; `max by (dag_id)` keeps one alert per DAG when a failover moves the series to another pod.
+# A run that never finishes raises nothing here: the gold-freshness SLO covers a stuck or stopped scheduler.
+# One rule per DAG, so each alert links that DAG's runbook; a new DAG needs its own rule and runbook.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: airflow-dag-runs
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: shopflow
+spec:
+  groups:
+    - name: shopflow-airflow-dag-runs
+      rules:
+        - alert: AirflowDagRunFailed
+          expr: max by (dag_id) (cnpg_airflow_dag_run_last_failed{dag_id="dbt_build"}) == 1
+          for: 5m
+          labels:
+            severity: ticket
+            team: sf-data
+            dag_id: dbt_build
+          annotations:
+            summary: "The latest run of DAG dbt_build failed: silver and gold stay at their previous version."
+            runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/dbt-failure.md
+        - alert: AirflowDagRunFailed
+          expr: max by (dag_id) (cnpg_airflow_dag_run_last_failed{dag_id="reconciliation"}) == 1
+          for: 5m
+          labels:
+            severity: ticket
+            team: sf-data
+            dag_id: reconciliation
+          annotations:
+            summary: "The latest run of DAG reconciliation failed: silver and Postgres disagree, or the check did not run."
+            runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/reconciliation-failure.md
+        - alert: AirflowDagRunFailed
+          expr: max by (dag_id) (cnpg_airflow_dag_run_last_failed{dag_id="iceberg_maintenance"}) == 1
+          for: 5m
+          labels:
+            severity: ticket
+            team: sf-data
+            dag_id: iceberg_maintenance
+          annotations:
+            summary: "The latest run of DAG iceberg_maintenance failed: small files and old snapshots pile up meanwhile."
+            runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/iceberg-maintenance-failure.md

@@ -63,6 +63,13 @@ stack plus Trino 483.
   - The chart comes from an index in this repo (`deploy/platform/airflow/helm-repo`, #173/#174) that points at
     dlcdn.apache.org: the official index points at archive.apache.org, which the local network cannot reach.
     dlcdn keeps only current releases, so a chart bump needs that index updated too.
+  - Failed runs alert through Airflow's metadata, not through Airflow metrics (2026-10-12). A CNPG custom query on
+    shop-db reads `dag_run` and exports whether each DAG's latest finished run failed, and `AirflowDagRunFailed`
+    raises a ticket with that DAG's runbook. This adds no exporter, image, NetworkPolicy or credential. The other
+    two options each added parts and weaker semantics. statsd needs an exporter, and its counters fire and resolve
+    by time window. A REST probe in the freshness exporter needs an API user, a NetworkPolicy and a new image. The
+    cost: the query depends on Airflow's `dag_run` table (`state`, `end_date`), and a run that never ends raises
+    nothing (the gold-freshness SLO covers a stopped scheduler).
 - Verified on the cluster (batch slot, 2026-10-10, `core,obs-lite,data,batch`, k3d):
   - Chart 1.22.0 runs Airflow 3.3.2 (migrations, create-user, scheduler, dag-processor, api-server).
   - `dbt_build` on Trino: 28/28 tasks, 5m42s for the first run on empty schemas, 44-46 s for later runs.
