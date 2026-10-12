@@ -70,6 +70,16 @@ ddl() {
   return 1
 }
 
+# Database time as RFC 3339 UTC: `kubectl logs --since-time` accepts nothing else, and Postgres parses it too.
+db_now() { psql_shop <<< "SELECT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');"; }
+
+# TSV (numeric id, text) -> SQL VALUES list, single quotes in the text doubled (an Idempotency-Key may contain one).
+sql_values() {
+  awk -F'\t' -v q="'" '$1 ~ /^[0-9]+$/ && $2 != "" {
+    v = $2; gsub(q, q q, v); printf "%s(%s,%s%s%s)", (n++ ? "," : ""), $1, q, v, q
+  }' "$1"
+}
+
 block_present() { [[ "$(psql_shop <<< "SELECT count(*) FROM pg_constraint WHERE conname = '$CONSTRAINT';")" != 0 ]]; }
 
 K6_PID=""
@@ -84,7 +94,7 @@ trap 'exit 130' INT TERM # through EXIT: the drop always runs
 
 out="out/app-settle-fault-$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$out"
-start_ts="$(psql_shop <<< "SELECT now();")"
+start_ts="$(db_now)"
 echo "== settle fault on $KUBE_CONTEXT: $LOAD_RATE checkouts/s for $LOAD_DURATION, settles blocked ${BLOCK_FOR}s after \
 ${BLOCK_AFTER}s (results in $out/)"
 ddl "ALTER TABLE payments DROP CONSTRAINT IF EXISTS $CONSTRAINT;" "pre-clean" # a leftover from an aborted run
@@ -98,7 +108,7 @@ K6_PID=$!
 pause "$BLOCK_AFTER"
 ddl "ALTER TABLE payments ADD CONSTRAINT $CONSTRAINT CHECK (false) NOT VALID;" "block" ||
   { result FAIL "could not take the lock to block settles"; exit 1; }
-blocked_at="$(psql_shop <<< "SELECT now();")"
+blocked_at="$(db_now)"
 echo "== settles blocked at $blocked_at"
 pause "$BLOCK_FOR"
 ddl "ALTER TABLE payments DROP CONSTRAINT $CONSTRAINT;" "unblock" || { result FAIL "could not drop $CONSTRAINT"; exit 1; }
@@ -131,22 +141,28 @@ wait "$K6_PID" || true # the load finishes on its own
 K6_PID=""
 
 # Same charge: each recovered order's provider_ref must be the charge_id its failed settle logged.
-kc -n "$NS" logs -l app.kubernetes.io/name=orders --prefix=false --tail=-1 --since-time="$start_ts" 2> /dev/null \
-  | jq -rc 'select(.message? == "settle failed, order left pending") | [.order_id, (.charge_id // "")] | @tsv' \
-  2> /dev/null | sort -u > "$out/settle-failed.tsv" || true
+logs_ok=true
+kc -n "$NS" logs -l app.kubernetes.io/name=orders --prefix=false --tail=-1 --since-time="$start_ts" \
+  > "$out/orders.log" 2> "$out/orders-logs.err" || logs_ok=false
+jq -rc 'select(.message? == "settle failed, order left pending") | [.order_id, (.charge_id // "")] | @tsv' \
+  "$out/orders.log" 2> /dev/null | sort -u > "$out/settle-failed.tsv" || true
 logged="$(wc -l < "$out/settle-failed.tsv" | tr -d ' ')"
 mismatched=0
-if ((logged > 0)); then
-  values="$(awk -F'\t' '$2 != "" {printf "%s(%s,'"'"'%s'"'"')", (n++ ? "," : ""), $1, $2}' "$out/settle-failed.tsv")"
+if ! $logs_ok; then
+  result FAIL "could not read the orders logs: $(head -1 "$out/orders-logs.err")"
+elif ((logged > 0)); then
+  values="$(sql_values "$out/settle-failed.tsv")"
   if [[ -n "$values" ]]; then
     mismatched="$(psql_shop <<< "SELECT count(*) FROM (VALUES $values) AS l(order_id, charge_id)
       LEFT JOIN payments p ON p.order_id = l.order_id WHERE p.provider_ref IS DISTINCT FROM l.charge_id;")"
   fi
 fi
-if ((logged > 0 && mismatched == 0)); then
-  result PASS "$logged failed settles logged; every recovered order kept the charge its request made"
-else
-  result FAIL "same charge: $logged failed settles logged, $mismatched with a different or missing payment"
+if $logs_ok; then
+  if ((logged > 0 && mismatched == 0)); then
+    result PASS "$logged failed settles logged; every recovered order kept the charge its request made"
+  else
+    result FAIL "same charge: $logged failed settles logged, $mismatched with a different or missing payment"
+  fi
 fi
 
 # Idempotency under retries: one order per key, every k6 checkout sent one, every ack got its own key's order.
@@ -158,7 +174,7 @@ jq -rc '.ack? // empty | [.order_id, .idempotency_key] | @tsv' "$out/acks.jsonl"
 acked="$(wc -l < "$out/acks.tsv" | tr -d ' ')"
 wrong_order=0
 if ((acked > 0)); then
-  values="$(awk -F'\t' '{printf "%s(%s,'"'"'%s'"'"')", (n++ ? "," : ""), $1, $2}' "$out/acks.tsv")"
+  values="$(sql_values "$out/acks.tsv")"
   wrong_order="$(psql_shop <<< "SELECT count(*) FROM (VALUES $values) AS a(order_id, idempotency_key)
     LEFT JOIN orders o ON o.id = a.order_id WHERE o.idempotency_key IS DISTINCT FROM a.idempotency_key;")"
 fi
