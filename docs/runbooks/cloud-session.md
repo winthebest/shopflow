@@ -281,6 +281,9 @@ cluster; reaper workflow disabled â†’ the Lambda destroys it; a paused cluster â
       A refused or open connection means EKS accepted the NetworkPolicies (ADR 0208) without enforcing them:
       check that the `aws-node` pods run the `aws-network-policy-agent` container (vpc-cni `enableNetworkPolicy`,
       layer 2).
+- [ ] HPAs have a metrics source (EKS add-on `metrics-server`, layer 2): `kubectl get --raw
+      /apis/metrics.k8s.io/v1beta1/nodes` returns node usage, and `kubectl -n shop get hpa` shows CPU targets with a value
+      (average CPU per pod, e.g. `120m/400m`), not `<unknown>/400m`.
 - [ ] `kubectl get clustersecretstores,externalsecrets -A`: every store `Valid`, every ExternalSecret
       `SecretSynced`. The usual causes are a missing `aws.accountId` parameter or an unseeded parameter.
 - [ ] API server egress address (ADR 0208, `components/apiserver-aws` allows TCP 443 to the VPC CIDR and to the
