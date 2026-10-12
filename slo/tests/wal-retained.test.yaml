@@ -197,3 +197,43 @@ tests:
       - {eval_time: 180m, alertname: PostgresSlotWALRetainedHigh, exp_alerts: []}
       - {eval_time: 360m, alertname: PostgresSlotWALRetainedCritical, exp_alerts: []}
       - {eval_time: 360m, alertname: PostgresSlotWALRetainedHigh, exp_alerts: []}
+
+  # Logical slot sync, two instances (game day 2): the standby shop-db-2 keeps a synced copy of debezium_shop that
+  # nothing reads; its WAL figure follows the primary's. Only the primary's slot counts.
+  - name: a standby's synced copy of the slot raises nothing
+    interval: 1m
+    input_series:
+      - series: 'cnpg_pg_replication_in_recovery{namespace="shop",pod="shop-db-1"}'
+        values: '0+0x40'
+      - series: 'cnpg_pg_replication_in_recovery{namespace="shop",pod="shop-db-2"}'
+        values: '1+0x40'
+      - series: 'cnpg_pg_replication_slots_active{namespace="shop",pod="shop-db-1",slot_name="debezium_shop",slot_type="logical",database="shop"}'
+        values: '1+0x40'
+      - series: 'cnpg_pg_replication_slots_active{namespace="shop",pod="shop-db-2",slot_name="debezium_shop",slot_type="logical",database="shop"}'
+        values: '0+0x40'
+      - series: 'cnpg_pg_replication_slots_pg_wal_lsn_diff{namespace="shop",pod="shop-db-2",slot_name="debezium_shop",slot_type="logical",database="shop"}'
+        values: '0+62914560x40'
+      - series: 'cnpg_pg_settings_setting{namespace="shop",pod="shop-db-2",name="max_slot_wal_keep_size"}'
+        values: '2048+0x40'
+    alert_rule_test:
+      - {eval_time: 40m, alertname: PostgresSlotInactive, exp_alerts: []}
+      - {eval_time: 40m, alertname: PostgresSlotWALRetainedHigh, exp_alerts: []}
+      - {eval_time: 40m, alertname: PostgresSlotWALRetainedCritical, exp_alerts: []}
+
+  # After a failover the promoted standby's slot is the one that counts: unread, it is flagged like any primary's.
+  - name: after a failover the promoted standby's slot is watched
+    interval: 1m
+    input_series:
+      - series: 'cnpg_pg_replication_in_recovery{namespace="shop",pod="shop-db-2"}'
+        values: '1+0x5 0+0x30'
+      - series: 'cnpg_pg_replication_slots_active{namespace="shop",pod="shop-db-2",slot_name="debezium_shop",slot_type="logical",database="shop"}'
+        values: '0+0x35'
+    alert_rule_test:
+      - {eval_time: 15m, alertname: PostgresSlotInactive, exp_alerts: []}
+      - eval_time: 17m
+        alertname: PostgresSlotInactive
+        exp_alerts:
+          - exp_labels: {severity: ticket, team: sf-sre, namespace: shop, pod: shop-db-2, slot_name: debezium_shop}
+            exp_annotations:
+              summary: "Nothing reads slot debezium_shop on shop-db-2 for 10m: WAL is accumulating."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/wal-retained.md

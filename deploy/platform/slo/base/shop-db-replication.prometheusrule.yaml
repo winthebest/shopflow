@@ -1,0 +1,31 @@
+# Physical replication of shop-db when it runs more than one instance (game day 2; AWS). Each standby streams WAL from
+# the primary through its own high-availability slot, a physical slot named _cnpg_<instance> that CloudNativePG keeps
+# on the primary. A standby that is not streaming cannot take over without losing writes, and with logical slot sync it
+# also holds CDC back: the primary sends logical changes only once that standby has the WAL (synchronized_standby_slots).
+# Not "streaming replicas < instances - 1": CNPG's streaming_replicas counts every walsender, Debezium's logical one
+# included, and the desired instance count is not a metric. Metrics: CloudNativePG default queries (pg_replication_slots,
+# pg_replication), scraped by the cnpg-shop PodMonitor. Runbook: docs/runbooks/shop-db-standby.md.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: shop-db-replication
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: shopflow
+spec:
+  groups:
+    - name: shopflow-postgres-replication
+      rules:
+        # A standby's HA slot inactive on the primary. Standbys keep inactive copies of these slots for each other, so
+        # only the primary counts (a pod whose in_recovery is unknown counts too).
+        - alert: PostgresStandbyNotStreaming
+          expr: |
+            max by (namespace, pod, slot_name) (cnpg_pg_replication_slots_active{slot_type="physical", slot_name=~"_cnpg_.+"}) == 0
+            unless on (namespace, pod) (cnpg_pg_replication_in_recovery == 1)
+          for: 5m
+          labels:
+            severity: ticket
+            team: sf-sre
+          annotations:
+            summary: "The standby behind slot {{ $labels.slot_name }} has not streamed WAL from primary {{ $labels.pod }} for 5m: no safe failover, and with slot sync CDC waits for it."
+            runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/shop-db-standby.md

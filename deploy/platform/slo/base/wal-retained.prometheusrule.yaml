@@ -14,10 +14,13 @@ spec:
   groups:
     - name: shopflow-postgres-slot-wal
       rules:
-        # Bytes of WAL held by the slot, and the cap in bytes, joined per Postgres pod.
+        # Bytes of WAL held by the slot, and the cap in bytes, joined per Postgres pod. On the primary only: with logical
+        # slot sync (more than one instance) each standby keeps a synced copy of the slot that nothing ever reads, which
+        # would duplicate these alerts and keep PostgresSlotInactive firing. A pod whose in_recovery is unknown counts.
         - record: shopflow:pg_slot_wal_retained:bytes
           expr: |
             max by (namespace, pod, slot_name) (cnpg_pg_replication_slots_pg_wal_lsn_diff{slot_name="debezium_shop"})
+            unless on (namespace, pod) (cnpg_pg_replication_in_recovery == 1)
         - record: shopflow:pg_slot_wal_retained:ratio
           expr: |
             shopflow:pg_slot_wal_retained:bytes
@@ -55,7 +58,9 @@ spec:
             summary: "Slot {{ $labels.slot_name }} will hit max_slot_wal_keep_size within the hour (or is past 80%): the slot is about to be invalidated."
             runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/wal-retained.md
         - alert: PostgresSlotInactive
-          expr: max by (namespace, pod, slot_name) (cnpg_pg_replication_slots_active{slot_name="debezium_shop"}) == 0
+          expr: |
+            max by (namespace, pod, slot_name) (cnpg_pg_replication_slots_active{slot_name="debezium_shop"}) == 0
+            unless on (namespace, pod) (cnpg_pg_replication_in_recovery == 1)
           for: 10m
           labels:
             severity: ticket
