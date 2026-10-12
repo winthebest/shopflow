@@ -114,12 +114,14 @@ k3d_create() {
 }
 
 create_cluster() {
+  # Caches first, for an existing cluster too: after Docker restarts, the cache containers are stopped like the nodes
+  # (pulls would fall back to the upstream registries, slowly).
+  [[ "$PULL_CACHE" != "1" ]] || ensure_caches
   if cluster_exists; then
     log "cluster exists; making sure it is running"
     k3d cluster start "$CLUSTER" >/dev/null
   else
     log "creating cluster (API 127.0.0.1:$API_PORT, HTTPS 127.0.0.1:$HTTPS_PORT, registry 127.0.0.1:$REGISTRY_PORT, pull cache: $PULL_CACHE)"
-    [[ "$PULL_CACHE" != "1" ]] || ensure_caches
     local extra_args=()
     while IFS= read -r arg; do extra_args+=("$arg"); done < <(cache_args)
     # 1 server + 1 agent to save RAM; Traefik off (Envoy Gateway is the edge); servicelb (klipper) stays on and
