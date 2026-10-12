@@ -301,7 +301,8 @@ check_aws_json() {
   local json dir name
   json="$(scripts/data-secrets.sh --aws-json)"
   jq -e '(keys == ["_groups", "lakehouse"])
-    and (._groups == [["lakehouse/trino-dbt", "lakehouse/trino-exporter", "lakehouse/trino-password-db"]])
+    and (._groups == [["lakehouse/trino-dbt", "lakehouse/trino-exporter", "lakehouse/trino-metabase",
+                       "lakehouse/trino-password-db"]])
     and ([.lakehouse[][] | select(type != "string" or length == 0)] == [])' <<< "$json" > /dev/null \
     || { echo "FAIL data-secrets.sh --aws-json: unexpected shape, group or empty value" >&2; return 1; }
   for name in $(jq -r '.lakehouse | keys[]' <<< "$json"); do
@@ -311,7 +312,7 @@ check_aws_json() {
   done
   dir="$(mktemp -d)"
   jq -r '.lakehouse["trino-password-db"]["password.db"]' <<< "$json" > "$dir/password.db"
-  for name in dbt exporter; do
+  for name in dbt exporter metabase; do
     jq -r --arg n "trino-$name" '.lakehouse[$n].password' <<< "$json" \
       | htpasswd -vi "$dir/password.db" "$name" 2> /dev/null \
       || { rm -rf "$dir"; echo "FAIL --aws-json: password.db does not match trino-$name" >&2; return 1; }
