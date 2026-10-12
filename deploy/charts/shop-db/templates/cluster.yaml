@@ -6,12 +6,32 @@ metadata:
   labels:
     app.kubernetes.io/part-of: shopflow
 spec:
-  instances: {{ .Values.instances }}
+  instances: {{ int (.Values.instances | default 1) }}
   imageName: {{ required "image is required" .Values.image }}
   enableSuperuserAccess: false
+  {{- if .Values.databases.airflow.enabled }}
+  # Extra exporter queries (templates/monitoring-queries.yaml), on top of CNPG's defaults.
+  monitoring:
+    customQueriesConfigMap:
+      - name: shop-db-monitoring
+        key: queries.yaml
+  {{- end }}
+  {{- $slotSync := eq (include "shop-db.logicalSlotSync" .) "true" }}
+  {{- if $slotSync }}
+  # Logical slot failover: CDC continues on the promoted replica (ADR 0203). CNPG sets synchronized_standby_slots, so
+  # logical decoding never runs ahead of the standby, and waits for it while it is down or behind.
+  replicationSlots:
+    highAvailability:
+      synchronizeLogicalDecoding: true
+  {{- end }}
   postgresql:
     parameters:
-      {{- toYaml .Values.postgresql.parameters | nindent 6 }}
+      {{- $params := deepCopy .Values.postgresql.parameters }}
+      {{- if $slotSync }}
+      {{- $_ := set $params "hot_standby_feedback" "on" }}
+      {{- $_ := set $params "sync_replication_slots" "on" }}
+      {{- end }}
+      {{- toYaml $params | nindent 6 }}
     # Each consumer role may only reach its own database; CNPG keeps its default rules after these. debezium's
     # logical replication connections name their database, so they match its first rule; `all` never matches
     # physical replication, which only streaming_replica may use.

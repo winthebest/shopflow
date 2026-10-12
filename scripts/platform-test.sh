@@ -58,6 +58,30 @@ run_case "main: the ready line splits apps and CDC snapshot time" 0 "CDC snapsho
   "PROFILES=core,obs-lite,data; preflight() { :; }; create_cluster() { :; }; install_argocd() { :; }
    apply_root_apps() { :; }; start_cdc_epoch() { :; }; wait_for_apps() { :; }; wait_cdc_snapshot() { :; }; main"
 
+# local_params: the failover game day's shop-db params reach platform-root-apps.sh.
+run_case "PG_INSTANCES / PG_LOGICAL_SLOT_SYNC become session params" 0 \
+  "--param pg.instances=2 --param pg.logicalSlotSync=off" \
+  "PROFILES=core; PG_INSTANCES=2; PG_LOGICAL_SLOT_SYNC=off; local_params; echo \"\${PARAMS[*]}\""
+
+# shop-db chart: session params arrive as strings (or null when unset); slot sync only with more than one instance.
+chart_case() { # name, expected "instances sync", helm args...
+  local name="$1" want="$2" got; shift 2
+  got="$(cd "$ROOT_DIR" && helm template shop-db deploy/charts/shop-db -n shop -f deploy/charts/shop-db/values.yaml \
+    -f deploy/charts/shop-db/values-local.yaml "$@" 2>&1 | yq -N 'select(.kind == "Cluster")
+      | (.spec.instances | tostring) + " " + ((.spec.replicationSlots.highAvailability.synchronizeLogicalDecoding // false) | tostring)
+      + " " + (.spec.postgresql.parameters.sync_replication_slots // "-") + " " + (.spec.postgresql.parameters.hot_standby_feedback // "-")')"
+  if [[ "$got" == "$want" ]]; then printf 'PASS  %s\n' "$name"; else
+    printf 'FAIL  %s (got: %s, want: %s)\n' "$name" "$got" "$want"; FAILS=$((FAILS + 1)); fi
+}
+chart_case "shop-db: default is 1 instance, no slot sync" "1 false - -"
+chart_case "shop-db: unset params (null) keep the defaults" "1 false - -" --set instances=null --set logicalSlotSync=null
+chart_case "shop-db: instances '2' turns on slot sync" "2 true on on" --set-string instances=2
+chart_case "shop-db: instances '2', logicalSlotSync 'off'" "2 false - -" --set-string instances=2 --set-string logicalSlotSync=off
+monitoring="$(cd "$ROOT_DIR" && helm template shop-db deploy/charts/shop-db -n shop -f deploy/charts/shop-db/values.yaml \
+  -f deploy/charts/shop-db/values-local.yaml | yq -N 'select(.kind == "Cluster") | .spec.monitoring.customQueriesConfigMap[0].name')"
+if [[ "$monitoring" == shop-db-monitoring ]]; then printf 'PASS  shop-db: custom exporter queries wired\n'; else
+  printf 'FAIL  shop-db: custom exporter queries wired (got: %s)\n' "$monitoring"; FAILS=$((FAILS + 1)); fi
+
 # k3d-lib.sh: every cluster of docs/contracts/environment.md gets its ports without overrides.
 for row in "sf-main 6550 9443 5050 18080" "sf-platform 6551 8443 5051 18081" "sf-sre 6552 8444 5052 18082" \
   "sf-data 6553 8445 5053 18083" "sf-app 6554 8446 5054 18084" "sf-cloud 6555 8447 5055 18085"; do

@@ -49,3 +49,22 @@ replacements:
         fieldPaths:
           - spec.sources.[path=deploy/charts/shop-db].helm.valuesObject.recovery.targetTime
         options: {create: true}
+  # shop-db: instances and logical slot sync for the failover game day (ADR 0203). Empty = the chart's defaults.
+  - source:
+      kind: ConfigMap
+      name: platform-params
+      fieldPath: data.[pg.instances]
+    targets:
+      - select: {kind: Application, name: shop-db}
+        fieldPaths:
+          - spec.sources.[path=deploy/charts/shop-db].helm.valuesObject.instances
+        options: {create: true}
+  - source:
+      kind: ConfigMap
+      name: platform-params
+      fieldPath: data.[pg.logicalSlotSync]
+    targets:
+      - select: {kind: Application, name: shop-db}
+        fieldPaths:
+          - spec.sources.[path=deploy/charts/shop-db].helm.valuesObject.logicalSlotSync
+        options: {create: true}

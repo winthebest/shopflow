@@ -65,6 +65,10 @@ WAL to SeaweedFS (`s3://pg-backup/shop-db`, ADR 0203):
 `drill` excludes `data` and needs `core`. After a drill, run `make down`, or rerun with the drill's `PG_*`: a plain
 `make up` resets the chain name to the default.
 
+Failover game day: `PG_INSTANCES=2` runs shop-db with a replica (about +0.3–0.5 GiB). With more than one instance,
+Debezium's logical slot is synchronized to the replica, so CDC continues after a failover. Add
+`PG_LOGICAL_SLOT_SYNC=off` to measure the same failover without it (ADR 0203).
+
 ## Image pull-through caches
 
 Every node of every local cluster pulls through four shared caches (ADR 0207): `k3d-shopflow-cache-docker`

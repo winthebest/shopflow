@@ -16,6 +16,8 @@ data:
   pg.recoveryFrom: ""        # serverName of the backup chain to restore from; empty = initdb (first session)
   pg.serverName: ""          # this session's backup chain (shop-db-<session>)
   pg.recoveryTargetTime: ""  # PITR target, empty = latest
+  pg.instances: ""           # shop-db instances, empty = the chart's 1 (failover game day: 2)
+  pg.logicalSlotSync: ""     # off = no logical slot sync to the standbys (CDC breaks on failover); empty = on
   cdcEpoch: ""               # this session's CDC epoch (scripts/cdc-epoch.sh writes the Secret; SSM keeps the last one)
   aws.region: ""
   aws.accountId: ""
