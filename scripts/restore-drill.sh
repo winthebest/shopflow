@@ -241,31 +241,9 @@ ack_count() {
   printf '%s' "${n:-0}"
 }
 
-primary_pod() {
-  local pod
-  pod="$(kube -n shop get pods -l cnpg.io/cluster=shop-db,cnpg.io/instanceRole=primary -o name | head -n 1)"
-  [ -n "$pod" ] || die "no shop-db primary after the recovery"
-  printf '%s' "$pod"
-}
-
 # Order ids present after the recovery, read before anything can write again (k6 is stopped).
 survivors() {
-  kube -n shop exec "$(primary_pod)" -c postgres -- psql -d shop -At -c "SELECT id FROM orders ORDER BY id"
-}
-
-# After a recovery the id sequences restart from the restored database, below ids already acked to customers: new
-# orders would reuse the ids of lost ones (a customer's order id would show someone else's order; payment
-# reconciliation by order id would match the wrong one). Before the shop takes traffic again, every sequence moves
-# past the highest acked order id plus a margin; payments by the order-id gap plus the margin.
-ID_MARGIN="${DRILL_ID_MARGIN:-1000}"
-bump_sequences() {
-  local acks="$1" max_acked
-  max_acked="$(jq -Rn '[inputs | fromjson? | .ack? // empty | .order_id | numbers] | max // 0' "$acks")"
-  run kube -n shop exec "$(primary_pod)" -c postgres -- psql -d shop -At -v ON_ERROR_STOP=1 \
-    -c "SELECT setval(pg_get_serial_sequence('payments', 'id'),
-          (SELECT coalesce(max(id), 0) FROM payments) + GREATEST($max_acked - (SELECT coalesce(max(id), 0) FROM orders), 0) + $ID_MARGIN)" \
-    -c "SELECT setval(pg_get_serial_sequence('orders', 'id'), GREATEST((SELECT coalesce(max(id), 0) FROM orders), $max_acked) + $ID_MARGIN)" >&2
-  log "id sequences moved past the highest acked order id $max_acked (+$ID_MARGIN)"
+  kube -n shop exec "$(shop_db_primary)" -c postgres -- psql -d shop -At -c "SELECT id FROM orders ORDER BY id"
 }
 
 checkout_answers() {
@@ -364,7 +342,7 @@ drill() {
   fi
   step 5 "measure"
   survivors >"$dir/survivors.txt"
-  bump_sequences "$dir/acks.jsonl"
+  bump_id_sequences "$dir/acks.jsonl" # shared with cloud-up (cloud-lib)
   wait_until 600 "a checkout through $url succeeds" checkout_answers "$url" || die "the shop did not come back"
   service_back="$(now_epoch)"
   metrics "$dir/acks.jsonl" "$dir/survivors.txt" "$mark" |

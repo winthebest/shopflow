@@ -9,6 +9,15 @@ new Cluster archives to a **new** chain (`pg.serverName`): a chain is never writ
   [`cloud-session.md`](cloud-session.md) and ADR 0511.
 - Local: `scripts/restore-drill.sh`, below. The Phase 7 restore drill measures RPO and RTO with it.
 
+After **every** recovery, before traffic, both move the `orders` and `payments` id sequences past the restored ids
+(`bump_id_sequences` in `scripts/cloud-lib.sh`). After an abrupt end the last WAL segment is lost, and the restored
+sequences would hand ids already given to customers to new orders (the drill saw it: id 11352).
+- With an ack log (the drill's, or `cloud-up --ack-log <k6 acks.jsonl>` after an abrupt end on AWS), orders move
+  past the highest acked order id + 1000.
+- Without one, they move past the restored maximum + 100000 (ids are bigint: the gap costs nothing).
+- Payments move past their maximum + the order-id gap + the same margin.
+- After a clean `cloud-down` (final backup) nothing was lost and the step is harmless.
+
 ## Local drill (k3d, profile `drill`)
 
 The drill destroys the database while k6 writes, without a final backup, and recovers it from its chain. It needs

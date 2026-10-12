@@ -138,8 +138,9 @@ def test_dry_run_plans_a_recovery_without_changing_anything(fake, hooks):
         assert expected in root_apps
 
 
-def full_session(h: Harness) -> Harness:
-    preflight(h)
+def full_session(h: Harness, **session) -> Harness:
+    preflight(h, **session)
+    h.on("kubectl", r"-n shop get pods -l cnpg.io/cluster=shop-db,cnpg.io/instanceRole=primary -o name", "pod/shop-db-1\n")
     h.on("kubectl", r"get nodes -o json", json_out=NODES)
     h.on("kubectl", r"-n argocd get applications.argoproj.io -o json", json_out=APPS)
     h.on("kubectl", r"clusters.postgresql.cnpg.io shop-db -o json", json_out=CNPG)
@@ -255,6 +256,8 @@ def test_first_session_initdb_end_to_end(fake, hooks):
     evidence = json.loads(next((fake.tmp / "out").glob("*/netpol-probe.json")).read_text())
     assert evidence == {"dns": "ok", "postgres": "timeout", "internet": "timeout"}
 
+    assert not any("setval" in arg for c in fake.calls("kubectl") for arg in c.argv), "a new database has no ids to protect"
+
     timings = json.loads(next((fake.tmp / "out").glob("*/timings.json")).read_text())
     assert {"rto_infra_seconds", "rto_service_seconds"} <= timings.keys() and timings["postgres"] == "initdb"
     assert "RTO-infra (apply -> node Ready)" in result.stderr
@@ -278,6 +281,61 @@ def test_network_policy_probe_fails_the_session_when_a_denied_flow_gets_through(
     assert result.returncode != 0
     assert message in result.stderr
     assert not any("create-schedule" in c.argv for c in fake.calls("aws")), "a session that fails the probe is not handed over"
+
+
+def recovery_session(h: Harness) -> Harness:
+    """A session that recovers from the previous chain (CDC epoch 7 -> 8)."""
+    full_session(h, pointer=json.dumps(POINTER), marker="20261001t080000z", epoch="7")
+    h.rules.insert(0, {"tool": "kubectl", "match": r"exec -i deploy/trino-coordinator .*_cdc_epoch = 8", "stdout": "1\n", "exit": 0})
+    return h
+
+
+def setval_sql(fake: Harness) -> str:
+    call = next(c for c in fake.calls("kubectl") if any("setval" in arg for arg in c.argv))
+    return " ".join(call.argv)
+
+
+def test_a_recovery_moves_the_id_sequences_by_a_wide_margin_without_an_ack_log(fake, hooks):
+    env, _ = hooks
+    recovery_session(fake)
+
+    result = fake.run("cloud-up.sh", "--hours", "3", env=env)
+
+    assert result.returncode == 0, result.stderr
+    sql = setval_sql(fake)
+    assert "GREATEST((SELECT coalesce(max(id), 0) FROM orders), 0) + 100000" in sql
+    assert "FROM payments) + GREATEST(0 - (SELECT coalesce(max(id), 0) FROM orders), 0) + 100000" in sql
+    # After the Cluster is Ready and before any traffic (the smoke checkout) or the new chain's base backup.
+    assert fake.index_of(r"clusters.postgresql.cnpg.io shop-db -o json") < fake.index_of(r"setval")
+    assert fake.index_of(r"setval") < fake.index_of(r"apply -f .*shop-db-\S+-initial") < fake.index_of(r"curl .*-X POST")
+
+
+def test_a_recovery_with_an_ack_log_moves_past_the_highest_acked_id(fake, hooks, tmp_path):
+    env, _ = hooks
+    recovery_session(fake)
+    acks = tmp_path / "acks.jsonl"
+    acks.write_text(
+        '{"ack": {"order_id": 5, "status": "paid", "acked_at": "2026-10-12T04:00:00.000Z"}}\n'
+        "k6 noise that is not JSON\n"
+        '{"ack": {"order_id": 42, "status": "paid", "acked_at": "2026-10-12T04:00:01.000Z", "attempts": 1}}\n'
+    )
+
+    result = fake.run("cloud-up.sh", "--hours", "3", "--ack-log", str(acks), env=env)
+
+    assert result.returncode == 0, result.stderr
+    sql = setval_sql(fake)
+    assert "GREATEST((SELECT coalesce(max(id), 0) FROM orders), 42) + 1000" in sql
+    assert "FROM payments) + GREATEST(42 - (SELECT coalesce(max(id), 0) FROM orders), 0) + 1000" in sql
+
+
+def test_an_unreadable_ack_log_stops_before_anything_bills(fake, hooks, tmp_path):
+    env, _ = hooks
+    preflight(fake, pointer=json.dumps(POINTER), marker="20261001t080000z", epoch="7")
+
+    result = fake.run("cloud-up.sh", "--ack-log", str(tmp_path / "missing.jsonl"), env=env)
+
+    assert result.returncode != 0 and "is not readable" in result.stderr
+    assert not fake.mutations()
 
 
 def test_missing_root_app_hook_fails_before_anything_bills(fake, hooks):
