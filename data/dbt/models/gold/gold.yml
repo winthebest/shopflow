@@ -40,3 +40,18 @@ models:
           - not_null
           - relationships:
               arguments: {to: ref('dim_customers'), field: customer_id}
+
+  # One row per (order_date, product_id): tests/assert_product_sales_one_row_per_day_and_product.sql.
+  - name: mart_product_sales
+    columns:
+      - name: order_date
+        data_tests: [not_null]
+      - name: product_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('products'), field: id}
+      - name: units
+        data_tests: [not_null]
+      - name: revenue
+        data_tests: [not_null]
