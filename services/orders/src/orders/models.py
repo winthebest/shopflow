@@ -80,11 +80,16 @@ class Order(StandardColumns, Base):
         CheckConstraint("total >= 0", name="total_non_negative"),
         # Stranded-order sweeper and its oldest-pending gauge read only `pending` rows (migration 0005).
         Index("ix_orders_pending_created_at", "created_at", postgresql_where=text("status = 'pending'")),
+        # `Idempotency-Key` on POST /checkout (migration 0006): 1-64 characters, always stored with its request hash.
+        CheckConstraint("char_length(idempotency_key) BETWEEN 1 AND 64", name="idempotency_key_length"),
+        CheckConstraint("(idempotency_key IS NULL) = (request_hash IS NULL)", name="idempotency_key_with_hash"),
     )
 
     customer_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("customers.id"), index=True)
     status: Mapped[str] = mapped_column(Text)
     total: Mapped[Decimal] = mapped_column(Money)
+    idempotency_key: Mapped[str | None] = mapped_column(Text, unique=True)
+    request_hash: Mapped[str | None] = mapped_column(Text)  # SHA-256 of the canonical checkout request
 
 
 class OrderItem(StandardColumns, Base):

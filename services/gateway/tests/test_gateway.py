@@ -123,3 +123,38 @@ async def test_stays_ready_when_orders_is_down():
         assert (await client.get("/readyz")).status_code == 200
         assert (await client.get("/healthz")).status_code == 200
         assert (await client.get("/products")).status_code == 502
+
+
+async def test_idempotency_key_is_forwarded_and_409_passes_through_with_retry_after():
+    seen: list[httpx.Request] = []
+    body = {"detail": "a checkout with this Idempotency-Key is in progress", "order_id": 7, "status": "pending"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(409, json=body, headers={"Retry-After": "1"})
+
+    async with gateway_with(handler) as client:
+        response = await client.post("/checkout", json=CHECKOUT, headers={"Idempotency-Key": "k-1"})
+    assert seen[0].headers["idempotency-key"] == "k-1"
+    assert (response.status_code, response.headers["retry-after"], response.json()) == (409, "1", body)
+
+
+async def test_checkout_without_a_key_sends_none():
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(201, json={"id": 1})
+
+    async with gateway_with(handler) as client:
+        await client.post("/checkout", json=CHECKOUT)
+    assert "idempotency-key" not in seen[0].headers
+
+
+@pytest.mark.parametrize("key", ["x" * 65, "has space"], ids=["too-long", "space"])
+async def test_invalid_idempotency_key_is_rejected_at_the_edge(key):
+    calls: list[httpx.Request] = []
+    async with gateway_with(lambda request: calls.append(request) or httpx.Response(201, json={})) as client:
+        response = await client.post("/checkout", json=CHECKOUT, headers={"Idempotency-Key": key})
+    assert response.status_code == 422
+    assert calls == []

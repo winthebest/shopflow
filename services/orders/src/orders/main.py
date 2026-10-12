@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
 import httpx
-from fastapi import FastAPI, HTTPException, Path, Request
+from fastapi import FastAPI, Header, HTTPException, Path, Request
 from fastapi.responses import JSONResponse
 from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
 from sqlalchemy import text
@@ -25,11 +25,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from orders.db import create_engine
 from orders.payments_client import PAYMENTS_TIMEOUT_S, PaymentsClient
 from orders.repository import (
+    DuplicateIdempotencyKeyError,
     InvalidCheckoutError,
+    KeyedOrder,
     OrderOut,
     PendingOrder,
     ProductOut,
     create_pending_order,
+    find_keyed_order,
     get_order,
     list_products,
     settle_order,
@@ -37,7 +40,13 @@ from orders.repository import (
 from orders.settings import Settings
 from orders.sweeper import Sweeper
 from shopflow_common.log import AccessLogMiddleware, configure_logging
-from shopflow_common.schemas import MAX_ID, CheckoutRequest
+from shopflow_common.schemas import (
+    IDEMPOTENCY_KEY_HEADER,
+    IDEMPOTENCY_KEY_PATTERN,
+    MAX_ID,
+    CheckoutRequest,
+    request_fingerprint,
+)
 from shopflow_common.server import serve
 from shopflow_common.telemetry import setup_telemetry
 
@@ -120,10 +129,40 @@ def create_app(settings: Settings | None = None, payments_transport: httpx.Async
         async with request.app.state.sessionmaker() as session:
             return await list_products(session)
 
+    async def replay(sessionmaker: async_sessionmaker, keyed: KeyedOrder | None, request_hash: str) -> Any:
+        """Answer a checkout whose `Idempotency-Key` already created an order, without charging or writing anything."""
+        if keyed is not None and keyed.request_hash != request_hash:
+            return JSONResponse({"detail": "Idempotency-Key was already used with a different request"}, 422)
+        if keyed is None or keyed.status == "pending":
+            # The first checkout is still running, or its order waits for the stranded-order sweeper.
+            return JSONResponse(
+                {
+                    "detail": "a checkout with this Idempotency-Key is in progress",
+                    "order_id": getattr(keyed, "id", None),
+                    "status": "pending",
+                },
+                status_code=409,
+                headers={"Retry-After": "1"},
+            )
+        log.info("checkout replayed", extra={"order_id": keyed.id, "order_status": keyed.status})
+        async with sessionmaker() as session:
+            return await get_order(session, keyed.id)
+
     @app.post("/orders", status_code=201, response_model=OrderOut)
-    async def create_order(body: CheckoutRequest, request: Request) -> Any:
+    async def create_order(
+        body: CheckoutRequest,
+        request: Request,
+        idempotency_key: Annotated[
+            str | None, Header(alias=IDEMPOTENCY_KEY_HEADER, pattern=IDEMPOTENCY_KEY_PATTERN)
+        ] = None,
+    ) -> Any:
         sessionmaker = request.app.state.sessionmaker
         payments: PaymentsClient = request.app.state.payments
+        request_hash = request_fingerprint(body) if idempotency_key else None
+        if idempotency_key:
+            keyed = await find_keyed_order(sessionmaker, idempotency_key)
+            if keyed is not None:
+                return await replay(sessionmaker, keyed, request_hash)
         permit = payments.admit()
         if permit is None:  # circuit open: refuse before creating an order that could only fail
             return JSONResponse(
@@ -132,10 +171,13 @@ def create_app(settings: Settings | None = None, payments_transport: httpx.Async
                 headers={"Retry-After": str(payments.breaker.retry_after_s())},
             )
         try:
-            pending: PendingOrder = await create_pending_order(sessionmaker, body)
+            pending: PendingOrder = await create_pending_order(sessionmaker, body, idempotency_key, request_hash)
         except InvalidCheckoutError as exc:
             payments.release(permit)
             return JSONResponse({"detail": str(exc)}, status_code=422)
+        except DuplicateIdempotencyKeyError:  # a concurrent checkout with the same key stored it first
+            payments.release(permit)
+            return await replay(sessionmaker, await find_keyed_order(sessionmaker, idempotency_key), request_hash)
         except BaseException:
             payments.release(permit)
             raise
