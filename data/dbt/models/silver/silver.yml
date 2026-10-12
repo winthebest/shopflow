@@ -4,6 +4,9 @@ version: 2
 # Tests tagged `reconciliation` compare with Postgres (tests/generic/reconciles_with_postgres.sql). They exist only
 # with --vars '{reconcile: true}' (the daily reconciliation DAG): absent from the default manifest, the hourly run
 # (Cosmos renders tasks from that manifest) can never pick them up.
+# not_null on every column gold reads that the contracts (data/contracts) make NOT NULL: a column renamed or dropped
+# in Postgres reaches bronze as NULL (the sink drops unknown fields), and accepted_values / relationships pass NULLs,
+# so without it only the daily reconciliation would notice.
 
 models:
   - name: customers
@@ -11,6 +14,8 @@ models:
       - name: id
         data_tests: [unique, not_null]
       - name: email
+        data_tests: [not_null]
+      - name: created_at
         data_tests: [not_null]
     data_tests:
       - reconciles_with_postgres:
@@ -39,8 +44,15 @@ models:
               arguments: {to: ref('customers'), field: id}
       - name: status
         data_tests:
+          - not_null
           - accepted_values:
               arguments: {values: [pending, paid, failed]}
+      - name: total
+        data_tests: [not_null]
+      - name: created_at
+        data_tests: [not_null]
+      - name: updated_at
+        data_tests: [not_null]
     data_tests:
       - reconciles_with_postgres:
           arguments: {source_table: orders, compare: [customer_id, status, total]}
@@ -60,6 +72,10 @@ models:
           - not_null
           - relationships:
               arguments: {to: ref('products'), field: id}
+      - name: quantity
+        data_tests: [not_null]
+      - name: unit_price
+        data_tests: [not_null]
     data_tests:
       - reconciles_with_postgres:
           arguments: {source_table: order_items, compare: [order_id, product_id, quantity, unit_price]}
@@ -76,8 +92,11 @@ models:
               arguments: {to: ref('orders'), field: id}
       - name: status
         data_tests:
+          - not_null
           - accepted_values:
               arguments: {values: [succeeded, declined, error]}
+      - name: created_at
+        data_tests: [not_null]
     data_tests:
       - reconciles_with_postgres:
           arguments: {source_table: payments, compare: [order_id, amount, status]}
