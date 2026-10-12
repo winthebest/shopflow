@@ -21,6 +21,7 @@
 | `sf-sre` | sf-sre | 6552 | 8444 | 5052 | 18082 |
 | `sf-data` | sf-data | 6553 | 8445 | 5053 | 18083 |
 | `sf-app` | sf-app | 6554 | 8446 | 5054 | 18084 |
+| `sf-cloud` | sf-cloud (local restore drill) | 6555 | 8447 | 5055 | 18085 |
 
 All bind `127.0.0.1`. The registry is created with the cluster and removed by `k3d cluster delete`.
 
