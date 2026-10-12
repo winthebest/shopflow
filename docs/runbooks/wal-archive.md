@@ -34,8 +34,9 @@ Point-in-time recovery is also blind past the last archived segment while this l
    - `shopflow:pg_wal_archive_pending:segments`: segments waiting (×16 MiB);
    - `deriv(shopflow:pg_wal_archive_pending:segments[15m]) * 60`: segments a minute;
    - `cnpg_pg_stat_archiver_failed_count`, `cnpg_pg_stat_archiver_seconds_since_last_archival`.
-2. Why, from the plugin sidecar (`plugin-barman-cloud`; `kubectl -n shop get pod shop-db-1 -o
-   jsonpath='{.spec.containers[*].name}'` lists the containers):
+2. Why, from the plugin sidecar `plugin-barman-cloud`. It runs as a native sidecar (an init container with
+   `restartPolicy: Always`), so it is listed by `kubectl -n shop get pod shop-db-1 -o
+   jsonpath='{.spec.initContainers[*].name}'`, not under `.spec.containers` (confirmed in the drill slot):
    `kubectl -n shop logs shop-db-1 -c plugin-barman-cloud --since=30m | tail -50`, and Postgres' own view:
    `kubectl -n shop exec shop-db-1 -c postgres -- psql -c 'select * from pg_stat_archiver'`.
 3. Typical messages:
