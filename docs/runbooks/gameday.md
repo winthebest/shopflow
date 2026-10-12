@@ -40,8 +40,11 @@ Chaos Mesh exists in the cluster only during the game day ([ADR 0303](../adr/030
    SLIs, error budgets, payments attempts and circuit, pending orders and the sweeper, CDC staleness, WAL retained by
    the slot and its growth, WAL waiting for the archive, worker replicas). Add Grafana screenshots where a graph
    tells it better.
-3. Write the postmortem; open an action item for every fix; re-run the scenario after the fix and fill the
+3. Check the window: `scripts/sre-host-guard.sh sleeps <start> <end>` must print 0, or the numbers are invalid.
+4. Write the postmortem; open an action item for every fix; re-run the scenario after the fix and fill the
    before/after table.
+5. The Docker VM keeps the memory it used after `make down`. Back-to-back slots reuse it; when macOS needs it back
+   (swapping), restart Docker Desktop, even with no cluster left.
 
 ## Scenarios
 
