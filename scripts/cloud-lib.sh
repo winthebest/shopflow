@@ -345,6 +345,48 @@ EOF
   log "backup pointer -> $pointer"
 }
 
+# ---- Postgres id sequences after a recovery -----------------------------------------------------
+
+# A recovery brings the id sequences back to the restored database. After an abrupt end (the last WAL segment is
+# lost) that is below ids already handed to customers: a new order would get a lost customer's order id (their
+# order id shows someone else's order; payment reconciliation by order id matches the wrong one). Before traffic,
+# orders.id moves past GREATEST(max(id), highest acked order id) plus a margin, and payments.id past its max plus
+# the order-id gap plus the margin. With an ack log (k6 JSON lines) the highest id handed out is known and a small
+# margin covers requests in flight; without one the margin is large (ids are bigint: a gap costs nothing). After a
+# clean end (final backup) the step is harmless.
+ID_MARGIN_WITH_ACKS=1000
+ID_MARGIN_BLIND=100000
+
+shop_db_primary() {
+  local pod
+  pod="$(kube -n shop get pods -l cnpg.io/cluster=shop-db,cnpg.io/instanceRole=primary -o name | head -n 1)"
+  [ -n "$pod" ] || die "no shop-db primary"
+  printf '%s' "$pod"
+}
+
+max_acked_order_id() {
+  jq -Rn '[inputs | fromjson? | .ack? // empty | .order_id | numbers] | max // 0' "$1"
+}
+
+# bump_id_sequences [ack log]
+bump_id_sequences() {
+  local acks="${1:-}" max_acked=0 margin="$ID_MARGIN_BLIND"
+  if [ -n "$acks" ]; then
+    [ -r "$acks" ] || die "ack log $acks is not readable"
+    max_acked="$(max_acked_order_id "$acks")"
+    margin="$ID_MARGIN_WITH_ACKS"
+  fi
+  if dry_run; then
+    log "DRY-RUN: would move the orders/payments id sequences past ${acks:+acked id $max_acked and }the restored ids (+$margin)"
+    return 0
+  fi
+  kube -n shop exec "$(shop_db_primary)" -c postgres -- psql -d shop -At -v ON_ERROR_STOP=1 \
+    -c "SELECT setval(pg_get_serial_sequence('payments', 'id'),
+          (SELECT coalesce(max(id), 0) FROM payments) + GREATEST($max_acked - (SELECT coalesce(max(id), 0) FROM orders), 0) + $margin)" \
+    -c "SELECT setval(pg_get_serial_sequence('orders', 'id'), GREATEST((SELECT coalesce(max(id), 0) FROM orders), $max_acked) + $margin)" >&2
+  log "id sequences moved past ${acks:+the highest acked order id $max_acked and }the restored ids (+$margin)"
+}
+
 backup_settled() {
   case "$(cnpg_backup_phase "$1")" in completed | failed) return 0 ;; *) return 1 ;; esac
 }

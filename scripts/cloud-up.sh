@@ -9,6 +9,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/cloud-lib.sh"
 usage() {
   cat <<'EOF'
 Usage: scripts/cloud-up.sh [--dry-run] [--resume] [--hours N] [--pitr TIME] [--profiles LIST] [--revision REV]
+                           [--ack-log FILE]
 
   --dry-run        read AWS state, run `tofu plan`, print every change instead of making it
   --resume         continue a session whose cloud-up stopped half-way (reuses its recorded plan)
@@ -16,6 +17,8 @@ Usage: scripts/cloud-up.sh [--dry-run] [--resume] [--hours N] [--pitr TIME] [--p
   --pitr TIME      restore Postgres to this RFC 3339 time instead of the end of the last backup chain
   --profiles LIST  Argo CD profiles (default: $CLOUD_PROFILES or core,obs,data,rt,batch,bi)
   --revision REV   git revision Argo CD deploys (default: main)
+  --ack-log FILE   k6 ack log (JSON lines) of the traffic before the last session ended: after a recovery, the
+                   order/payment id sequences move past its highest order id + 1000 (without it: + 100000)
 
 Environment: AWS_PROFILE (default shopflow), CLOUD_KUBECONFIG, ROOT_APPS_HOOK, CDC_EPOCH_HOOK,
 ARGOCD_CHART_FILE, ARGOCD_VALUES, ARGOCD_AWS_VALUES (Argo CD chart and values, sf-platform),
@@ -40,6 +43,7 @@ SMOKE_CUSTOMER_ID="${SMOKE_CUSTOMER_ID:-1}"
 RESUME=0
 HOURS="$(contract .lease.default_hours)"
 PITR=""
+ACK_LOG=""
 PROFILES="${CLOUD_PROFILES:-core,obs,data,rt,batch,bi}"
 REVISION="main"
 
@@ -53,10 +57,12 @@ parse_args() {
       --pitr) PITR="${2:?--pitr needs a value}"; shift ;;
       --profiles) PROFILES="${2:?--profiles needs a value}"; shift ;;
       --revision) REVISION="${2:?--revision needs a value}"; shift ;;
+      --ack-log) ACK_LOG="${2:?--ack-log needs a value}"; shift ;;
       *) usage >&2; die "unknown argument: $1" ;;
     esac
     shift
   done
+  [ -z "$ACK_LOG" ] || [ -r "$ACK_LOG" ] || die "--ack-log $ACK_LOG is not readable"
   case "$HOURS" in '' | *[!0-9]*) die "--hours must be a whole number" ;; esac
   [ "$HOURS" -ge 1 ] && [ "$HOURS" -le "$(contract .lease.max_hours)" ] || die "--hours must be 1..$(contract .lease.max_hours)"
 }
@@ -294,6 +300,8 @@ postgres_chain() {
   wait_until 1800 "CNPG cluster shop-db Ready" cnpg_ready || die "shop-db did not become Ready"
   if [ "$PG_MODE" = initdb ]; then
     ssm_put_new "$SSM_PG_MARKER" "$SESSION_ID"
+  else
+    bump_id_sequences "$ACK_LOG" # before any traffic: no lost customer's order id is handed out again
   fi
   # Every session starts a new serverName; a fresh base backup makes it the head of the chain
   # before anything else depends on it.
