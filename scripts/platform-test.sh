@@ -58,6 +58,18 @@ run_case "main: the ready line splits apps and CDC snapshot time" 0 "CDC snapsho
   "PROFILES=core,obs-lite,data; preflight() { :; }; create_cluster() { :; }; install_argocd() { :; }
    apply_root_apps() { :; }; start_cdc_epoch() { :; }; wait_for_apps() { :; }; wait_cdc_snapshot() { :; }; main"
 
+# create_cluster: stopped pull-through caches are started for an existing cluster too (after Docker restarts).
+run_case "existing cluster: caches started before k3d cluster start" 0 "start k3d-shopflow-cache-docker" \
+  "PULL_CACHE=1; calls=();
+   docker() { [[ \"\$1 \$2\" == 'container inspect' ]] && return 0; calls+=(\"\$*\"); }
+   k3d() { calls+=(\"k3d \$*\"); }; cluster_exists() { return 0; }; kc() { :; }; advertise_dev_registry() { :; }
+   create_cluster; printf '%s\n' \"\${calls[@]}\" | head -2"
+run_case "PULL_CACHE=0: caches left alone" 0 "k3d cluster start" \
+  "PULL_CACHE=0; calls=();
+   docker() { calls+=(\"\$*\"); }; k3d() { calls+=(\"k3d \$*\"); }; cluster_exists() { return 0; }
+   kc() { :; }; advertise_dev_registry() { :; }
+   create_cluster; printf '%s\n' \"\${calls[@]}\" | head -1; [[ \"\${calls[*]}\" != *start\ k3d-shopflow-cache* ]]"
+
 # local_params: the failover game day's shop-db params reach platform-root-apps.sh.
 run_case "PG_INSTANCES / PG_LOGICAL_SLOT_SYNC become session params" 0 \
   "--param pg.instances=2 --param pg.logicalSlotSync=off" \

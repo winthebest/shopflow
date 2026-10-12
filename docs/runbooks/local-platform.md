@@ -78,6 +78,8 @@ from the internet once per machine.
 
 - Only clusters created after the caches exist use them (`registries.yaml` is read when a node starts).
 - If a cache is down, containerd falls back to the upstream registry; pulls are slower but nothing breaks.
+- After Docker Desktop restarts, the caches are stopped like everything else; the next `make up` starts them again
+  (for a new or an existing cluster). Nothing else to do.
 - Disk use: `make status`. Reset: `make platform-cache-down` (deletes caches + data). Opt out: `PULL_CACHE=0 make up`.
 - Caches are anonymous: never configure registry credentials on them (private images would be served to anyone).
 
