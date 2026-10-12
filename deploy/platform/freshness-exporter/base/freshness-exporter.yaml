@@ -69,7 +69,7 @@ spec:
               value: bronze.heartbeat,bronze.orders,bronze.order_items,bronze.payments
             # gold-freshness SLI (slo/gold-freshness.yaml): age of each mart's latest data commit (dbt, profile batch).
             - name: REFRESH_TABLES
-              value: gold.fct_orders,gold.dim_customers,gold.mart_daily_revenue,gold.mart_payment_success_rate,gold.mart_customer_ltv
+              value: gold.fct_orders,gold.dim_customers,gold.mart_daily_revenue,gold.mart_payment_success_rate,gold.mart_customer_ltv,gold.mart_product_sales
             - name: PROBE_INTERVAL_SECONDS
               value: "60"
           readinessProbe:

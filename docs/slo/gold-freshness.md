@@ -10,7 +10,7 @@ Tests: [`slo/tests/gold-freshness.test.yaml`](../../slo/tests/gold-freshness.tes
 ## Why gold
 
 The gold marts (`lake.gold.*`: `fct_orders`, `dim_customers`, `mart_daily_revenue`, `mart_payment_success_rate`,
-`mart_customer_ltv`) are what Metabase shows. dbt rebuilds them every hour (Airflow DAG `dbt_build`, profile `batch`;
+`mart_customer_ltv`, `mart_product_sales`) are what Metabase shows. dbt rebuilds them every hour (Airflow DAG `dbt_build`, profile `batch`;
 ADR 0412–0414). Stale gold means the business looks at old numbers without knowing it.
 
 ## SLI
