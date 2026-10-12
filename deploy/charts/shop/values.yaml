@@ -19,8 +19,8 @@ services:
   gateway:
     image:
       repository: ghcr.io/winthebest/shopflow-gateway
-      tag: sha-1a400bb
-      digest: sha256:7d1f2e5bfc027fdaa756bcca59a7733b46b5ae422cc9771d53ea6056376c2129
+      tag: sha-2372d7c
+      digest: sha256:9e1161fa6195b707f22184a45553fb87d5f0deef367a32b0e194b1080e2667a9
     port: 8000
     # HorizontalPodAutoscaler on average CPU per pod (replaces `replicas`). A proxy: 407m at 80 checkouts/s on one
     # replica (docs/perf-baseline.md, 2026-10-10); it holds no database connection.
@@ -36,8 +36,8 @@ services:
   orders:
     image:
       repository: ghcr.io/winthebest/shopflow-orders
-      tag: sha-1a400bb
-      digest: sha256:2e6f6184c226b4d2b4b9461cb5173232bd9572175f28035042fe60a588868926
+      tag: sha-2372d7c
+      digest: sha256:7e0b9e1323502ca32aa12f6e7b8238673dddb4ee9b591b5ccdcbd921cc66422e
     port: 8001
     # One Python process per pod saturates near one core: 881m at 80 checkouts/s, where queued requests held their
     # connections and the pool ran dry. 500m keeps a replica near 45 checkouts/s. maxReplicas x (DB_POOL_SIZE +
@@ -58,8 +58,8 @@ services:
   payments:
     image:
       repository: ghcr.io/winthebest/shopflow-payments
-      tag: sha-1a400bb
-      digest: sha256:6e0eb8567d294b63aad2acfae11a685aa92d5848b0176a253cbc199a7a529836
+      tag: sha-2372d7c
+      digest: sha256:b8b9aac86f7e2567fa1ec3ab95c7da5b82d1cf2bbf5499d43c2ad65feaec904e
     port: 8002
     replicas: 2
     env:
@@ -74,8 +74,8 @@ services:
     kind: worker
     image:
       repository: ghcr.io/winthebest/shopflow-fulfillment-worker
-      tag: sha-1a400bb
-      digest: sha256:d0d87a98bbf5182460c2d030db5bfd46b2c6b5a9a72b0ce4dc51fa854fdddad2
+      tag: sha-2372d7c
+      digest: sha256:a193f9e52bc565c314f8756250952578d44230078850bcb8a3428a904b5d98b5
     port: 8003
     env:
       DATABASE_HOST: shop-db-rw.shop.svc
