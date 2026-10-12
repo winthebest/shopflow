@@ -29,7 +29,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
+        "w": 6,
         "x": 0,
         "y": 0
       },
@@ -60,6 +60,47 @@
       }
     },
     {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Payments per minute",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "serving"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "serving"
+          },
+          "format": "time_series",
+          "editorMode": "code",
+          "rawQuery": true,
+          "rawSql": "SELECT window_start AS time, payments FROM kpi_minute WHERE $__timeFilter(window_start) ORDER BY 1"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "description": "Payment inserts per minute. Next to orders per minute this shows a payments outage: since #196 orders stay pending and no payment row is written until the orders sweeper settles them."
+    },
+    {
       "id": 2,
       "type": "timeseries",
       "title": "GMV per minute (sum of order totals)",
@@ -69,8 +110,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
-        "x": 8,
+        "w": 6,
+        "x": 12,
         "y": 0
       },
       "targets": [
@@ -110,8 +151,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
-        "x": 16,
+        "w": 6,
+        "x": 18,
         "y": 0
       },
       "targets": [
@@ -138,7 +179,8 @@
           "displayMode": "list",
           "placement": "bottom"
         }
-      }
+      },
+      "description": "Non-succeeded payment inserts / all payment inserts per minute. No data while payments is down: orders stay pending and no payment row is written (#196); watch payments per minute instead."
     }
   ]
 }
