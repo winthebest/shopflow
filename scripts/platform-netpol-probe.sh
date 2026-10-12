@@ -23,7 +23,7 @@ die() { log "error: $*"; exit 1; }
 
 # Source namespace | source pod labels | target namespace | target pod selector | port | expected
 PROBES=(
-  # core (PR #75)
+  # core
   "shop|app.kubernetes.io/name=gateway|shop|app.kubernetes.io/name=orders|8001|open"
   "shop|app.kubernetes.io/name=gateway|shop|cnpg.io/cluster=shop-db|5432|blocked"
   "shop|app.kubernetes.io/name=orders|observability|app.kubernetes.io/instance=otel-gateway|4317|open"
