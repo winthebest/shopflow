@@ -39,7 +39,10 @@ spec:
             (
               shopflow:pg_slot_wal_retained:ratio > 0.25
               and on (namespace, pod, slot_name)
-              predict_linear(shopflow:pg_slot_wal_retained:bytes[30m], 3600)
+              # 15m, not 30m: right after a connector stops, a longer window still holds the flat minutes before it and
+              # holds the slope down (game day 3b: the page came 6 minutes later with 30m). The > 0.25 guard keeps the
+              # normal one-to-two-segment swing from paging.
+              predict_linear(shopflow:pg_slot_wal_retained:bytes[15m], 3600)
                 / on (namespace, pod) group_left()
                 (max by (namespace, pod) (cnpg_pg_settings_setting{name="max_slot_wal_keep_size"} > 0) * 1024 * 1024)
               > 1

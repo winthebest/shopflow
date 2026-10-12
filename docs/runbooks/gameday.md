@@ -22,7 +22,10 @@ Chaos Mesh exists in the cluster only during the game day ([ADR 0303](../adr/030
 1. Note the time, then `kubectl apply -f chaos/gd<n>-….yaml`. Experiments with a `duration` stop by themselves;
    pod-kill experiments are one-shot.
 2. Watch: Grafana *SLO – checkout*, *RED*, the alert list (`ALERTS`), and the stop conditions in the file header.
-3. Stop early with `kubectl delete -f chaos/gd<n>-….yaml` if a stop condition is met.
+3. Stop early with `kubectl delete -f chaos/gd<n>-….yaml` if a stop condition is met. A stop based on retained WAL
+   (game day 3) must leave room for the 2–3 minutes the slot keeps growing after the connector returns, until
+   Debezium's first offset flush: stop when retained + rate × 3 min reaches 80% of the cap. At one segment a minute
+   that is ~70% for a 512MB cap (game day 3b peaked at 78% after stopping at 69%).
 
 ## After
 
