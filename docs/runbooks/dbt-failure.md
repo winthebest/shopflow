@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| Signal | A failed task in DAG `dbt_build` (Airflow UI); gold goes stale, then [`GoldFreshnessBurn`](gold-stale.md) |
-| Code | [`data/airflow/dags/dbt_build.py`](../../data/airflow/dags/dbt_build.py), [`data/dbt`](../../data/dbt) |
+| Signal | `AirflowDagRunFailed{dag_id="dbt_build"}` (ticket): the latest finished run failed; gold goes stale, then [`GoldFreshnessBurn`](gold-stale.md) |
+| Code | [`data/airflow/dags/dbt_build.py`](../../data/airflow/dags/dbt_build.py), [`data/dbt`](../../data/dbt), alert [`airflow-dag-runs.prometheusrule.yaml`](../../deploy/platform/slo/base/airflow-dag-runs.prometheusrule.yaml) |
 | Decisions | docs/adr/0412 (dbt), 0413 (silver from the latest completed epoch), 0414 (Airflow, Cosmos) |
 
 ## What it means
@@ -11,6 +11,15 @@
 The hourly run builds silver (current state of the latest completed CDC epoch) and gold, one Airflow task per model
 run and per model's tests. A failed run task leaves that table at its previous version; a failed test task stops
 the models downstream of it, so a broken silver table never reaches gold. Tasks retry once after 5 minutes.
+
+The alert reads Airflow's metadata database through a CNPG custom query on shop-db
+(`cnpg_airflow_dag_run_last_failed`): it fires 5 minutes after a run ends failed (retries included) and resolves
+when a later run succeeds, either the next hourly run or the cleared task. Two limits:
+
+- A run that never ends (a hung task, a stopped scheduler) raises no alert here. Gold then goes stale, and the
+  gold-freshness SLO pages ([gold-stale](gold-stale.md)).
+- `source_freshness` fails when CDC is more than 30 minutes behind, and that fails the run too. The ticket then comes
+  with the cdc-lag page: follow [cdc-lag](cdc-lag.md) first, and the next run succeeds once CDC has caught up.
 
 ## Triage
 

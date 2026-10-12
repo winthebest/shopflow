@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Signal | A failed task `maintain_<schema>` of DAG `iceberg_maintenance` (daily 03:30 UTC) |
+| Signal | `AirflowDagRunFailed{dag_id="iceberg_maintenance"}` (ticket): a task `maintain_<schema>` failed (daily 03:30 UTC, after one retry); resolves when a later run succeeds. A run that never ends raises nothing |
 | Code | [`data/dbt/macros/iceberg_maintenance.sql`](../../data/dbt/macros/iceberg_maintenance.sql), [`data/airflow/dags/iceberg_maintenance.py`](../../data/airflow/dags/iceberg_maintenance.py) |
 | Floors | 7-day `expire_snapshots` / `remove_orphan_files` minimum on catalog `lake` (docs/adr/0410) |
 
