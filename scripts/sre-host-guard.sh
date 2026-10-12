@@ -3,10 +3,12 @@
 # slots, restore drills). `caffeinate -dims` keeps an idle Mac awake, but not one on battery with its lid closed
 # (clamshell sleep): on 2026-10-12 that froze a game-day cluster for three hours. So a runner checks the host before it
 # starts, and a run whose window contains a sleep is invalid.
-#   preflight             exit 1 unless the Mac is on AC power and its lid is open (the reason on stderr)
+#   preflight             exit 1 unless the Mac is on AC power and its lid is open
 #   sleeps SINCE [UNTIL]  how many times the Mac went to sleep between two Unix times (UNTIL defaults to now), from
 #                         pmset's log; dark wakes in between are part of the same sleep
 #   awake-since SINCE     exit 1 if it slept since SINCE (prints the count)
+#   check SINCE           preflight and awake-since together, for a runner to call before each phase of a slot
+# A failed check prints one line on stderr with every reason.
 # Not macOS: nothing to check; preflight passes and sleeps prints 0, with a note on stderr.
 set -uo pipefail
 
@@ -20,19 +22,20 @@ local_time() { date -r "$1" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -d "@$1" '+
 
 preflight() {
   [[ "$OS" == Darwin ]] || { not_macos; return 0; }
-  local ok=0 batt lid
+  local batt lid reasons=()
   # Read each tool's whole output first: `tool | grep -q` stops reading at the first match, the tool dies of SIGPIPE,
   # and pipefail turns that into a failed check (ioreg prints thousands of lines).
   batt="$(pmset -g batt)" lid="$(ioreg -r -k AppleClamshellState -d 4)"
   # First line: "Now drawing from 'AC Power'" or "... 'Battery Power'".
-  if ! head -1 <<< "$batt" | grep -q "'AC Power'"; then
-    echo "host guard: on battery; plug in the charger (a closed lid on battery sleeps despite caffeinate)" >&2; ok=1
+  head -1 <<< "$batt" | grep -q "'AC Power'" \
+    || reasons+=("on battery: plug in the charger (a closed lid on battery sleeps despite caffeinate)")
+  grep -q '"AppleClamshellState" = No' <<< "$lid" || reasons+=("lid closed (or state unknown): open it")
+  if [[ ${#reasons[@]} -gt 0 ]]; then
+    local IFS=';'
+    echo "host guard: ${reasons[*]}" >&2
+    return 1
   fi
-  if ! grep -q '"AppleClamshellState" = No' <<< "$lid"; then
-    echo "host guard: lid closed (or state unknown); open it" >&2; ok=1
-  fi
-  [[ $ok -eq 0 ]] && echo "host guard: AC power, lid open"
-  return $ok
+  echo "host guard: AC power, lid open"
 }
 
 # pmset log lines: "2026-10-12 19:27:53 +0700 Sleep  <tab>Entering Sleep state due to ...". Only the event-type
@@ -53,5 +56,11 @@ case "${1:-}" in
     n="$(sleeps "$2")" || exit 2
     echo "$n"
     [[ "$n" == 0 ]] ;;
+  check)
+    [[ $# -eq 2 ]] || usage
+    preflight >/dev/null || exit 1
+    n="$(sleeps "$2")" || exit 2
+    [[ "$n" == 0 ]] || { echo "host guard: the Mac slept $n time(s) since $(local_time "$2"): the window is invalid" >&2; exit 1; }
+    echo "host guard: AC power, lid open, no sleep since $(local_time "$2")" ;;
   *) usage ;;
 esac

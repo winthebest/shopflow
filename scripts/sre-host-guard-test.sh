@@ -60,6 +60,15 @@ expect "a sleep at SINCE counts" 0 "1" -- "$GUARD" sleeps "$(unix '2026-10-12 10
 expect "a sleep at UNTIL does not" 0 "0" -- "$GUARD" sleeps "$(unix '2026-10-12 10:01:00')" "$(unix '2026-10-12 10:20:00')"
 expect "awake since the last sleep" 0 "0" -- "$GUARD" awake-since "$(unix '2026-10-12 10:21:00')"
 expect "slept since" 1 "2" -- "$GUARD" awake-since "$(unix '2026-10-12 09:00:00')"
+batt 'AC Power'; echo No > "$TMP/lid"
+expect "check: fit and awake since 10:21" 0 "no sleep since" -- "$GUARD" check "$(unix '2026-10-12 10:21:00')"
+expect "check: slept in the window" 1 "slept 2 time(s)" -- "$GUARD" check "$(unix '2026-10-12 09:00:00')"
+batt 'Battery Power'
+expect "check: on battery stops before counting" 1 "on battery" -- "$GUARD" check "$(unix '2026-10-12 10:21:00')"
+echo Yes > "$TMP/lid"
+lines="$("$GUARD" preflight 2>&1 >/dev/null)"
+if [[ $(wc -l <<< "$lines") -eq 1 && "$lines" == *battery*lid* ]]; then echo "PASS both reasons on one line"
+else echo "FAIL both reasons on one line: $lines" >&2; failed=1; fi
 
 HOST_GUARD_OS=Linux expect "not macOS: preflight passes" 0 "nothing to check" -- "$GUARD" preflight
 HOST_GUARD_OS=Linux expect "not macOS: no sleeps" 0 "0" -- "$GUARD" sleeps 0
