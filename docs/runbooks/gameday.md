@@ -7,8 +7,10 @@ Chaos Mesh exists in the cluster only during the game day ([ADR 0303](../adr/030
 ## Before
 
 1. Ask the orchestrator for a slot. Announce the **measurement window**: no other lane runs heavy Docker work on the
-   VM (`docs/contracts/environment.md`). Keep the laptop awake: lid open, `caffeinate -dims`; check afterwards that
-   `pmset -g log` shows no `Sleep` inside the window.
+   VM (`docs/contracts/environment.md`). Keep the laptop awake: **charger plugged in and lid open**, plus
+   `caffeinate -dims`. caffeinate does not stop a closed lid on battery from sleeping the Mac: on 2026-10-12 that froze
+   a game-day cluster for three hours. Runners call `scripts/sre-host-guard.sh preflight` before they start and
+   `scripts/sre-host-guard.sh sleeps <start> [<end>]` (Unix seconds) at the end; a window with a sleep is invalid.
 2. Cluster up with the profiles the scenario needs (e.g. `make up CLUSTER=sf-sre PROFILES=core,obs GIT_REVISION=…`).
    The namespaces under test (`shop`, `kafka`) carry `chaos-mesh.org/inject=enabled` (sf-platform's Namespace
    objects); no other namespace can be targeted.
@@ -38,8 +40,11 @@ Chaos Mesh exists in the cluster only during the game day ([ADR 0303](../adr/030
    SLIs, error budgets, payments attempts and circuit, pending orders and the sweeper, CDC staleness, WAL retained by
    the slot and its growth, WAL waiting for the archive, worker replicas). Add Grafana screenshots where a graph
    tells it better.
-3. Write the postmortem; open an action item for every fix; re-run the scenario after the fix and fill the
+3. Check the window: `scripts/sre-host-guard.sh sleeps <start> <end>` must print 0, or the numbers are invalid.
+4. Write the postmortem; open an action item for every fix; re-run the scenario after the fix and fill the
    before/after table.
+5. The Docker VM keeps the memory it used after `make down`. Back-to-back slots reuse it; when macOS needs it back
+   (swapping), restart Docker Desktop, even with no cluster left.
 
 ## Scenarios
 
