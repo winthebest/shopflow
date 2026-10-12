@@ -30,6 +30,7 @@ NetworkPolicy with its embedded controller (kube-router); on EKS the VPC CNI net
     - `lakehouse`: **baseline**, until Trino sets runAsNonRoot and a seccomp profile.
     - For both, warn/audit run at restricted to show the gap.
     - `airflow` (`network-policies-batch`): **baseline**, warn/audit restricted, until a dry-run of the chart.
+    - `metabase` (`network-policies-bi`): **restricted**; no ingress (UI by port-forward).
     - `flink` (`network-policies-rt`): **restricted**. The operator chart values, the FlinkDeployment pod template
       and both Jobs set the restricted fields; checked on the rendered manifests, the live dry-run is the gate's
       PSA step. Only the KPI job's pods (`type=flink-native-kubernetes`) reach Kafka, Postgres and SeaweedFS.
