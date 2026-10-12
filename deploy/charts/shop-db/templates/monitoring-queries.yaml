@@ -1,0 +1,30 @@
+{{- if .Values.databases.airflow.enabled }}
+# Custom queries for CNPG's metrics exporter, added to its default queries (sf-data's alert when a DAG such as
+# dbt_build fails: deploy/platform/slo). The exporter runs them read-only, as postgres on the primary, in database
+# airflow. Airflow's tables exist only after its migration Job (profile batch); until then predicate_query skips the
+# query without an error. The cnpg.io/reload label makes the instance manager reload the queries.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shop-db-monitoring
+  labels:
+    app.kubernetes.io/part-of: shopflow
+    cnpg.io/reload: ""
+data:
+  queries.yaml: |
+    airflow_dag_run:
+      primary: true
+      target_databases: ["airflow"]
+      predicate_query: "SELECT to_regclass('public.dag_run') IS NOT NULL"
+      query: |
+        SELECT DISTINCT ON (dag_id) dag_id,
+               (state = 'failed')::int AS last_failed,
+               extract(epoch FROM end_date) AS last_end_time_seconds
+        FROM dag_run
+        WHERE state IN ('success', 'failed') AND end_date IS NOT NULL
+        ORDER BY dag_id, end_date DESC
+      metrics:
+        - dag_id: {usage: LABEL, description: Airflow DAG id}
+        - last_failed: {usage: GAUGE, description: 1 if the DAG's latest finished run failed}
+        - last_end_time_seconds: {usage: GAUGE, description: End time of that run (Unix seconds)}
+{{- end }}

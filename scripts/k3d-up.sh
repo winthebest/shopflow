@@ -12,6 +12,8 @@
 #   CDC_WAIT_TIMEOUT   seconds for the CDC snapshot record with profile data (default 900; cdc-epoch.sh wait)
 #   PG_SERVER_NAME     shop-db backup chain when the profiles deploy the cnpg-barman-plugin app (default shop-db);
 #                      PG_RECOVERY_FROM / PG_RECOVERY_TARGET_TIME restore from a chain (restore drill, ADR 0203)
+#   PG_INSTANCES       shop-db instances (failover game day: 2); PG_LOGICAL_SLOT_SYNC=off keeps logical slots off the
+#                      standbys (ADR 0203)
 set -euo pipefail
 
 # shellcheck source=scripts/k3d-lib.sh
@@ -229,6 +231,8 @@ local_params() {
   done
   [[ -z "${PG_RECOVERY_FROM:-}" ]] || PARAMS+=(--param "pg.recoveryFrom=$PG_RECOVERY_FROM")
   [[ -z "${PG_RECOVERY_TARGET_TIME:-}" ]] || PARAMS+=(--param "pg.recoveryTargetTime=$PG_RECOVERY_TARGET_TIME")
+  [[ -z "${PG_INSTANCES:-}" ]] || PARAMS+=(--param "pg.instances=$PG_INSTANCES")
+  [[ -z "${PG_LOGICAL_SLOT_SYNC:-}" ]] || PARAMS+=(--param "pg.logicalSlotSync=$PG_LOGICAL_SLOT_SYNC")
   ((${#PARAMS[@]} == 0)) || log "session params: ${PARAMS[*]}"
 }
 

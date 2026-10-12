@@ -3,7 +3,11 @@
 # External Secrets, backups to S3 with the barman-cloud plugin). Session params arrive as Helm values (ADR 0206).
 
 image: ghcr.io/cloudnative-pg/postgresql:17.11-minimal-trixie@sha256:ca2c3bb893d185fe4e5d0401a010454bd87dcb67c53003c38fd828804928f5d9
+# Session param pg.instances (game day: kill the primary, CNPG fails over to the replica). With more than one
+# instance, logical decoding slots (Debezium's, created with slot.failover) are synchronized to the standbys so CDC
+# continues on the new primary; session param pg.logicalSlotSync=off turns that off to measure CDC without it.
 instances: 1
+logicalSlotSync: true
 storage:
   size: 5Gi
   storageClass: ""   # empty = the cluster default (local-path on k3d)

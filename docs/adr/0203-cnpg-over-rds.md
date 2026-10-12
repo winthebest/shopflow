@@ -32,6 +32,20 @@ control over the database lifecycle.
   A cluster without SeaweedFS would otherwise keep WAL until the 5Gi volume is full.
 - `archive_timeout: 60s` everywhere: a WAL segment is archived at least once a minute even when it is not full, so
   the RPO is about a minute (CNPG's default is 5 minutes).
+- Failover with CDC (session param `pg.instances`, 2 for the failover game day): with more than one instance the
+  standbys keep a synchronized copy of Debezium's logical slot, so CDC continues on the promoted replica instead of
+  needing a re-snapshot.
+  - Mechanism: PostgreSQL 17 failover slots. Debezium creates the slot with `slot.failover`; the chart sets CNPG's
+    `replicationSlots.highAvailability.synchronizeLogicalDecoding` plus `sync_replication_slots` and
+    `hot_standby_feedback`; CNPG manages `synchronized_standby_slots`.
+  - `pg.logicalSlotSync=off` turns the sync off, to measure the failover without it (CDC breaks and the re-snapshot
+    runbook applies).
+  - Trade-off: with sync on, logical decoding never runs ahead of the standby, so it **waits** while the replica is
+    down or behind. CDC stalls with the replica, not only with the primary. If the replica's HA slot is invalidated
+    (`max_slot_wal_keep_size`), logical replication stops until CNPG recreates that slot.
+  - Detection: the symptom is the cdc-lag SLO (burn-rate alerts on bronze freshness). The cause, a replica that is
+    not streaming, needs a CNPG replication alert (for example streaming replicas below `instances - 1`), which the
+    SLO rules do not have yet.
 
 ## Alternatives considered
 
