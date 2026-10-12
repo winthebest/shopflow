@@ -64,6 +64,11 @@ roles:
     database: shop
     secret: shop-db-fulfillment-worker
     comment: fulfillment-worker (INSERT on shipments, grants from Alembic 0004)
+  metabase:
+    enabled: true
+    database: metabase
+    secret: shop-db-metabase
+    comment: Metabase application database (owns database metabase)
 
 # Databases besides `shop`, as CNPG Database objects. Kept when the object is deleted: dropping one loses data.
 databases:
@@ -76,6 +81,9 @@ databases:
   serving:
     enabled: true
     owner: flink_serving
+  metabase:
+    enabled: true
+    owner: metabase
 
 # WAL archive + base backups through the barman-cloud plugin. serverName names the chain (session param
 # pg.serverName). AWS: bucket aws.dataBucket, credentials from the pod's IAM role. Local (restore drill, profiles drill

@@ -212,6 +212,8 @@ spec:
         - namespaceSelector:
             matchLabels: {kubernetes.io/metadata.name: flink}
         - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: metabase}
+        - namespaceSelector:
             matchLabels: {kubernetes.io/metadata.name: observability}
           podSelector:
             matchLabels: {app.kubernetes.io/name: grafana}

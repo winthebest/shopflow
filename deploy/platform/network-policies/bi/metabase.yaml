@@ -1,0 +1,84 @@
+# Profile bi: namespace metabase (docs/adr/0208-psa-and-network-policies.md, flows: docs/contracts/environment.md "Network
+# flows"). Metabase (application database in shop-db, queries through Trino) and the Job that copies its shop-db and
+# Trino logins. restricted: Metabase runs non-root with emptyDir for /plugins and /tmp (sf-data's design). No
+# ingress: the UI is reached by port-forward only (ADR 0205).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: metabase
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: metabase
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: metabase
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+# Contract flows: the application database in shop-db and the lake through Trino.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: metabase-flows
+  namespace: metabase
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: shop}
+          podSelector:
+            matchLabels: {cnpg.io/cluster: shop-db}
+      ports:
+        - {protocol: TCP, port: 5432}
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: lakehouse}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: trino}
+      ports:
+        - {protocol: TCP, port: 8443}
+---
+# The secret copy Job reads its logins from shop and lakehouse through the API server (docs/contracts/gitops.md §5).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: apiserver
+  namespace: metabase
+  labels:
+    shopflow.io/egress: apiserver
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    # API server only: k3s matches egress after the Service DNAT (kubernetes.default -> node IP:6443), so 443 stays
+    # closed. The aws overlay swaps this rule for 443 to the VPC (components/apiserver-aws).
+    - ports:
+        - {protocol: TCP, port: 6443}

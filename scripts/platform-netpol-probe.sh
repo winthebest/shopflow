@@ -4,7 +4,7 @@
 # the source workload (policies select by labels), so no workload image needs a shell or netcat.
 #
 #   scripts/platform-netpol-probe.sh                 run the probes, print a table, exit 1 on any mismatch
-#   scripts/platform-netpol-probe.sh --apply REV     first apply apps network-policies-{obs,data,batch,rt} at Git revision REV
+#   scripts/platform-netpol-probe.sh --apply REV     first apply apps network-policies-{obs,data,batch,rt,bi} at Git revision REV
 #   scripts/platform-netpol-probe.sh --remove        delete those apps and their policies (namespaces stay)
 #
 # A probe whose source or target namespace/pod does not exist is reported as SKIP, not as a failure.
@@ -14,7 +14,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KUBE_CONTEXT="${KUBE_CONTEXT:-k3d-${CLUSTER:-sf-main}}"
-APPS=(network-policies-obs network-policies-data network-policies-batch network-policies-rt)
+APPS=(network-policies-obs network-policies-data network-policies-batch network-policies-rt network-policies-bi)
 REPO_URL="https://github.com/winthebest/shopflow.git"
 
 kc() { kubectl --context "$KUBE_CONTEXT" "$@"; }
@@ -58,6 +58,10 @@ PROBES=(
   "flink|type=flink-native-kubernetes|lakehouse|app.kubernetes.io/name=trino|8443|blocked"
   "flink|app.kubernetes.io/name=probe|shop|cnpg.io/cluster=shop-db|5432|blocked"
   "default|app.kubernetes.io/name=probe|flink|type=flink-native-kubernetes|8081|blocked"
+  # bi (metabase): its application database and Trino; nothing else in lakehouse
+  "metabase|app.kubernetes.io/name=probe|shop|cnpg.io/cluster=shop-db|5432|open"
+  "metabase|app.kubernetes.io/name=probe|lakehouse|app.kubernetes.io/name=trino|8443|open"
+  "metabase|app.kubernetes.io/name=probe|lakehouse|app.kubernetes.io/name=polaris|8181|blocked"
   # observability
   "observability|app.kubernetes.io/name=prometheus|shop|cnpg.io/cluster=shop-db|9187|open"
   "observability|app.kubernetes.io/name=prometheus|kafka|strimzi.io/kind=KafkaConnect|9404|open"
@@ -77,6 +81,7 @@ INTERNET_PROBES=(
   "kafka|strimzi.io/kind=KafkaConnect"
   "airflow|app.kubernetes.io/name=probe"
   "flink|type=flink-native-kubernetes"
+  "metabase|app.kubernetes.io/name=probe"
 )
 # API server through the kubernetes Service (443, DNAT to the node's 6443 on k3s): source | labels | expected.
 API_HOST="kubernetes.default.svc.cluster.local"
@@ -89,6 +94,7 @@ API_PROBES=(
   "lakehouse|app.kubernetes.io/name=probe|open"
   "airflow|app.kubernetes.io/name=probe|open"
   "flink|app.kubernetes.io/name=probe|open"
+  "metabase|app.kubernetes.io/name=probe|open"
 )
 
 apply_apps() {
