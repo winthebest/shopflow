@@ -16,8 +16,8 @@
 #      WATCH=1 measures the same without k6, for a backlog that appears by itself (game day 3: Kafka Connect down,
 #      then back): it waits up to WATCH_TIMEOUT for the lag to rise above 0, then samples until it is drained and the
 #      replicas are back to the minimum; start it while the lag is still 0;
-#   6. once the consumer lag is 0: no order has two shipments (HAVING count(*) > 1), every paid order has exactly one
-#      shipment, and no shipment belongs to an order that is not paid.
+#   6. once the consumer lag is 0: no order has two shipments (HAVING count(*) > 1), every order paid more than
+#      SHIP_GRACE_SECONDS ago has exactly one shipment, and no shipment belongs to an order that is not paid.
 # Re-snapshot (idempotency under a full replay): run with SAVE_BASELINE=<file> before the re-snapshot runbook, then
 # with REPLAY_BASELINE=<file> after it. The second run passes only if every order of the baseline came back as a
 # snapshot read (_op "r") with a newer _cdc_epoch and the worker consumed it: without that, "no duplicates" would be
@@ -25,8 +25,9 @@
 # Postgres is read as shop_app (password on stdin, never on a command line); Kafka only through the worker pod.
 # Usage: CLUSTER=sf-main scripts/app-worker-check.sh   (or make app-worker-check CLUSTER=sf-main)
 #   KUBE_CONTEXT overrides k3d-<CLUSTER>; BASE_URL the gateway (default https://shop.127.0.0.1.sslip.io:<port>);
-#   LOAD_RATE (checkouts/s, 80), LOAD_DURATION (3m), SCALE_TARGET (3), SCALE_DOWN_TIMEOUT (600s), DRAIN_TIMEOUT (600s),
-#   LAG_BUDGET_SECONDS (30), WATCH_TIMEOUT (900s), SKIP_LOAD=1, WATCH=1, SAVE_BASELINE / REPLAY_BASELINE=<file>.
+#   LOAD_RATE (checkouts/s, 80), LOAD_DURATION (3m), SCALE_TARGET (2), SCALE_DOWN_TIMEOUT (600s), DRAIN_TIMEOUT (600s),
+#   LAG_BUDGET_SECONDS (30), WATCH_TIMEOUT (900s), SHIP_GRACE_SECONDS (60: orders paid more recently may still be in
+#   flight while load runs), SKIP_LOAD=1, WATCH=1, SAVE_BASELINE / REPLAY_BASELINE=<file>.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -44,10 +45,12 @@ esac
 BASE_URL="${BASE_URL:-https://shop.127.0.0.1.sslip.io:$https_port}"
 LOAD_RATE="${LOAD_RATE:-80}"
 LOAD_DURATION="${LOAD_DURATION:-3m}"
-SCALE_TARGET="${SCALE_TARGET:-3}"
+SCALE_TARGET="${SCALE_TARGET:-2}" # lagThreshold 3000: steady 80/s needs 2; a backlog burst reaches the maximum
 SCALE_DOWN_TIMEOUT="${SCALE_DOWN_TIMEOUT:-600}"
 DRAIN_TIMEOUT="${DRAIN_TIMEOUT:-600}"
 LAG_BUDGET_SECONDS="${LAG_BUDGET_SECONDS:-30}"
+SHIP_GRACE_SECONDS="${SHIP_GRACE_SECONDS:-60}"
+[[ "$SHIP_GRACE_SECONDS" =~ ^[0-9]+$ ]] || { echo "SHIP_GRACE_SECONDS must be whole seconds" >&2; exit 2; }
 WATCH_TIMEOUT="${WATCH_TIMEOUT:-900}"
 NS=shop
 WORKER=fulfillment-worker
@@ -412,27 +415,32 @@ not cover it"
 $base_orders), all consumed by the worker"
   fi
 fi
-counts="$(psql_shop 2> /dev/null <<'SQL' | tr '\n' ' ' || true
+# Paid within the last SHIP_GRACE_SECONDS: possibly still in flight while load runs (CDC + worker take seconds), so
+# reported, not failed. SHIP_GRACE_SECONDS is validated as digits above.
+counts="$(psql_shop 2> /dev/null <<SQL | tr '\n' ' ' || true
 SELECT count(*) FROM (SELECT order_id FROM shipments GROUP BY order_id HAVING count(*) > 1) AS d;
-SELECT count(*) FROM orders o WHERE o.status = 'paid' AND NOT EXISTS (SELECT 1 FROM shipments s WHERE s.order_id = o.id);
+SELECT count(*) FROM orders o WHERE o.status = 'paid' AND o.updated_at < now() - make_interval(secs => $SHIP_GRACE_SECONDS)
+  AND NOT EXISTS (SELECT 1 FROM shipments s WHERE s.order_id = o.id);
 SELECT count(*) FROM shipments s JOIN orders o ON o.id = s.order_id WHERE o.status <> 'paid';
 SELECT count(*) FROM shipments;
+SELECT count(*) FROM orders o WHERE o.status = 'paid' AND o.updated_at >= now() - make_interval(secs => $SHIP_GRACE_SECONDS)
+  AND NOT EXISTS (SELECT 1 FROM shipments s WHERE s.order_id = o.id);
 SQL
 )"
-if [[ ! "$counts" =~ ^[0-9]+\ [0-9]+\ [0-9]+\ [0-9]+\ ?$ ]]; then
+if [[ ! "$counts" =~ ^[0-9]+\ [0-9]+\ [0-9]+\ [0-9]+\ [0-9]+\ ?$ ]]; then
   result FAIL "shipments: could not query Postgres as shop_app (got '${counts}')"
   exit 1
 fi
-read -r duplicates unshipped wrong total <<< "$counts"
+read -r duplicates unshipped wrong total in_flight <<< "$counts"
 if ((duplicates == 0)); then
   result PASS "no order has more than one shipment ($total shipments)"
 else
   result FAIL "$duplicates order(s) have more than one shipment"
 fi
 if ((unshipped == 0)); then
-  result PASS "every paid order has a shipment"
+  result PASS "every order paid more than ${SHIP_GRACE_SECONDS}s ago has a shipment ($in_flight newer ones in flight)"
 else
-  result FAIL "$unshipped paid order(s) have no shipment"
+  result FAIL "$unshipped order(s) paid more than ${SHIP_GRACE_SECONDS}s ago have no shipment"
 fi
 if ((wrong == 0)); then
   result PASS "no shipment for an order that is not paid"
