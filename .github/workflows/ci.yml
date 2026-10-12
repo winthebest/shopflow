@@ -92,12 +92,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0 # scan the whole history, not only the last commit
+          fetch-depth: 0 # the whole history of HEAD, not only the last commit
       - name: gitleaks (git history, .gitleaks.toml)
         # Same uid as the checkout so git trusts the repo; fail if git history was not readable (0 commits).
+        # --log-opts=HEAD: the history of what is being tested, i.e. main plus the PR's commits (HEAD is the PR's
+        # merge commit) or main itself on a push. Without it gitleaks runs `git log --all` over every fetched branch,
+        # and one branch's finding fails every other PR. Branches never opened as a PR are left to the pre-commit hook.
         run: |
           docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo" "$GITLEAKS_IMAGE" \
-            git /repo --config /repo/.gitleaks.toml --redact --verbose --no-banner 2>&1 | tee gitleaks.log
+            git /repo --config /repo/.gitleaks.toml --log-opts=HEAD \
+            --redact --verbose --no-banner 2>&1 | tee gitleaks.log
           status=${PIPESTATUS[0]}
           if grep -q ' 0 commits scanned' gitleaks.log; then echo "::error::gitleaks scanned 0 commits"; exit 1; fi
           exit "$status"
