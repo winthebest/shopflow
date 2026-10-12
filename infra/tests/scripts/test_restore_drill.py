@@ -1,6 +1,7 @@
 """scripts/restore-drill.sh against fake kubectl/curl and a k6 stand-in that writes an ack log."""
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -31,7 +32,11 @@ def acks(n: int) -> str:
     lines = []
     for i in range(1, n + 1):
         at = end - timedelta(seconds=n - i)
-        lines.append(json.dumps({"ack": {"order_id": i, "status": "paid", "acked_at": at.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"}}))
+        acked_at = at.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        # The extra fields of the real ack line must not disturb the drill, which reads order_id and acked_at.
+        lines.append(
+            json.dumps({"ack": {"order_id": i, "status": "paid", "acked_at": acked_at, "idempotency_key": f"k-{i}", "attempts": 1}})
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -222,8 +227,9 @@ def test_explicit_revision_wins_over_the_cluster(fake, drill):
 
 
 def test_the_k6_script_still_logs_acks_in_the_shape_the_drill_reads():
-    """sf-app owns loadtest/checkout.js; the drill parses its ack lines."""
+    """sf-app owns loadtest/checkout.js; the drill reads ack.order_id and ack.acked_at. Other fields may come and go."""
     source = (REPO_ROOT / "loadtest" / "checkout.js").read_text()
-    assert (
-        "console.log(JSON.stringify({ ack: { order_id: order.id, status: order.status, acked_at: new Date().toISOString() } }))" in source
-    )
+    block = re.search(r"console\.log\(\s*JSON\.stringify\(\{\s*ack:\s*\{(?P<fields>[^{}]*)\}", source)
+    assert block, "checkout.js logs one JSON line per acked order: console.log(JSON.stringify({ ack: { ... } }))"
+    for field in ("order_id: order.id", "acked_at: new Date().toISOString()"):
+        assert field in block["fields"], f"the ack object lost `{field}`"
