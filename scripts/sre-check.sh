@@ -345,6 +345,15 @@ check_secret_refs() {
 # Game days: experiments are schema-checked against the CRDs of the pinned Chaos Mesh chart (the public catalog has
 # none), may only target the allowed namespaces, must stop by themselves unless one-shot (pod-kill), and no profile
 # other than `chaos` may install Chaos Mesh (it must be gone outside game days).
+# Script tests: every scripts/sre-*-test.sh, with the fake tools it brings (no cluster, no Docker).
+cmd_scripts() {
+  local t
+  for t in "$ROOT"/scripts/sre-*-test.sh; do
+    log "$(basename "$t")"
+    bash "$t" || fail "$(basename "$t") failed"
+  done
+}
+
 cmd_chaos() {
   local app="$ROOT/deploy/argocd/apps/chaos-mesh/application.yaml" dir="$OUT/chaos" crd f bad prof
   rm -rf "$dir" && mkdir -p "$dir/charts" "$dir/schemas/chaos-mesh.org"
@@ -390,7 +399,8 @@ usage: $0 <step>...
   configs      validate OTel Collector, Loki, Tempo and Alertmanager configs with their own binaries
   lint         shellcheck + dashboards JSON + encrypted secrets + image digest pinning
   chaos        game-day experiments: schema, allowed namespaces, auto-stop; chaos-mesh only in profile chaos
-  all          render kubeconform slo-drift rules configs lint chaos
+  scripts      tests of our scripts with fake tools (scripts/sre-*-test.sh)
+  all          render kubeconform slo-drift rules configs lint chaos scripts
 EOF
   exit 2
 }
@@ -406,7 +416,8 @@ for step in "$@"; do
     configs) cmd_configs ;;
     lint) cmd_lint ;;
     chaos) cmd_chaos ;;
-    all) cmd_render; cmd_kubeconform; cmd_slo_drift; cmd_rules; cmd_configs; cmd_lint; cmd_chaos ;;
+    scripts) cmd_scripts ;;
+    all) cmd_render; cmd_kubeconform; cmd_slo_drift; cmd_rules; cmd_configs; cmd_lint; cmd_chaos; cmd_scripts ;;
     *) usage ;;
   esac
 done
