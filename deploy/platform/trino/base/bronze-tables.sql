@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS lake.bronze.orders (
     total         decimal(12, 2),
     created_at    timestamp(6) with time zone,
     updated_at    timestamp(6) with time zone,
+    idempotency_key varchar,
+    request_hash  varchar,
     _op           varchar,
     _lsn          bigint,
     _source_ts_ms bigint,
@@ -111,3 +113,12 @@ CREATE TABLE IF NOT EXISTS lake.bronze.heartbeat (
     _ingested_at  timestamp(6) with time zone
 )
 WITH (format_version = 2, partitioning = ARRAY['day(_ingested_at)']);
+
+-- Columns added to a source table after its bronze table existed. CREATE TABLE IF NOT EXISTS never changes an
+-- existing table, and the sink drops fields bronze lacks (iceberg.tables.evolve-schema-enabled=false), so every
+-- addition is also an ADD COLUMN IF NOT EXISTS here (a no-op on a new cluster, where CREATE already has it). Keep
+-- comments out of the CREATE bodies: the Connect smoke test parses them (create-bronze-tables.py).
+-- orders.idempotency_key, orders.request_hash: checkout idempotency (Alembic revision 0006); opaque client tokens
+-- and a SHA-256 of the request, not used by silver or gold.
+ALTER TABLE lake.bronze.orders ADD COLUMN IF NOT EXISTS idempotency_key varchar;
+ALTER TABLE lake.bronze.orders ADD COLUMN IF NOT EXISTS request_hash varchar;
