@@ -30,6 +30,9 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      # Sync, not only diff, leaves the HPA-owned replica counts alone: without it, applying a Deployment that omits
+      # spec.replicas resets a running one to 1 until its HPA scales it back.
+      - RespectIgnoreDifferences=true
     retry:
       limit: 10
       backoff:

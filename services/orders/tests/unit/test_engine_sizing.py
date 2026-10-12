@@ -7,7 +7,7 @@ UNREACHABLE_DB = "postgresql://shop_app:x@127.0.0.1:9/shop"
 
 
 async def pool_of(**settings) -> tuple[int, int]:
-    app = create_app(Settings(database_url=UNREACHABLE_DB, **settings))
+    app = create_app(Settings(database_url=UNREACHABLE_DB, sweep_interval_s=0, **settings))
     async with app.router.lifespan_context(app):
         pool = app.state.engine.pool
         return pool.size(), pool._max_overflow
