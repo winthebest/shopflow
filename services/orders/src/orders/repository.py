@@ -9,7 +9,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import insert, select, update
+from sqlalchemy import insert, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orders.models import Customer, Order, OrderItem, Payment, Product
@@ -149,3 +149,41 @@ async def get_order(session: AsyncSession, order_id: int) -> OrderOut | None:
         updated_at=order.updated_at,
         items=[OrderItemOut.model_validate(item) for item in items],
     )
+
+
+async def claim_stranded_orders(
+    sessionmaker: async_sessionmaker[AsyncSession], stale_after_s: float, limit: int
+) -> list[tuple[int, Decimal]]:
+    """Claim up to `limit` `pending` orders untouched for `stale_after_s`, oldest first: (id, total) each.
+
+    Touching `updated_at` is the claim: it leases the order for another `stale_after_s`, so sweepers in other replicas
+    skip it, and `FOR UPDATE SKIP LOCKED` keeps two claims running at the same moment apart. A checkout settles in
+    about a second, far below the threshold, so only orders whose settle failed (or whose process died) qualify.
+    """
+    async with sessionmaker.begin() as session:
+        rows = await session.execute(
+            text(
+                """
+                UPDATE orders SET updated_at = now()
+                WHERE id IN (
+                    SELECT id FROM orders
+                    WHERE status = 'pending' AND updated_at < now() - make_interval(secs => :stale_after_s)
+                    ORDER BY created_at
+                    LIMIT :limit
+                    FOR UPDATE SKIP LOCKED
+                )
+                RETURNING id, total
+                """
+            ),
+            {"stale_after_s": stale_after_s, "limit": limit},
+        )
+        return [(row.id, row.total) for row in rows]
+
+
+async def oldest_pending_age_s(sessionmaker: async_sessionmaker[AsyncSession]) -> float:
+    """Seconds since the oldest `pending` order was created; 0 when there is none."""
+    async with sessionmaker() as session:
+        age = await session.scalar(
+            text("SELECT extract(epoch FROM now() - min(created_at)) FROM orders WHERE status = 'pending'")
+        )
+    return float(age or 0)

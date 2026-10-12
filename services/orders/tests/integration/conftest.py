@@ -119,7 +119,8 @@ async def _shop_client(
     """gateway -> orders -> payments wired in-process (ASGI transports), orders on the real database."""
     payments_app = create_payments(PaymentsSettings(payment_latency_ms=0, payment_failure_rate=failure_rate))
     orders_app = create_orders(
-        OrdersSettings(database_url=database_url, payments_url="http://payments"),
+        # Tests drive the sweeper themselves (test_sweeper.py): no background sweeps.
+        OrdersSettings(database_url=database_url, payments_url="http://payments", sweep_interval_s=0),
         payments_transport=payments_transport or httpx.ASGITransport(app=payments_app),
     )
     gateway_app = create_gateway(
