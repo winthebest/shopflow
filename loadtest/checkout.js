@@ -5,8 +5,10 @@
 //   k6 run --log-format raw --console-output out/acks.jsonl loadtest/checkout.js  # ack log (RPO, Phase 7)
 //
 // Every acknowledged order (HTTP 201) is logged as one JSON line {"ack":...} with its id, status, the client time it
-// was acked, its Idempotency-Key and the number of attempts (a retry must return the order created for that key). After a restore, RPO = max(acked_at) - max(orders.created_at), and acked ids missing from the
-// database are lost orders. `make app-loadtest` writes these lines to out/ (git-ignored).
+// was acked, its Idempotency-Key and the number of attempts (a retry must return the order created for that key).
+// The restore drill (scripts/restore-drill.sh) reads them: acked ids missing after a restore are lost orders, and
+// RPO = acked_at of the last ack before the disaster - acked_at of the last one that survived, both on k6's clock.
+// `make app-loadtest` writes these lines to out/ (git-ignored).
 //
 // Every checkout carries a fresh Idempotency-Key (a UUID). With RETRIES > 0, a checkout answered 409/502/503/504
 // is retried up to RETRIES times with the same key and body, after the server's Retry-After (else 1s): the retry
