@@ -98,7 +98,7 @@
           "placement": "bottom"
         }
       },
-      "description": "Payment inserts per minute. Next to orders per minute this shows a payments outage: since #196 orders stay pending and no payment row is written until the orders sweeper settles them."
+      "description": "Payment inserts per minute; compare with orders per minute. When payments does not answer, orders stay pending and no payment row is written until the orders sweeper settles them, so an outage shows as orders without payments. After payments recovers, the sweeper settles the waiting orders and this panel spikes once: that is the backlog being caught up, not a new incident."
     },
     {
       "id": 2,
@@ -180,7 +180,7 @@
           "placement": "bottom"
         }
       },
-      "description": "Non-succeeded payment inserts / all payment inserts per minute. No data while payments is down: orders stay pending and no payment row is written (#196); watch payments per minute instead."
+      "description": "Non-succeeded payment inserts / all payment inserts per minute. Empty while payments is down: orders whose payment got no answer stay pending and no payment row is written until the sweeper settles them. Watch payments per minute instead."
     }
   ]
 }
