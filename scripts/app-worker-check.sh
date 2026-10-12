@@ -34,15 +34,13 @@ cd "$(dirname "$0")/.."
 
 CLUSTER="${CLUSTER:-sf-main}"
 KUBE_CONTEXT="${KUBE_CONTEXT:-k3d-$CLUSTER}"
-case "$CLUSTER" in # HTTPS load-balancer ports from docs/contracts/environment.md
-  sf-main) https_port=9443 ;;
-  sf-platform) https_port=8443 ;;
-  sf-sre) https_port=8444 ;;
-  sf-data) https_port=8445 ;;
-  sf-app) https_port=8446 ;;
-  *) https_port=443 ;;
-esac
-BASE_URL="${BASE_URL:-https://shop.127.0.0.1.sslip.io:$https_port}"
+if [[ -z "${BASE_URL:-}" ]]; then
+  # A local cluster's HTTPS port comes from the shared table in scripts/k3d-lib.sh (docs/contracts/environment.md),
+  # read in a subshell so its KUBE_CONTEXT and helpers do not replace ours. Other clusters (EKS) pass BASE_URL.
+  https_port="$(CLUSTER="$CLUSTER" bash -c 'source scripts/k3d-lib.sh && echo "$HTTPS_PORT"')" ||
+    { echo "set BASE_URL for cluster '$CLUSTER' (not a local k3d cluster)" >&2; exit 2; }
+  BASE_URL="https://shop.127.0.0.1.sslip.io:$https_port"
+fi
 LOAD_RATE="${LOAD_RATE:-80}"
 LOAD_DURATION="${LOAD_DURATION:-3m}"
 SCALE_TARGET="${SCALE_TARGET:-2}" # lagThreshold 3000: steady 80/s needs 2; a backlog burst reaches the maximum
