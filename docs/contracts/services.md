@@ -11,7 +11,8 @@ Owner: orchestrator. Changes go through a PR reviewed by the orchestrator, becau
 | `orders` | 8001 | Creates orders + order_items in one transaction, calls payments, sets status `pending → paid \| failed` | `payments`, Postgres |
 | `payments` | 8002 | Mock payment provider with configurable latency/failure; `POST /charges` is idempotent per `order_id` (same `charge_id` and outcome on every call, decline decided by a hash of `order_id`), so orders may retry it | — |
 
-Timeouts: gateway → orders 1s (no retry: `POST /checkout` is not idempotent), orders → payments 800ms in total: up to
+Timeouts: gateway → orders 1s (the gateway never retries `POST /checkout`: only a client that resends the same
+`Idempotency-Key` makes a retry safe), orders → payments 800ms in total: up to
 3 attempts inside that deadline, full-jitter backoff, behind a circuit breaker per orders process (ADR 0102).
 
 Settling a checkout is idempotent. The first settle that moves an order out of `pending` writes its payment row; any
@@ -25,6 +26,11 @@ so claims never overlap), charges them again (payments answers the same for the 
 charge) and settles the answer: succeeded → `paid`, declined → `failed`. While the payments circuit is open the
 sweeper waits, so `pending` orders accumulate and `orders_pending_oldest_age_seconds` grows. Orders may therefore
 stay `pending` for tens of seconds, or for as long as a payments outage lasts.
+
+`Idempotency-Key` (optional request header on `POST /checkout`): 1–64 visible ASCII characters. Send a new one (e.g. a
+UUID) per checkout and the same one on every retry of that checkout. The key is stored with the order it created and
+kept as long as the order exists; there is no expiry. A request that created no order (invalid input, circuit open)
+stores nothing, so its retry is evaluated again. The gateway forwards the key and never retries by itself.
 
 ### `POST /checkout` responses (gateway)
 
@@ -40,6 +46,10 @@ every gateway 5xx as bad).
 | Payments unreachable / bad answer (order left `pending`; the stranded-order sweeper settles it) | `502` | `detail`, `order_id`, `status: "pending"` |
 | Payments circuit open (checked before the order is created: no order) | `503` + `Retry-After` | `detail` |
 | Orders timed out / unreachable / 5xx (incl. DB errors) | `504` / `502` | `detail` |
+| Retry with the same `Idempotency-Key` and body, order settled | `201` | the order as it is now (same `id`) |
+| Same key while that order is `pending` (first attempt running, or waiting for the stranded-order sweeper) | `409` + `Retry-After: 1` | `detail`, `order_id`, `status: "pending"` |
+| Same key with a different request | `422` | `detail` |
+| Invalid key (empty, > 64 characters, not visible ASCII) | `422` | validation `detail` |
 
 ## Common runtime contract
 
