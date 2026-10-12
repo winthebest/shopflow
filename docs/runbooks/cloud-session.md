@@ -141,8 +141,10 @@ scripts/data-secrets.sh --aws-json | make cloud-seed-params CLOUD_ARGS=--rotate
 
 Values that must match each other (passwords and the bcrypt hashes of them in another Secret) are declared by the
 producer as a group, e.g. `"_groups": [["lakehouse/trino-dbt", "lakehouse/trino-exporter",
-"lakehouse/trino-password-db"]]`. A group is written whole or not at all: if SSM holds only part of it and
-`--rotate` is not given, the script stops before writing any parameter.
+"lakehouse/trino-metabase", "lakehouse/trino-password-db"]]`. A group is written whole or not at all: if SSM holds
+only part of it and `--rotate` is not given, the script stops before writing any parameter. When a producer adds a
+member to an existing group (e.g. a new Trino login), the next seed needs `--rotate`, which renews the whole group
+together.
 
 ## Session lifecycle
 
@@ -213,7 +215,7 @@ Secret written by a Job, an operator or cert-manager never gets an ExternalSecre
 | `observability/alertmanager-webhook` (`url`) | `/shopflow/aws/observability/alertmanager-webhook` | sf-sre, kube-prometheus-stack | seeded with `--prompt` |
 | `shop/shop-db-<role>` (basic-auth), one per login role enabled in `deploy/charts/shop-db` (`roles`); today `debezium`, `trino-pg`, `airflow`, `flink-serving`, `grafana-serving`, `fulfillment-worker` (users `debezium`, `trino_pg`, `airflow`, `flink_serving`, `grafana_serving`, `fulfillment_worker`) | `/shopflow/aws/shop/<name>` | sf-platform, shop-db chart | `scripts/platform-secrets.sh` reads the same list, so a new role is seeded without changing this runbook; role passwords must keep their first values (the roles come back with every restored database); label `cnpg.io/reload` |
 | `lakehouse/trino-internal` (`shared-secret`) | `/shopflow/aws/lakehouse/trino-internal` | sf-data, trino | |
-| `lakehouse/trino-dbt`, `lakehouse/trino-exporter` (`username`, `password`), `lakehouse/trino-password-db` (`password.db`) | `/shopflow/aws/lakehouse/<name>` | sf-data, trino | one seed group: the bcrypt file must match both passwords |
+| `lakehouse/trino-dbt`, `lakehouse/trino-exporter`, `lakehouse/trino-metabase` (`username`, `password`), `lakehouse/trino-password-db` (`password.db`) | `/shopflow/aws/lakehouse/<name>` | sf-data, trino | one seed group: the bcrypt file must match every password. `trino-metabase` is seeded ahead of Metabase on AWS (no ExternalSecret reads it yet) |
 
 Not ExternalSecrets, because another writer owns them: `kafka/cdc-epoch` (`scripts/cdc-epoch.sh`; cloud-up keeps
 the last epoch in SSM `/shopflow/aws/kafka/cdc-epoch`), KafkaUser Secrets (Strimzi), `lakehouse/trino-tls`
