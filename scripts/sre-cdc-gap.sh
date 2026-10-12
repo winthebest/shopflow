@@ -2,7 +2,8 @@
 # Compare the orders created in a time window across Postgres, bronze and (optionally) k6's ack log, read-only. Built for
 # game day 2 (killing the shop-db primary): what CDC missed, what the failover lost, what silver will show stale.
 #   only in Postgres           CDC never delivered the order to bronze (a gap)
-#   only in bronze             committed on the old primary, delivered by CDC, then lost by the asynchronous failover
+#   only in bronze, deleted    deleted in Postgres and bronze saw the delete (expected)
+#   only in bronze, not deleted committed on the old primary, delivered by CDC, then lost by the asynchronous failover
 #   r without c                created while Debezium re-snapshotted: in bronze, but not in Flink's KPI (it counts c)
 #   status differs             silver shows bronze's state (latest_state prefers streamed c/u over r), not Postgres'
 #   acked, not in Postgres     k6 got a 201 for it and the order is gone (with --acks)
@@ -96,7 +97,10 @@ resnapshot_rows="$(trino_ro "SELECT count(*) FROM bronze.orders WHERE _op = 'r' 
 
 T=$'\t'
 join -t "$T" -v 1 "$OUT/pg.tsv" "$OUT/bronze.tsv" > "$OUT/only-in-postgres.tsv"
+# Not in Postgres: bronze's latest row is a delete (expected), or the order was lost (id, seen_c, seen_r, status, deleted).
 join -t "$T" -v 2 "$OUT/pg.tsv" "$OUT/bronze.tsv" > "$OUT/only-in-bronze.tsv"
+awk -F "$T" '$5 == "true"' "$OUT/only-in-bronze.tsv" > "$OUT/deleted-in-postgres.tsv"
+awk -F "$T" '$5 != "true"' "$OUT/only-in-bronze.tsv" > "$OUT/lost-by-failover.tsv"
 # Joined: id, pg_status, seen_c, seen_r, bronze_status, deleted.
 join -t "$T" "$OUT/pg.tsv" "$OUT/bronze.tsv" > "$OUT/both.tsv"
 awk -F "$T" '$3 == "false" && $4 == "true"' "$OUT/both.tsv" > "$OUT/r-without-c.tsv"
@@ -104,7 +108,8 @@ awk -F "$T" '$2 != $5 || $6 == "true"' "$OUT/both.tsv" > "$OUT/status-differs.ts
 rows() { wc -l < "$1" | tr -d ' '; }
 printf '%-28s %s\n' "in Postgres" "$(rows "$OUT/pg.tsv")" "in bronze" "$(rows "$OUT/bronze.tsv")" \
   "only in Postgres (CDC gap)" "$(rows "$OUT/only-in-postgres.tsv")" \
-  "only in bronze (failover)" "$(rows "$OUT/only-in-bronze.tsv")" \
+  "deleted (bronze saw it)" "$(rows "$OUT/deleted-in-postgres.tsv")" \
+  "lost by failover" "$(rows "$OUT/lost-by-failover.tsv")" \
   "r without c (KPI misses)" "$(rows "$OUT/r-without-c.tsv")" \
   "status differs (silver)" "$(rows "$OUT/status-differs.tsv")" \
   "r rows ingested since --from" "${resnapshot_rows:-?} (non-zero: Debezium snapshotted again)"
