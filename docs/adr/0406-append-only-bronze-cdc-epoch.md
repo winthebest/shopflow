@@ -27,7 +27,10 @@ Kafka the offsets restart at 0, so with the same control topic every commit woul
   snapshot rows of the epoch). `make up` calls `ensure`, which does what `new` does only on a fresh cluster and keeps
   the epoch of a running one: running connectors stamp the epoch they read at task start, so a rotation without
   restarting them leaves bronze on the old epoch, and Debezium's metric still reports the old task's snapshot (seen
-  on the rt slot of 2026-10-10). Locally the epoch is the unix time in seconds; on AWS it comes from SSM via ESO.
+  on the rt slot of 2026-10-10). After the apps are healthy, `make up` also runs `wait`, because silver reads only
+  an epoch whose snapshot is recorded and nothing else recorded it on a fresh cluster (#189). `wait` returns at once
+  for an epoch already complete, so a rerun after a Connect restart does not hang. Locally the epoch is the unix time
+  in seconds; on AWS it comes from SSM via ESO.
 - The Connect group stays `connect-<connector name>`: the coordinator is elected from that group's members
   (`CommitterImpl.hasLeaderPartition`), and `iceberg.connect.group-id` is documented as "should not be set under
   normal conditions". A per-epoch control topic already gives a fresh snapshot-summary key.
@@ -50,4 +53,9 @@ Kafka the offsets restart at 0, so with the same control topic every commit woul
   must use `_op='d'` rows for the key only.
 - Negative / risks: bronze grows with every epoch (retention handled in Phase 12); the epoch tooling must create
   the control topic before the sink starts (the connector auto-restarts until it exists).
+- Verified on a cluster:
+  - 2026-10-10, `k3d-sf-app`: a re-snapshot replayed 21,339 orders as `r` under a new epoch with 0 duplicate
+    shipments (docs/runbooks/cdc-resnapshot.md), and a rerun of `make up` kept the epoch (#170).
+  - 2026-10-12, `k3d-sf-sre` (B2 slot): `make up` was "ready in 405s (apps 337s, CDC snapshot 68s)", and
+    `meta.cdc_epochs` held the new epoch with `snapshot_completed_at` when it returned (#189).
 - When to revisit: if the Iceberg sink stops keying its offsets by control topic.
