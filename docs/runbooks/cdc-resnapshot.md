@@ -2,18 +2,39 @@
 
 | | |
 |---|---|
-| When | Changes were lost between Postgres and bronze (slot or Kafka data lost, reconciliation finds missing rows), or a replay is wanted on purpose (idempotency test of a consumer) |
+| When | Changes were lost between Postgres and bronze (slot or Kafka data lost, a failover without a synchronized slot, reconciliation finds missing rows), or a replay is wanted on purpose (idempotency test of a consumer) |
 | Effect | Debezium reads every shop table again as `_op = 'r'` under a new CDC epoch; silver switches to that epoch once its snapshot is recorded (docs/adr/0406). Bronze keeps the old epoch as history |
 | Proven | 2026-10-10, ops slot on `k3d-sf-app` (sf-app ran it, sf-data watched): 21,339 orders replayed, `wait` 1m30s after the restart, 0 duplicate shipments |
 | Not for | Re-running `make up` on a running cluster: it keeps the epoch (`cdc-epoch.sh ensure`) and changes nothing |
 
 ## Why the connectors cannot just be restarted
 
-Debezium (`snapshot.mode=when_needed`) snapshots only when it has no stored offsets. A restart with its offsets keeps
-streaming from the slot and stamps the epoch it read at task start; after `cdc-epoch.sh new` that would leave bronze
+Debezium (`snapshot.mode=when_needed`) snapshots at start only in two cases: it has no stored offsets, or the stored
+position is no longer in the replication slot (see the next section). A restart with valid offsets keeps streaming
+from the slot and stamps the epoch it read at task start; after `cdc-epoch.sh new` that would leave bronze
 on the old epoch while the Secret names the new one. So the source's offsets are reset while it is stopped, and the
 sink's tasks are restarted so they pick up the new control topic. The sink's own consumer offsets stay: it keeps
 reading the CDC topics where it was.
+
+## When Debezium re-snapshots on its own (lost slot, failover)
+
+Debezium 3.7 checks the stored offset against the slot `debezium_shop` at start. The check fails when the slot is
+missing (a failover to a standby without a synchronized slot, a dropped slot) or its `restart_lsn` is past the
+offset. Debezium then logs `Last recorded offset is no longer available on the server.` and
+`... Attempting to snapshot data to fill the gap.`. It creates a new slot and reads every table as `_op = 'r'` into
+the current epoch, because nothing changed the epoch. Bronze has the data, but silver does not recover. Within one
+epoch, a streamed change outranks a snapshot read (`latest_state` in `data/dbt/macros/cdc.sql`), so:
+
+- rows updated while the slot was gone keep their old state in silver;
+- rows deleted meanwhile stay in silver;
+- the realtime KPI counts inserts (`c`) only, so orders created in the gap are missing from `kpi_minute`.
+
+Nothing alerts until the daily reconciliation. When the Connect log shows those two lines, run the procedure below to
+move to a new epoch.
+
+Never set `offset.mismatch.strategy` on `shop-postgres` to `trust_slot` or `trust_greater_lsn`. Both skip that check,
+so a missing slot is recreated at the current position with no snapshot, and the changes in the gap are lost without
+a trace.
 
 ## Procedure
 
