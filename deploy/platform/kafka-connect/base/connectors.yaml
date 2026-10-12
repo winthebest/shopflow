@@ -35,7 +35,10 @@ spec:
     # Exactly the tables of publication shop_cdc = data/contracts/*.yaml (scripts/data-validate.sh fails otherwise).
     # Without a list Debezium would also snapshot tables it cannot read (alembic_version).
     table.include.list: public.customers,public.products,public.orders,public.order_items,public.payments,public.shipments,public.heartbeat
-    # Snapshot when there is no usable offset (new Kafka, new connector, slot lost), otherwise stream.
+    # Snapshot when there is no usable offset (new Kafka, new connector, slot lost), otherwise stream. A lost slot
+    # re-snapshots into the same epoch, which silver does not recover from: move to a new epoch
+    # (docs/runbooks/cdc-resnapshot.md). Leave offset.mismatch.strategy unset: trust_slot / trust_greater_lsn skip the
+    # check and would silently recreate a lost slot at the current position.
     snapshot.mode: when_needed
     # Every 10s: emit a heartbeat and touch the single heartbeat row, so the slot advances while the shop is idle
     # and freshness always has a recent change to measure (bronze.heartbeat.beat_at).
