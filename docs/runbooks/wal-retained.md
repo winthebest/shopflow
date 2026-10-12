@@ -13,6 +13,9 @@ progress on the slot, Postgres keeps every WAL segment since the slot's `restart
 (2GB locally) caps that. Past the cap, Postgres **invalidates the slot** to protect the disk, and CDC can only
 continue with a full re-snapshot under a new epoch.
 
+With more than one instance and logical slot sync (game day 2), each standby keeps a synced copy of the slot that
+nothing reads. The alerts look at the primary's slot only; after a failover, at the promoted one's.
+
 - **Inactive** (ticket): no consumer on the slot for 10 minutes. WAL is starting to pile up.
 - **High** (ticket): more than half of the cap is held. Fix within the working session.
 - **Critical** (page): past 80%, or at the current rate the cap is reached within the hour. Act now.

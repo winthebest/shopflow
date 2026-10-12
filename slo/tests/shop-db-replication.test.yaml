@@ -1,0 +1,94 @@
+# promtool unit tests for the shop-db standby alert (sf-sre). Rule file: the `.spec` of
+# deploy/platform/slo/base/shop-db-replication.prometheusrule.yaml, extracted next to this file by scripts/sre-check.sh.
+# Two instances unless a test says otherwise: shop-db-1 is the primary (in_recovery 0) and holds the HA slot
+# _cnpg_shop_db_2 of standby shop-db-2 (in_recovery 1).
+rule_files:
+  - shop-db-replication.rules.yaml
+evaluation_interval: 1m
+
+tests:
+  - name: a streaming standby raises nothing
+    interval: 1m
+    input_series:
+      - series: 'cnpg_pg_replication_in_recovery{namespace="shop",pod="shop-db-1"}'
+        values: '0+0x30'
+      - series: 'cnpg_pg_replication_in_recovery{namespace="shop",pod="shop-db-2"}'
+        values: '1+0x30'
+      - series: 'cnpg_pg_replication_slots_active{namespace="shop",pod="shop-db-1",slot_name="_cnpg_shop_db_2",slot_type="physical",database=""}'
+        values: '1+0x30'
+      # Debezium's logical slot, unread here: another alert's business (PostgresSlotInactive).
+      - series: 'cnpg_pg_replication_slots_active{namespace="shop",pod="shop-db-1",slot_name="debezium_shop",slot_type="logical",database="shop"}'
+        values: '0+0x30'
+    alert_rule_test:
+      - {eval_time: 30m, alertname: PostgresStandbyNotStreaming, exp_alerts: []}
+
+  - name: a standby that stops streaming is flagged after 5 minutes
+    interval: 1m
+    input_series:
+      - series: 'cnpg_pg_replication_in_recovery{namespace="shop",pod="shop-db-1"}'
+        values: '0+0x30'
+      - series: 'cnpg_pg_replication_slots_active{namespace="shop",pod="shop-db-1",slot_name="_cnpg_shop_db_2",slot_type="physical",database=""}'
+        values: '1+0x5 0+0x24'
+    alert_rule_test:
+      - {eval_time: 10m, alertname: PostgresStandbyNotStreaming, exp_alerts: []}
+      - eval_time: 12m
+        alertname: PostgresStandbyNotStreaming
+        exp_alerts:
+          - exp_labels: {severity: ticket, team: sf-sre, namespace: shop, pod: shop-db-1, slot_name: _cnpg_shop_db_2}
+            exp_annotations:
+              summary: "The standby behind slot _cnpg_shop_db_2 has not streamed WAL from primary shop-db-1 for 5m: no safe failover, and with slot sync CDC waits for it."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/shop-db-standby.md
+
+  # CloudNativePG keeps a copy of every standby's HA slot on the other standbys, ready for a failover; nothing streams
+  # through those copies.
+  - name: inactive HA slots kept on a standby raise nothing
+    interval: 1m
+    input_series:
+      - series: 'cnpg_pg_replication_in_recovery{namespace="shop",pod="shop-db-1"}'
+        values: '0+0x30'
+      - series: 'cnpg_pg_replication_in_recovery{namespace="shop",pod="shop-db-2"}'
+        values: '1+0x30'
+      - series: 'cnpg_pg_replication_slots_active{namespace="shop",pod="shop-db-1",slot_name="_cnpg_shop_db_2",slot_type="physical",database=""}'
+        values: '1+0x30'
+      - series: 'cnpg_pg_replication_slots_active{namespace="shop",pod="shop-db-2",slot_name="_cnpg_shop_db_3",slot_type="physical",database=""}'
+        values: '0+0x30'
+    alert_rule_test:
+      - {eval_time: 30m, alertname: PostgresStandbyNotStreaming, exp_alerts: []}
+
+  # Game day 2: shop-db-1 dies at minute 10, shop-db-2 is promoted at 11 and holds the HA slot of shop-db-1, which comes
+  # back as a standby and streams from minute 14.
+  - name: after a failover the old primary has 5 minutes to come back as a standby
+    interval: 1m
+    input_series:
+      - series: 'cnpg_pg_replication_in_recovery{namespace="shop",pod="shop-db-1"}'
+        values: '0+0x10'
+      - series: 'cnpg_pg_replication_slots_active{namespace="shop",pod="shop-db-1",slot_name="_cnpg_shop_db_2",slot_type="physical",database=""}'
+        values: '1+0x10'
+      - series: 'cnpg_pg_replication_in_recovery{namespace="shop",pod="shop-db-2"}'
+        values: '1+0x10 0+0x19'
+      - series: 'cnpg_pg_replication_slots_active{namespace="shop",pod="shop-db-2",slot_name="_cnpg_shop_db_1",slot_type="physical",database=""}'
+        values: '_x11 0+0x2 1+0x15'
+    alert_rule_test:
+      - {eval_time: 20m, alertname: PostgresStandbyNotStreaming, exp_alerts: []}
+      - {eval_time: 29m, alertname: PostgresStandbyNotStreaming, exp_alerts: []}
+
+  - name: an old primary that never comes back as a standby is flagged
+    interval: 1m
+    input_series:
+      - series: 'cnpg_pg_replication_in_recovery{namespace="shop",pod="shop-db-1"}'
+        values: '0+0x10'
+      - series: 'cnpg_pg_replication_slots_active{namespace="shop",pod="shop-db-1",slot_name="_cnpg_shop_db_2",slot_type="physical",database=""}'
+        values: '1+0x10'
+      - series: 'cnpg_pg_replication_in_recovery{namespace="shop",pod="shop-db-2"}'
+        values: '1+0x10 0+0x19'
+      - series: 'cnpg_pg_replication_slots_active{namespace="shop",pod="shop-db-2",slot_name="_cnpg_shop_db_1",slot_type="physical",database=""}'
+        values: '_x11 0+0x18'
+    alert_rule_test:
+      - {eval_time: 15m, alertname: PostgresStandbyNotStreaming, exp_alerts: []}
+      - eval_time: 18m
+        alertname: PostgresStandbyNotStreaming
+        exp_alerts:
+          - exp_labels: {severity: ticket, team: sf-sre, namespace: shop, pod: shop-db-2, slot_name: _cnpg_shop_db_1}
+            exp_annotations:
+              summary: "The standby behind slot _cnpg_shop_db_1 has not streamed WAL from primary shop-db-2 for 5m: no safe failover, and with slot sync CDC waits for it."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/shop-db-standby.md
