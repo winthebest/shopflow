@@ -36,6 +36,10 @@ symptom (busy pods), not to the backlog, and a mostly idle consumer with a growi
 - Positive: scaling follows the business signal (unprocessed orders); scale-to-min is visible in the game day;
   no extra metrics pipeline.
 - Negative / risks: KEDA registers the `external.metrics.k8s.io` APIService (one per cluster; nothing else uses
-  it here). Lag-based scaling can flap if `lagThreshold` is too low; set it from a measurement, not a guess.
+  it here). Lag-based scaling can flap if `lagThreshold` is too low; set it from a measurement, not a guess
+  (game day 3 measured ~100 records/s per replica; sf-app set 3000, about 30 s of work per replica).
+- Argo CD applies the KEDA chart's `crds/` without tracking them (seen for Chaos Mesh in game day 3): deleting the
+  `keda` Application leaves the `keda.sh` CRDs. Removing KEDA from a cluster means deleting the ScaledObjects first,
+  then the Application, then those CRDs by name, as `scripts/sre-chaos-off.sh` does for Chaos Mesh.
 - When to revisit: the worker needs scale-to-zero (KEDA supports it; not needed for the demo), or a second
   external-metrics provider is introduced.
