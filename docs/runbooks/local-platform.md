@@ -17,7 +17,7 @@ Owner: sf-platform. Conventions: `docs/contracts/environment.md` (clusters, port
 | Lane cluster on your branch | `make up CLUSTER=sf-platform GIT_REVISION=$(git branch --show-current)` |
 | More profiles | `make up CLUSTER=... PROFILES=core,obs-lite` (`obs` and `obs-lite` are exclusive; `data` needs one of them; `rt`, `batch`, `bi` need `data`) |
 | What is running | `make status CLUSTER=...` |
-| Argo CD UI | `make platform-argocd-ui CLUSTER=...` then open `https://localhost:18080` (`sf-main`; lanes 18081–18084) |
+| Argo CD UI | `make platform-argocd-ui CLUSTER=...` then open `https://localhost:18080` (`sf-main`; lanes 18081–18085) |
 | Argo CD password | `make platform-argocd-password` copies it to the clipboard (user `admin`) |
 | Delete cluster + registry | `make down CLUSTER=...` |
 | Validate `deploy/` like CI | `make platform-validate` |

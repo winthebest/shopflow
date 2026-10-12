@@ -30,6 +30,7 @@ case "$CLUSTER" in
   sf-sre)      _api_port=6552 _https_port=8444 ;;
   sf-data)     _api_port=6553 _https_port=8445 ;;
   sf-app)      _api_port=6554 _https_port=8446 ;;
+  sf-cloud)    _api_port=6555 _https_port=8447 ;;
   *)           _api_port="" _https_port="" ;;
 esac
 API_PORT="${API_PORT:-$_api_port}"

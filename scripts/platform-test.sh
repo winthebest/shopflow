@@ -58,5 +58,20 @@ run_case "main: the ready line splits apps and CDC snapshot time" 0 "CDC snapsho
   "PROFILES=core,obs-lite,data; preflight() { :; }; create_cluster() { :; }; install_argocd() { :; }
    apply_root_apps() { :; }; start_cdc_epoch() { :; }; wait_for_apps() { :; }; wait_cdc_snapshot() { :; }; main"
 
+# k3d-lib.sh: every cluster of docs/contracts/environment.md gets its ports without overrides.
+for row in "sf-main 6550 9443 5050 18080" "sf-platform 6551 8443 5051 18081" "sf-sre 6552 8444 5052 18082" \
+  "sf-data 6553 8445 5053 18083" "sf-app 6554 8446 5054 18084" "sf-cloud 6555 8447 5055 18085"; do
+  read -r cluster api https registry argocd <<<"$row"
+  # shellcheck disable=SC2016  # the inner shell expands the variables after sourcing k3d-lib.sh
+  out="$(cd "$ROOT_DIR" && env -u API_PORT -u HTTPS_PORT -u REGISTRY_PORT -u ARGOCD_UI_PORT CLUSTER="$cluster" \
+    bash -c 'source scripts/k3d-lib.sh; echo "$API_PORT $HTTPS_PORT $REGISTRY_PORT $ARGOCD_UI_PORT"' 2>&1)" || true
+  if [[ "$out" == "$api $https $registry $argocd" ]]; then
+    printf 'PASS  ports of %s\n' "$cluster"
+  else
+    printf 'FAIL  ports of %s (got: %s, want: %s %s %s %s)\n' "$cluster" "$out" "$api" "$https" "$registry" "$argocd"
+    FAILS=$((FAILS + 1))
+  fi
+done
+
 ((FAILS == 0)) || { echo "platform-test: $FAILS case(s) failed" >&2; exit 1; }
 echo "platform-test: all cases pass"
