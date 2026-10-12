@@ -31,10 +31,10 @@ Expected spend for the first session: about **$1.2 for 4 hours** (`core,obs-lite
 Guardrails live from step 3: emails at $10 and $20 actual and $25 forecast; the Budget Action at $25 blocks new
 capacity; the lease (4 h by default) with the GitHub and Lambda reapers is the real stop.
 
-Prerequisites from other lanes, all merged: the root-app hook with the session parameters (ADR 0206, #61), the
-`profiles-aws` trees (`core` #69, `obs`/`obs-lite` #73), the `aws` overlays of their components (the Envoy Gateway
-Service carries `loadBalancerClass: service.k8s.aws/nlb` and the operator CIDR), and the NetworkPolicies with
-their aws variant (ADR 0208).
+Prerequisites from other lanes, all in place: the root-app hook with the session parameters (ADR 0206), the
+`profiles-aws` trees (`core`, `obs`, `obs-lite`), the `aws` overlays of their components (the Envoy Gateway Service
+carries `loadBalancerClass: service.k8s.aws/nlb` and the operator CIDR), and the NetworkPolicies with their aws
+variant (ADR 0208).
 
 ## One-time account setup (user)
 
