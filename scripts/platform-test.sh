@@ -77,10 +77,15 @@ chart_case "shop-db: default is 1 instance, no slot sync" "1 false - -"
 chart_case "shop-db: unset params (null) keep the defaults" "1 false - -" --set instances=null --set logicalSlotSync=null
 chart_case "shop-db: instances '2' turns on slot sync" "2 true on on" --set-string instances=2
 chart_case "shop-db: instances '2', logicalSlotSync 'off'" "2 false - -" --set-string instances=2 --set-string logicalSlotSync=off
+# CNPG's webhook prepends its default-queries ConfigMap; the chart must list it first too, or Argo CD never syncs.
 monitoring="$(cd "$ROOT_DIR" && helm template shop-db deploy/charts/shop-db -n shop -f deploy/charts/shop-db/values.yaml \
-  -f deploy/charts/shop-db/values-local.yaml | yq -N 'select(.kind == "Cluster") | .spec.monitoring.customQueriesConfigMap[0].name')"
-if [[ "$monitoring" == shop-db-monitoring ]]; then printf 'PASS  shop-db: custom exporter queries wired\n'; else
-  printf 'FAIL  shop-db: custom exporter queries wired (got: %s)\n' "$monitoring"; FAILS=$((FAILS + 1)); fi
+  -f deploy/charts/shop-db/values-local.yaml | yq -N 'select(.kind == "Cluster")
+    | .spec.monitoring.customQueriesConfigMap | map(.name + "/" + .key) | join(",")')"
+if [[ "$monitoring" == "cnpg-default-monitoring/queries,shop-db-monitoring/queries.yaml" ]]; then
+  printf 'PASS  shop-db: exporter queries match what CNPG writes (defaults first)\n'
+else
+  printf 'FAIL  shop-db: exporter queries (got: %s)\n' "$monitoring"; FAILS=$((FAILS + 1))
+fi
 
 # k3d-lib.sh: every cluster of docs/contracts/environment.md gets its ports without overrides.
 for row in "sf-main 6550 9443 5050 18080" "sf-platform 6551 8443 5051 18081" "sf-sre 6552 8444 5052 18082" \
