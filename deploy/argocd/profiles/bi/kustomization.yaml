@@ -1,0 +1,17 @@
+# Profile `bi` (sf-data): Metabase on the gold marts (docs/adr/0416). Shape fixed by docs/contracts/gitops.md
+# section 4. Needs profile `data` in the same PROFILES: Metabase queries its Trino, and the copy Job reads
+# lakehouse/trino-metabase. The dashboard has numbers once gold exists (profile batch, or one manual dbt build).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  # Namespace metabase with its Pod Security level and default-deny NetworkPolicies (sf-platform, wave -2).
+  - ../../apps/network-policies-bi
+  - ../../apps/metabase
+components:
+  - ../_common
+replacements:
+  - source: {kind: ConfigMap, name: git-revision, fieldPath: data.revision}
+    targets:
+      - select: {kind: Application}
+        fieldPaths:
+          - spec.sources.[repoURL=https://github.com/winthebest/shopflow.git].targetRevision

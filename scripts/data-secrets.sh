@@ -5,7 +5,7 @@
 # Secrets come in groups whose values must change together (the S3 identities and their client copies; the Trino
 # users and their bcrypt file): a group is generated when none of its files exist, kept when all exist, and refused
 # when only some do. ROTATE=1 regenerates every group, ROTATE=<group> only that one (lakehouse, trino, backup,
-# airflow).
+# airflow, metabase).
 # Credentials owned by other lanes (CNPG role passwords) are copied in the cluster instead (secret-copy.yaml).
 # Needs: sops, openssl, htpasswd (bcrypt for Trino's password file).
 #
@@ -54,6 +54,11 @@ BACKUP_FILES=(
 AIRFLOW_FILES=(
   deploy/platform/airflow/local/secrets/airflow-keys.enc.yaml
   deploy/platform/airflow/local/secrets/airflow-admin.enc.yaml
+)
+# Metabase's admin, created by its provisioning Job on first start (the setup wizard is never left open). A new
+# password takes effect on a new application database only: Metabase keeps the first admin's password.
+METABASE_FILES=(
+  deploy/platform/metabase/local/secrets/metabase-admin.enc.yaml
 )
 
 hex() { openssl rand -hex "$1"; }
@@ -176,6 +181,10 @@ generate_airflow() {
   secret airflow airflow-admin username admin password "$(hex 16)" | encrypt "${AIRFLOW_FILES[1]}"
 }
 
+generate_metabase() {
+  secret metabase metabase-admin email admin@shopflow.local password "$(hex 24)" | encrypt "${METABASE_FILES[0]}"
+}
+
 # generate_group <name> <files...>: all-or-nothing per group (see the header).
 generate_group() {
   local name="$1" present=0 f
@@ -195,3 +204,4 @@ generate_group lakehouse "${LAKEHOUSE_FILES[@]}"
 generate_group trino "${TRINO_FILES[@]}"
 generate_group backup "${BACKUP_FILES[@]}"
 generate_group airflow "${AIRFLOW_FILES[@]}"
+generate_group metabase "${METABASE_FILES[@]}"

@@ -1,0 +1,19 @@
+# Trust anchor for Metabase's HTTPS connection to Trino (JDBC SSLTrustStorePath): any certificate from the internal CA
+# carries the CA certificate in its `ca.crt` key, so this namespace gets it without reading another namespace's Secret.
+# The leaf certificate itself is unused.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: metabase-trino-ca
+  namespace: metabase
+spec:
+  secretName: metabase-trino-ca
+  dnsNames:
+    - metabase-trino-ca.metabase.svc
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: shopflow-ca

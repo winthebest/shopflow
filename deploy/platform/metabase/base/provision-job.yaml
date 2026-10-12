@@ -1,0 +1,70 @@
+# Metabase from git (docs/adr/0416): after every sync, once the Deployment is healthy, provision.py sets up the admin
+# on first start (Secret metabase-admin), then creates or updates the Trino connection (lake_ro, user metabase, TLS
+# against the CA mounted in the Metabase pod) and the questions and dashboard of dashboard/ (ConfigMap
+# metabase-provision). Idempotent; prints ids and counts only. Fails loudly, e.g. when the admin password in the
+# Secret no longer matches the application database (docs/runbooks/data-setup-hooks.md).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: metabase-provision
+  namespace: metabase
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 1500
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: metabase-provision
+        app.kubernetes.io/part-of: shopflow
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: provision
+          image: python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4
+          command: ["python", "-I", "/provision/provision.py"]
+          env:
+            - name: MB_URL
+              value: http://metabase.metabase.svc:3000
+            - name: ADMIN_EMAIL
+              valueFrom: {secretKeyRef: {name: metabase-admin, key: email}}
+            - name: ADMIN_PASSWORD
+              valueFrom: {secretKeyRef: {name: metabase-admin, key: password}}
+            - name: TRINO_USER
+              valueFrom: {secretKeyRef: {name: trino-metabase, key: username}}
+            - name: TRINO_PASSWORD
+              valueFrom: {secretKeyRef: {name: trino-metabase, key: password}}
+            - name: TRINO_HOST
+              value: trino.lakehouse.svc
+            - name: TRINO_PORT
+              value: "8443"
+            - name: TRINO_CATALOG
+              value: lake_ro
+            - name: TRINO_SCHEMA
+              value: gold
+            # Path inside the Metabase pod (metabase.yaml), where its JDBC driver reads the CA.
+            - name: TRINO_CA_PATH
+              value: /etc/trino-ca/ca.crt
+            - name: DASHBOARD_DIR
+              value: /provision
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: provision
+              mountPath: /provision
+              readOnly: true
+      volumes:
+        - name: provision
+          configMap:
+            name: metabase-provision

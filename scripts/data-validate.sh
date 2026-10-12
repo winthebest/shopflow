@@ -14,7 +14,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-COMPONENTS=(strimzi kafka kafka-connect seaweedfs iceberg-catalog trino freshness-exporter airflow flink-operator flink)
+COMPONENTS=(strimzi kafka kafka-connect seaweedfs iceberg-catalog trino freshness-exporter airflow flink-operator flink
+  metabase)
 K8S_VERSION="${K8S_VERSION:-1.34.0}"
 SCHEMA_DIR="${SCHEMA_DIR:-out/data-schemas}"
 ARGOCD_CRD_VERSION=v3.5.3
@@ -178,7 +179,7 @@ check_secrets() {
       echo "FAIL $f: unencrypted keys: $plain" >&2
       return 1
     fi
-  done < <(find deploy/platform/{strimzi,kafka,kafka-connect,seaweedfs,iceberg-catalog,trino,airflow,flink} -name '*.enc.yaml' 2> /dev/null)
+  done < <(find deploy/platform/{strimzi,kafka,kafka-connect,seaweedfs,iceberg-catalog,trino,airflow,flink,metabase} -name '*.enc.yaml' 2> /dev/null)
   local copy
   # Helm charts cannot read files outside the chart, so a chart keeps its own copy under files/.
   for copy in deploy/platform/*/*/copy-secret.py deploy/charts/*/files/copy-secret.py; do

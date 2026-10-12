@@ -1,7 +1,7 @@
-# sf-data checks that need no cluster: GitOps components (render + kubeconform), freshness-exporter tests, dbt (parse
-# + sqlfluff), and the image builds (each only when its sources change: Kafka Connect cached, freshness-exporter +
-# Trivy, Airflow + DAG import check + Trivy, Flink + SQL plan check + Trivy). Nothing here publishes, so builds may use
-# the Actions cache; publishing is data-images.yml.
+# sf-data checks that need no cluster: GitOps components (render + kubeconform), Metabase provisioning tests,
+# freshness-exporter tests, dbt (parse + sqlfluff), and the image builds (each only when its sources change: Kafka
+# Connect cached, freshness-exporter + Trivy, Airflow + DAG import check + Trivy, Flink + SQL plan check + Trivy).
+# Nothing here publishes, so builds may use the Actions cache; publishing is data-images.yml.
 # Actions are pinned by commit SHA (tag in the comment). Read-only token, no id-token.
 name: data-ci
 
@@ -17,10 +17,12 @@ on:
       - deploy/platform/freshness-exporter/**
       - deploy/platform/flink-operator/**
       - deploy/platform/flink/**
+      - deploy/platform/metabase/**
       - deploy/argocd/apps/**
       - deploy/argocd/profiles/data/**
       - deploy/argocd/profiles/batch/**
       - deploy/argocd/profiles/rt/**
+      - deploy/argocd/profiles/bi/**
       - data/contracts/**  # the CDC table list and bronze columns are checked against them
       - data/dbt/**
       - data/airflow/**
@@ -71,6 +73,9 @@ jobs:
 
       - name: Render and validate data components
         run: make data-validate
+
+      - name: Metabase provisioning unit tests (fake API, standard library)
+        run: make data-metabase-test
 
       - name: shellcheck (sf-data scripts)
         run: shellcheck scripts/data-*.sh scripts/cdc-epoch.sh images/kafka-connect/*.sh images/kafka-connect/smoke/*.sh

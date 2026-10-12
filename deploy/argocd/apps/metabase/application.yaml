@@ -1,0 +1,27 @@
+# Metabase on gold (docs/adr/0416): Deployment, copied logins, provisioning Job. Profile bi.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: metabase
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: shopflow
+    shopflow.io/profile: bi
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: metabase
+  sources:
+    - repoURL: https://github.com/winthebest/shopflow.git
+      targetRevision: main
+      path: deploy/platform/metabase/local
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - SkipDryRunOnMissingResource=true

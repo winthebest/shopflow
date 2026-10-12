@@ -1,0 +1,34 @@
+{
+  "name": "Shopflow sales",
+  "description": "Daily revenue, payment success rate and top products from the gold marts. Provisioned from git (deploy/platform/metabase/base/dashboard): edits made in the UI are overwritten on the next sync.",
+  "cards": [
+    {
+      "name": "Daily revenue (paid orders)",
+      "sql": "daily-revenue.sql",
+      "display": "line",
+      "description": "Revenue of paid orders per UTC day, last 30 days.",
+      "visualization_settings": {"graph.dimensions": ["order_date"], "graph.metrics": ["revenue"]},
+      "layout": {"row": 0, "col": 0, "size_x": 12, "size_y": 6}
+    },
+    {
+      "name": "Payment success rate",
+      "sql": "payment-success-rate.sql",
+      "display": "line",
+      "description": "Share of payment attempts that succeeded per UTC day, last 30 days.",
+      "visualization_settings": {
+        "graph.dimensions": ["payment_date"],
+        "graph.metrics": ["success_rate"],
+        "column_settings": {"[\"name\",\"success_rate\"]": {"number_style": "percent"}}
+      },
+      "layout": {"row": 0, "col": 12, "size_x": 12, "size_y": 6}
+    },
+    {
+      "name": "Top products by revenue (30 days)",
+      "sql": "top-products.sql",
+      "display": "row",
+      "description": "The 10 products with the most revenue from paid orders, last 30 days.",
+      "visualization_settings": {"graph.dimensions": ["product_name"], "graph.metrics": ["revenue"]},
+      "layout": {"row": 6, "col": 0, "size_x": 24, "size_y": 8}
+    }
+  ]
+}
