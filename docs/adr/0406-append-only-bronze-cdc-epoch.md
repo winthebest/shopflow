@@ -58,4 +58,7 @@ Kafka the offsets restart at 0, so with the same control topic every commit woul
     shipments (docs/runbooks/cdc-resnapshot.md), and a rerun of `make up` kept the epoch (#170).
   - 2026-10-12, `k3d-sf-sre` (B2 slot): `make up` was "ready in 405s (apps 337s, CDC snapshot 68s)", and
     `meta.cdc_epochs` held the new epoch with `snapshot_completed_at` when it returned (#189).
+  - 2026-10-12, `k3d-sf-data` (rt slot 2): a second `make up` on the running cluster logged "snapshot already
+    completed at 2026-10-12 05:48:23" and was ready in 19 s. The epoch Secret, `meta.cdc_epochs`, the control topics
+    and the connector generations were identical before and after (#189).
 - When to revisit: if the Iceberg sink stops keying its offsets by control topic.

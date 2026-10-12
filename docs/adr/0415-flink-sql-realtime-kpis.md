@@ -89,14 +89,30 @@ epoch.
   - JDBC 4.0.0-2.0 (built against Flink 2.0) writes from Flink 2.2 at runtime.
   - The operator's webhook and Flink 2's configuration parsing accept the deployment (after #159 and #167),
     PodSecurity `restricted` reports no warnings, and the namespace `flink` NetworkPolicies hold (8 probe rows).
+- Verified on the cluster (rt slot 2, 2026-10-12, `core,obs-lite,data,rt` at `aea5723`, job image `sha-319fe97`
+  with the heartbeat input from #193):
+  - Validity: the bring-up checks ran before the laptop slept (06:09-07:47Z). The first quiet-shop run fell into
+    that sleep and is discarded. Everything below was rerun from 07:59:28Z under `caffeinate`, after 10 stable
+    minutes, with the node clocks 0 s off the host. A lab observation: after the wake, strimzi-cluster-operator
+    restarted twice and Polaris three times, and every app was healthy again within two minutes.
+  - Quiet shop: five consecutive minutes were written with 0 orders, 38-42 s after each minute ended.
+  - k6 at 10 checkouts/s for 4 minutes: 5/5 minutes equal `orders` and `payments` exactly. All four panels return
+    data, including Payments per minute.
+  - k6 at 10/s for 9 minutes, with the CDC source stopped for 3 minutes in the middle (08:13-08:16Z) and then resumed
+    from its stored offset: 10/10 minutes equal `orders` and `payments` exactly, including the backlog minutes.
+    `numLateRecordsDropped` stayed 0, so no part of the resumed backlog was dropped as late.
+  - k6 saw 11 failed checks in about 15,600 requests (`products 200` ×8, `checkout 201` ×3). The shop logged no
+    errors, and Envoy's retained access log shows only 200 and 201. The cause is not determined: it is on the client
+    side, with a host load of 6-9. A failed checkout writes no order, so the counts above still match.
+  - RAM: server 7.9 GiB + agent 5.0 GiB; namespace `flink` 1.6 GiB.
 - Negative / risks:
   - Quiet shop: when every order and payment partition is idle, the watermark stops and the last minutes would wait
     for the next order (seen on the rt slot: 10:56 and 10:57 appeared with the next order). The job therefore reads
     the CDC heartbeat row (`shop.public.heartbeat`, updated every 10 s) as a third, non-counting input that never
     goes idle, so a minute closes 30-40 s after it ends (watermark 30 s behind a heartbeat every 10 s). Consequence:
     a minute without orders is written with 0 orders, 0 GMV and a NULL failure rate instead of no row. If CDC
-    itself stops, the heartbeat stops too and the last minutes wait again (the cdc-lag SLO pages for that). Not yet
-    run on a cluster: the next `rt` slot checks it.
+    itself stops, the heartbeat stops too and the last minutes wait again (the cdc-lag SLO pages for that).
+    Confirmed on rt slot 2: quiet minutes close 38-42 s after they end.
   - Profile `rt` needs about 12.6 GB on k3d (server 7.1 GB + agent 5.5 GB with `core,obs-lite,data,rt`; namespace
     `flink` 1.5 GB). That is above the 11 GB budget for shared slots, so `rt` runs as an exclusive slot.
   - CI checks the FlinkDeployment against the CRD schema only. The operator's admission webhook (a checkpoint
