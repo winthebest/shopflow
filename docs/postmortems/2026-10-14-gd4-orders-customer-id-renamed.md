@@ -153,8 +153,11 @@ restore, it had 0 of 7,991.
 - **The alert could not fire as deployed.**
   - The shop-db custom query `airflow_dag_run` runs as `cnpg_metrics_exporter` (a `pg_monitor` member), which has no
     privilege on Airflow's `dag_run`. With no series, `AirflowDagRunFailed` cannot fire for any DAG.
-  - The collector's own error gauge (`cnpg_collector_last_collection_error`) stayed 0. Only the counter
-    `cnpg_errors_total` showed the failure.
+  - The collector's own error gauge (`cnpg_collector_last_collection_error`) stayed 0. Only `cnpg_errors_total` showed
+    the failure. It had one series per failing query, labelled `errorUserQueries="airflow_dag_run on db airflow:
+    ERROR: permission denied for table dag_run (SQLSTATE 42501)"`.
+    - The value stayed 1 from 04:09:17 until the grant, and the series disappeared after it.
+    - Despite its name it does not count up, so `increase()` over it stays 0.
   - The rule's promtool tests supply the series themselves, so they cannot notice a query that never produces one.
   - The durable fix is a grant in Airflow's migration Job. [#265](https://github.com/winthebest/shopflow/pull/265)
     (open) documents it on the query.
@@ -197,7 +200,7 @@ rename, because it changes the `orders` contract without a version bump. Two gap
 |---|---|---|
 | Durable grant on `dag_run` (`dag_id`, `state`, `end_date`) to `pg_monitor`, in Airflow's migration Job right after `airflow db migrate`; the shop-db query documents it | sf-data; sf-platform ([#265](https://github.com/winthebest/shopflow/pull/265)) | open |
 | Live proof of the grant on a fresh cluster: the `dag_run` series is present without a grant by hand | sf-data, sf-sre (next batch slot) | open |
-| Alert on `increase(cnpg_errors_total[10m]) > 0`. The gate check fails on any increase, and checks that the `dag_run` series exists when profile batch is up. Both get a fake-tool test like #260's | sf-sre | open |
+| Alert while any `cnpg_errors_total` series exists (`for` long enough to skip the bring-up error before Airflow's database exists), naming the query from `errorUserQueries`. The gate check fails when any such series is present, and checks that the `dag_run` series exists when profile batch is up. Both get a fake-tool test like #260's | sf-sre | open |
 | A test that the contract gate rejects this rename: `orders.customer_id` renamed without a version bump fails `check_contracts.py` | sf-app | open |
 | Alertmanager delivery: the local webhook is a placeholder, so no game day has delivered a notification. A delivery test needs the real webhook | user decision | open |
 | `not_null` on silver `orders.total` and `orders.status` (found while preparing: `accepted_values` passes NULLs) | sf-data | done ([#237](https://github.com/winthebest/shopflow/pull/237)) |
