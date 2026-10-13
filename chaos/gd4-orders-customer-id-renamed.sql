@@ -6,8 +6,8 @@
 -- Hypothesis: every order inserted or updated from T0 reaches bronze.orders with customer_id = null; silver orders'
 --   not_null test fails at the next hourly dbt_build (one retry, 5 minutes later), and AirflowDagRunFailed (ticket,
 --   for 5m) fires: detection = time to the next scheduled run + ~10 minutes. Checkout SLOs stay green.
--- Side effects: GET /orders/{id} and the replay of a settled order answer 500 (OrderOut needs customer_id, now null on
---   every row), so k6 runs with RETRIES=0.
+-- Side effects: GET /orders/{id} and the replay of a settled order fail: orders answers 500 (OrderOut needs
+--   customer_id, now null on every row) and the gateway passes it on as 502. So k6 runs with RETRIES=0.
 -- Blast radius: the data pipeline from bronze.orders on (silver, gold, reconciliation); checkout unaffected.
 -- Before: dump table orders into the run's output (docs/runbooks/gameday.md). Restore:
 --   chaos/gd4-orders-customer-id-restored.sql with the t0 printed below.
