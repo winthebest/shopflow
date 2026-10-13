@@ -1,0 +1,31 @@
+# shop-db's custom exporter queries (deploy/charts/shop-db, ConfigMap shop-db-monitoring) failing. A query that fails
+# exports no series, so every alert on its metrics stays silent: AirflowDagRunFailed cannot fire while the exporter
+# has no privilege on Airflow's dag_run. The collector's own error gauge (cnpg_collector_last_collection_error) stays
+# 0 then. The only trace is cnpg_errors_total: despite its name, it has one series per query that failed on the last
+# collection, with value 1, and the series is gone once the query works again. increase() over it stays 0, so the
+# alert is on the series being there. Its label errorUserQueries reads "<query> on db <database>: <error>"; the alert
+# keeps the query name.
+# for: 5m skips bring-up, when a query on a database that does not exist yet fails for a collection or two.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: shop-db-exporter-queries
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: shopflow
+spec:
+  groups:
+    - name: shopflow-shop-db-exporter-queries
+      rules:
+        - alert: ShopDbExporterQueryFailing
+          expr: |
+            max by (namespace, pod, query) (
+              label_replace(cnpg_errors_total, "query", "$1", "errorUserQueries", "([^ ]+) on db .*")
+            ) > 0
+          for: 5m
+          labels:
+            severity: ticket
+            team: sf-sre
+          annotations:
+            summary: "shop-db exporter query {{ $labels.query }} fails on {{ $labels.pod }}: its metrics are missing, so the alerts on them cannot fire."
+            runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/shop-db-exporter-query.md
