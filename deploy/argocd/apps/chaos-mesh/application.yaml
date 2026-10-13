@@ -42,8 +42,8 @@ spec:
       jqPathExpressions: [".webhooks[].clientConfig.caBundle"]
     # Chart 2.8.4 stamps `rollme: randAlphaNum 5` on the controller's pod template (always) and the daemon's (with
     # mTLS, which we keep), so every render of the chart differs. Each re-render then reads as a change and selfHeal
-    # rolls Chaos Mesh out again: a fresh cluster's first sync looped for 16 minutes on 2026-10-13. The chart comes
-    # straight from its Helm repository (no kustomize step to patch the annotation out), so the diff is ignored.
+    # rolls Chaos Mesh out again, which can keep a fresh cluster's first sync rolling out for many minutes. The chart
+    # comes straight from its Helm repository (no kustomize step to patch the annotation out), so the diff is ignored.
     - group: apps
       kind: Deployment
       name: chaos-controller-manager
