@@ -66,3 +66,10 @@ spec:
       - CreateNamespace=true
       - ServerSideApply=true
       - RespectIgnoreDifferences=true
+    # Like the root and shop-db: a first sync that fails on something transient (a webhook not ready yet) is retried.
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
