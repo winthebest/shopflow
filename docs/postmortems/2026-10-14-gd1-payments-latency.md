@@ -1,8 +1,8 @@
 # Postmortem: Game day 1 — payments 800ms slower, before and after the checkout resilience fix
 
 - Runs (UTC+7, 2026-10-14):
-  - **before**: 00:23–02:04, fault 01:35:42–01:50:42, revision `fcd7432` (branch `exp/gd1-before-resilience`, never
-    merged: main `9de2862` with gateway, orders and payments at `sha-0c7d9a1`, the last images before #163)
+  - **before**: 00:23–02:04, fault 01:35:42–01:50:42, revision `fcd7432` (tag `gameday/gd1-before`, never merged:
+    main `9de2862` with gateway, orders and payments at `sha-0c7d9a1`, the last images before #163)
   - **after**: 02:04–03:44, fault 03:16:08–03:31:08, revision `9de2862` (main; images `sha-2372d7c`)
 - Environment: fresh k3d `sf-sre` per run, profiles core,obs-lite,chaos; k6 10 checkouts/s, no client retries; the same
   schedule both times: warm-up 65 min, fault 15 min, recovery 10 min. Image digests checked per run (`images.txt`).
@@ -142,7 +142,7 @@ sweeper settled the 72 pending orders within 2 minutes of the fault ending (abou
 
 | Action | Owner | Status |
 |---|---|---|
-| Delete `exp/gd1-before-resilience` once this postmortem is merged | sf-app | open |
+| Delete `exp/gd1-before-resilience` once this postmortem is merged | sf-app | done: replaced by tag `gameday/gd1-before` |
 | `OrdersPendingTooOld` fired as a ticket "after" (72 pending at the end of the fault, all settled by +2 min): decide whether it should stay a ticket while the payments circuit is open, or be inhibited by it | sf-sre, sf-app | open |
 | Alertmanager delivery: the local webhook is a placeholder, so no game day has delivered a page. A delivery test needs the real webhook | user decision | open |
 | gd1b (`chaos/gd1b-payments-partial.yaml`, one of two payments pods slow): the run that would show retries lowering availability burn | user decision; not approved | open |
