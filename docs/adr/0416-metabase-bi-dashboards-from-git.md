@@ -52,6 +52,26 @@ from the gold marts only. Constraints:
     the Job fails loudly when a call fails, and an upgrade must run it once.
   - Questions and the dashboard the Job owns are overwritten on every sync, so edits made in the UI to them are lost.
     Questions and dashboards created in the UI are left alone.
-  - The JVM's memory is not measured yet; a short `bi` slot measures it before `bi` joins a longer slot.
+  - At rest the pod already uses 85% of its 1.5 GiB memory limit (measured below), with the heap capped at 768 MiB.
+    More users or larger queries may need a higher limit.
+- Verified on the cluster (bi slot, 2026-10-13 20:48-21:03Z, `core,obs-lite,data,bi` at `15e150c`, k3d; on AC power
+  with the lid open, no sleep in the window):
+  - Gold was seeded by 2 minutes of k6 at 5 checkouts/s (1200/1200 checks) and one `dbt build` (PASS=63).
+  - The provisioning Job ran once and succeeded: setup, the Starburst database "Shopflow gold (Trino)", three
+    questions in the collection and the "Shopflow sales" dashboard with 3 cards. PodSecurity reports no warnings in
+    namespace `metabase`.
+  - `scripts/data-metabase-check.sh` passes. As `metabase`, Trino allows reads of `lake_ro.gold` and denies
+    `lake_ro.silver`, the `lake` catalog, and CREATE TABLE and INSERT in `lake_ro.gold`. Through the API the
+    dashboard exists and its three questions return rows (1, 1 and 10).
+  - The secret-copy Job failed 4 times with 404 before it succeeded, within its backoff limit of 10. The source
+    Secrets in `shop` and `lakehouse` did not exist yet when it first ran. The provisioning Job then ran normally.
+  - Without `batch`, the freshness exporter probes `gold.mart_product_sales` (probe 1, 35 s after the build), and
+    shop-db's DAG-run query returns no series and no collection error.
+  - RAM: Metabase's working set is steady at 1.22-1.24 GiB, with a peak of 1.28 GiB (85% of the limit) and no
+    restart. Nodes: server 7.5 GiB + agent 4.3 GiB, about 11.8 GiB of the 15.8 GiB Docker VM. Added to the batch
+    slot's 12.4 GiB (ADR 0414), `core,obs-lite,data,batch,bi` would need about 13.2-13.7 GiB. The low end adds
+    Airflow and Trino's extra memory during dbt runs to this slot; the high end adds Metabase's peak to the batch
+    slot. That is at or above the 13.5 GiB a single slot may plan for on the laptop, so `bi` and `batch` do not
+    share a slot there.
 - When to revisit: people need many dashboards edited in the UI (serialization or another tool), or Metabase needs
   more memory than the `bi` budget.
