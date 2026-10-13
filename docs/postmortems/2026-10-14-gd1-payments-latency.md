@@ -29,10 +29,10 @@
 
 ## Summary
 
-Payments answered 800 ms late for 15 minutes, once on the images before the resilience fix and once after. The
-criterion was a lower burn rate, and the result is split. **Latency burn fell**: the 5m burn at the end of the fault went
-from 100× to 1.7× and `CheckoutLatencyBurn` did not page. **Availability burn did not fall**: 200× in both runs, and k6
-saw the same checkout failure rate (16.1%). With every payments pod slow, no client-side pattern can make a checkout
+Payments answered 800 ms late for 15 minutes, once on the images before the resilience fix and once after. The criterion
+was a lower burn rate, and the result is split. **Latency burn fell**: the 5m burn at the end of the fault went from
+100× to 1.7× and `CheckoutLatencyBurn` did not page. **Availability burn did not fall**: 200× in both runs, and k6 saw
+the same checkout failure rate (16.1%). With every payments pod slow, no client-side pattern can make a checkout
 succeed. What the fix changes is how checkouts fail: slow 504s became 503s from the open breaker, and orders that would
 fail are no longer created. Failed orders created during the fault went from 8,991 to 11.
 
@@ -64,11 +64,13 @@ The p99 "after" is not milliseconds because about 2.5% of the fault's checkouts 
 payments and end in a 504. That is more than 1%, so the p99 lands among them (interpolated inside a histogram bucket).
 k6's median stayed at 66 ms.
 
-Not measurable here: the mock payments keeps no record of charges. But the delay is on payments' answers, not on the
-requests. So in the "before" run payments accepts every charge on time, and orders gives up and marks the order
-`failed`. With a real provider, that is money taken for failed orders. It is why ADR 0102 made charges idempotent and
-leaves an unanswered order pending until it can be settled. "After", the sweeper settled the 72 pending orders
-within 2 minutes of the fault ending (about 165 settlements in the first minute).
+Not measured: how many "before" charges reached payments. Charges that reached it were taken on time, while orders gave
+up and marked the order `failed`. With a real provider, that is money taken for failed orders. The mock keeps no record
+of charges, and not every charge got there. The delay applies to every packet leaving payments, including the handshake
+reply. Orders' 0.8 s timeout applies to each phase, and httpx drops a connection after a read timeout, so later charges
+opened new connections. Those spent about 0.8 s on the handshake, and some timed out before being sent. The money risk
+is why ADR 0102 made charges idempotent and leaves an unanswered order pending until it can be settled. "After", the
+sweeper settled the 72 pending orders within 2 minutes of the fault ending (about 165 settlements in the first minute).
 
 ## Timeline (UTC+7)
 
@@ -125,12 +127,12 @@ within 2 minutes of the fault ending (about 165 settlements in the first minute)
   delivery. The gate check already reports these failures as the placeholder webhook.
 - **"Before" has no warm-up gate result.** The runner passed the context in a variable `sre-gate-check.sh` does not
   read, so the check went to its default `k3d-sf-main` and could not reach it. The runner logged that as
-  "0 PASS, 0 FAIL". It was fixed between the runs: it passes `--context`, and it now logs a check with no result lines or a
-  non-zero exit as FAIL. Warm-up health "before" rests on the samples instead: burn 0 and only 201s from the first
+  "0 PASS, 0 FAIL". It was fixed between the runs: it passes `--context`, and it now logs a check with no result lines
+  or a non-zero exit as FAIL. Warm-up health "before" rests on the samples instead: burn 0 and only 201s from the first
   minute, payments Ready 2, and 20 rows each of checkout burn 5m/30m/1h in the smoke evidence.
 - **The SLO line of the "after" gate check passed on nothing.** The runner's tools copy had no `slo/`, so the check
   found no spec and printed `PASS SLO has SLI data 2/ SLOs`. SLI data was present: the smoke evidence has 20 rows
-  each of checkout burn 5m/30m/1h, and the samples show burn 0 from the first minute. #260 makes the check fail
+  each of checkout burn 5m/30m/1h, and the samples show burn 0 from the first minute. #260 made the check fail
   when it finds no spec, and the runner now copies `slo/`.
 - **The browse stop condition never had a value.** Its query divides the 5xx rate by the total rate. With no 5xx
   series at all, it returns nothing rather than 0, so all 93 samples of each run show it empty. Browse had no errors, so
@@ -144,4 +146,4 @@ within 2 minutes of the fault ending (about 165 settlements in the first minute)
 | `OrdersPendingTooOld` fired as a ticket "after" (72 pending at the end of the fault, all settled by +2 min): decide whether it should stay a ticket while the payments circuit is open, or be inhibited by it | sf-sre, sf-app | open |
 | Alertmanager delivery: the local webhook is a placeholder, so no game day has delivered a page. A delivery test needs the real webhook | user decision | open |
 | gd1b (`chaos/gd1b-payments-partial.yaml`, one of two payments pods slow): the run that would show retries lowering availability burn | user decision; not approved | open |
-| Gate check fails when it finds no SLO spec, with a test (#260); the game-day runner copies `slo/` and its browse query falls back to 0 | sf-sre | #260 in review; runner done |
+| Gate check fails when it finds no SLO spec, with a test (#260); the game-day runner copies `slo/` and its browse query falls back to 0 | sf-sre | done |
