@@ -42,6 +42,7 @@ signal.
 | Experiment | `chaos/gd4-orders-customer-id-renamed.sql`: one transaction, `lock_timeout` 2s. T0 comes 5 min after a scheduled `dbt_build` ends green. |
 | What counts as detection | The scheduled run fails with `not_null` on silver `orders.customer_id` among its failing tests, and the alert fires. A failing `relationships` test on `order_items` alone does not count: it fails now and then under traffic. |
 | Blast radius | The data pipeline from bronze `orders` on. `GET /orders/{id}` and replays of settled orders answer 500 from orders (502 at the gateway), which k6 does not call. Checkout must not degrade. |
+| Stop conditions (enforced by `gd4-run.sh`) | Before the inject: abort with the cluster untouched if the awaited `dbt_build` run failed, the baseline was wrong (alert firing, `orders` columns not as expected) or the dump failed. At any time: a failed host-guard check aborts, and after the inject the abort runs the restore first. No detection within 95 min of T0: restore anyway. No green run within 80 min of the restore: logged as not recovered. Checkout burn was sampled every minute but was not an abort trigger. |
 | Restore | After detection, or after 95 min without it: `chaos/gd4-orders-customer-id-restored.sql` with T0. It undoes the DDL in one transaction, then touches every order updated since T0 − 1 min so that CDC sends it again. Recovery = the next green `dbt_build`. |
 | Measurement window | Exclusive: nothing else wrote to the cluster, and no heavy Docker work ran on the host. The host guard ran before the inject, before the restore and at the end. |
 
@@ -139,9 +140,9 @@ restore, it had 0 of 7,991.
 
 ## What went well
 
-- Silver's `not_null` on `customer_id` ([#237](https://github.com/winthebest/shopflow/pull/237)) caught the change on
-  the first scheduled run, and the failing test names the column. Nothing downstream of silver `orders` ran, so gold
-  never published orders without a customer.
+- Silver's `not_null` on `customer_id` (there since the dbt project began,
+  [#70](https://github.com/winthebest/shopflow/pull/70)) caught the change on the first scheduled run, and the failing
+  test names the column. Nothing downstream of silver `orders` ran, so gold never published orders without a customer.
 - sf-data's checks before the run found the broken alert, so the run measured the detection path instead of waiting
   95 minutes for an alert that could not fire.
 - The restore was clean: it took one second, left 0 orders without a customer, and the dumped orders matched their
@@ -163,16 +164,24 @@ restore, it had 0 of 7,991.
     (open) documents it on the query.
 - **No notification was delivered.** `AlertmanagerFailedToSendAlerts` and `AlertmanagerClusterFailedToSendAlerts` were
   firing from 05:12:10, before T0, until the end. Their `discord` integration points at the placeholder webhook.
+- **Checkout was watched, not guarded.** The runner sampled checkout burn every minute, but no stop condition used it.
+  Had the shim broken checkout, the run would have continued until detection or 95 minutes. Burn stayed 0 throughout.
 - **Detection waits for the schedule.** 54 of the 65 minutes were spent waiting for the next hourly run. A change made
   just after a run is found about 71 minutes later.
 
 ## Prevention
 
 The `contracts` job in CI ([ADR 0101](../adr/0101-data-contracts-in-ci.md), `scripts/check_contracts.py`) fails this
-rename, because it changes the `orders` contract without a version bump. Two gaps remain:
-- No test shows that the gate rejects it.
-- The same rename with a version bump passes the gate. Silver would then still break at the next hourly run, unless the
-  same change updates it. The bump makes the break visible in review, but nothing enforces the consumer side.
+rename in either form a release could take:
+- **As simulated**, with `data/contracts` unchanged: the migrated schema no longer matches the `orders` contract (column
+  `customer_id` missing, `buyer_id` unknown).
+- **With the contract updated to `buyer_id`** but its `version` unchanged: a breaking change without a version bump.
+
+Two gaps remain:
+- No test shows that the gate rejects either form.
+- The rename with the contract updated and its version bumped passes the gate. Silver would then still break at the
+  next hourly run, unless the same change updates it. The bump makes the break visible in review, but nothing enforces
+  the consumer side.
 
 ## Other alerts during the run (not GD4)
 
@@ -201,7 +210,7 @@ rename, because it changes the `orders` contract without a version bump. Two gap
 | Durable grant on `dag_run` (`dag_id`, `state`, `end_date`) to `pg_monitor`, in Airflow's migration Job right after `airflow db migrate`; the shop-db query documents it | sf-data; sf-platform ([#265](https://github.com/winthebest/shopflow/pull/265)) | open |
 | Live proof of the grant on a fresh cluster: the `dag_run` series is present without a grant by hand | sf-data, sf-sre (next batch slot) | open |
 | Alert while any `cnpg_errors_total` series exists (`for` long enough to skip the bring-up error before Airflow's database exists), naming the query from `errorUserQueries`. The gate check fails when any such series is present, and checks that the `dag_run` series exists when profile batch is up. Both get a fake-tool test like #260's | sf-sre | open |
-| A test that the contract gate rejects this rename: `orders.customer_id` renamed without a version bump fails `check_contracts.py` | sf-app | open |
+| A test that the contract gate rejects this rename in both forms: `orders.customer_id` renamed with the contract unchanged, and with the contract updated but no version bump, each fail `check_contracts.py` | sf-app | open |
 | Alertmanager delivery: the local webhook is a placeholder, so no game day has delivered a notification. A delivery test needs the real webhook | user decision | open |
 | `not_null` on silver `orders.total` and `orders.status` (found while preparing: `accepted_values` passes NULLs) | sf-data | done ([#237](https://github.com/winthebest/shopflow/pull/237)) |
 | Candidate: a schema-drift check every few minutes (Postgres `information_schema` vs `data/contracts`), to detect in minutes instead of at the next hourly run | sf-data, sf-sre | open: decide |
