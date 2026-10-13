@@ -2,7 +2,9 @@
 # Tests for scripts/sre-gate-check.sh with a fake kubectl and a fake Prometheus (run by `scripts/sre-check.sh scripts`).
 # The fake kubectl knows one context, like a kubeconfig with one cluster: any other context is an error. Two cases
 # used to pass on nothing (a copy of the script without slo/, a spec without service or SLOs); two pin which context
-# the check reaches (the default k3d-sf-main, or KUBE_CONTEXT).
+# the check reaches (the default k3d-sf-main, or KUBE_CONTEXT). The rest set what Prometheus answers per case
+# (scenario): a failing shop-db exporter query, as measured on a cluster (cnpg_errors_total constant at 1, so
+# increase() over it is 0 and a check on increase would pass on it), and the Airflow dag_run series with profile batch.
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d)"
@@ -23,17 +25,25 @@ case "${args[*]}" in
 esac
 FAKE
 chmod +x "$TMP/bin/kubectl"
-# Prometheus with one healthy target, no alerts, profile data/batch down, and two SLI series per SLO query.
+# Prometheus with one healthy target, no alerts, no failing exporter query, profile data/batch down, and two SLI
+# series per SLO query. $FAKE_DIR/scenario.json overrides that: [[query substring, [[labels, value], ...]], ...], the
+# first match wins. As in PromQL, a query ending in "> 0" drops the samples that are 0.
 cat > "$TMP/prom.py" <<'FAKE'
-import http.server, json, time, urllib.parse
+import http.server, json, os, time, urllib.parse
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_GET(self):
         u = urllib.parse.urlparse(self.path); q = urllib.parse.parse_qs(u.query).get("query", [""])[0]
         one = lambda v: [{"metric": {}, "value": [time.time(), v]}]
+        with open(os.path.join(os.environ["FAKE_DIR"], "scenario.json")) as f: scenario = json.load(f)
+        hit = next((r for k, r in scenario if k in q), None)
         if u.path.endswith("/status/buildinfo"): d = {"version": "fake"}
         elif u.path.endswith("/rules"): d = {"groups": []}
-        elif any(s in q for s in ("up == 0", "ALERTS", "lakehouse", "airflow", "freshness-exporter")): d = {"resultType": "vector", "result": []}
+        elif hit is not None:
+            res = [{"metric": m, "value": [time.time(), v]} for m, v in hit]
+            if q.rstrip().endswith("> 0"): res = [r for r in res if float(r["value"][1]) > 0]
+            d = {"resultType": "vector", "result": res}
+        elif any(s in q for s in ("up == 0", "ALERTS", "lakehouse", "airflow", "freshness-exporter", "cnpg_errors_total")): d = {"resultType": "vector", "result": []}
         elif "slo:sli_error:ratio_rate5m" in q: d = {"resultType": "vector", "result": one("0") * 2}
         elif "restarts_total" in q or "notifications_failed" in q: d = {"resultType": "vector", "result": one("0")}
         else: d = {"resultType": "vector", "result": one("1")}
@@ -45,13 +55,16 @@ s.serve_forever()
 FAKE
 
 failed=0
-expect() {  # expect NAME WANT_EXIT WANT_OUTPUT_SUBSTRING -- command...
-  local name="$1" want_rc="$2" want_out="$3" out rc
+expect() {  # expect NAME WANT_EXIT WANT_OUTPUT_LINES -- command...  (every line of WANT_OUTPUT_LINES must appear)
+  local name="$1" want_rc="$2" want_out="$3" out rc ok=1 line
   shift 4
   out="$("$@" 2>&1)"; rc=$?
-  if [[ $rc -eq $want_rc && "$out" == *"$want_out"* ]]; then echo "PASS $name"
+  while IFS= read -r line; do [[ "$out" == *"$line"* ]] || ok=0; done <<<"$want_out"
+  if [[ $rc -eq $want_rc && $ok -eq 1 ]]; then echo "PASS $name"
   else echo "FAIL $name: exit $rc (want $want_rc, output containing '$want_out'), output: $out" >&2; failed=1; fi
 }
+scenario() { printf '%s\n' "$1" > "$TMP/scenario.json"; }
+scenario '[]'
 # A copy of the scripts, with or without the SLO specs next to them (the game-day runners copy tools like this).
 copy() { mkdir -p "$TMP/$1/scripts"; cp "$REPO/scripts/sre-gate-check.sh" "$REPO/scripts/sre-prom-lib.sh" "$TMP/$1/scripts/"; }
 copy with-slo; cp -R "$REPO/slo" "$TMP/with-slo/slo"
@@ -64,6 +77,24 @@ expect "a spec without service or SLOs fails" 1 "FAIL  SLO spec readable" -- "$T
 expect "unknown context cannot reach the cluster" 2 "cannot reach the API server of context k3d-sf-main" -- \
   env -u KUBE_CONTEXT "$TMP/with-slo/scripts/sre-gate-check.sh"
 expect "KUBE_CONTEXT selects the context" 0 "context k3d-test" -- env KUBE_CONTEXT=k3d-test "$TMP/with-slo/scripts/sre-gate-check.sh"
+
+gate=("$TMP/with-slo/scripts/sre-gate-check.sh" --context k3d-test)
+expect "no failing exporter query passes" 0 "PASS  shop-db exporter queries" -- "${gate[@]}"
+# The shape measured when the exporter could not read Airflow's dag_run: 1 while the query fails, never counting up.
+denied='{"errorUserQueries": "airflow_dag_run on db airflow: ERROR: permission denied for table dag_run (SQLSTATE 42501)", "namespace": "shop", "pod": "shop-db-1"}'
+scenario "[[\"increase(cnpg_errors_total\", [[$denied, \"0\"]]], [\"rate(cnpg_errors_total\", [[$denied, \"0\"]]],
+  [\"cnpg_errors_total\", [[$denied, \"1\"]]]]"
+expect "a failing exporter query fails, named with its error" 1 $'FAIL  shop-db exporter queries\nshop-db-1: airflow_dag_run on db airflow: ERROR: permission denied for table dag_run' -- "${gate[@]}"
+
+batch() {  # batch AGE_SECONDS [DAG_RUN_SERIES]: profile batch up for that long, with or without the dag_run series
+  local series='[]'
+  [[ -n "${2:-}" ]] && series='[[{"dag_id": "dbt_build", "namespace": "shop", "pod": "shop-db-1"}, "0"]]'
+  scenario "[[\"cnpg_airflow_dag_run_last_failed\", $series], [\"namespace=\\\"airflow\\\"\", [[{}, \"$1\"]]]]"
+}
+batch 3600; expect "dag_run series not required in batch's first 2 hours" 0 "SKIP  Airflow dag_run series" -- "${gate[@]}"
+batch 10800; expect "batch up 3h without the dag_run series fails" 1 "FAIL  Airflow dag_run series" -- "${gate[@]}"
+batch 10800 with-series; expect "batch up 3h with the dag_run series passes" 0 "PASS  Airflow dag_run series" -- "${gate[@]}"
+scenario '[]'
 
 [[ $failed -eq 0 ]] && echo "sre-gate-check: all tests passed"
 exit $failed

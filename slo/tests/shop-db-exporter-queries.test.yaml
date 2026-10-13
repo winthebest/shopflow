@@ -1,0 +1,45 @@
+# promtool unit tests for the failing-exporter-query alert. Rule file: the `.spec` of
+# deploy/platform/slo/base/shop-db-exporter-queries.prometheusrule.yaml, extracted next to this file by
+# scripts/sre-check.sh. The input has the shape measured on a cluster where the exporter could not read dag_run:
+# cnpg_errors_total holds 1 while the query fails, then disappears. It never counts up, so a rule on increase() would
+# fail the first test.
+rule_files:
+  - shop-db-exporter-queries.rules.yaml
+evaluation_interval: 1m
+
+tests:
+  # Permission denied from minute 0 to 20, then the grant: ticket after 5 minutes, naming the query; resolved once
+  # the series is gone.
+  - name: a query that keeps failing raises a ticket naming it, resolved when it works again
+    interval: 1m
+    input_series:
+      - series: 'cnpg_errors_total{errorUserQueries="airflow_dag_run on db airflow: ERROR: permission denied for table dag_run (SQLSTATE 42501)",container="postgres",endpoint="metrics",job="observability/cnpg-shop",namespace="shop",pod="shop-db-1"}'
+        values: '1x20 stale'
+    alert_rule_test:
+      - {eval_time: 4m, alertname: ShopDbExporterQueryFailing, exp_alerts: []}
+      - eval_time: 6m
+        alertname: ShopDbExporterQueryFailing
+        exp_alerts:
+          - exp_labels: {severity: ticket, team: sf-sre, namespace: shop, pod: shop-db-1, query: airflow_dag_run}
+            exp_annotations:
+              summary: "shop-db exporter query airflow_dag_run fails on shop-db-1: its metrics are missing, so the alerts on them cannot fire."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/shop-db-exporter-query.md
+      - {eval_time: 25m, alertname: ShopDbExporterQueryFailing, exp_alerts: []}
+
+  # Bring-up: the query runs before Airflow's database exists and fails for two collections.
+  - name: a failure at bring-up that clears within a minute does not alert
+    interval: 30s
+    input_series:
+      - series: 'cnpg_errors_total{errorUserQueries="airflow_dag_run on db airflow: failed to connect to `user=cnpg_metrics_exporter database=airflow`: server error: FATAL: database \"airflow\" does not exist (SQLSTATE 3D000)",namespace="shop",pod="shop-db-1"}'
+        values: '1 1 stale'
+    alert_rule_test:
+      - {eval_time: 1m, alertname: ShopDbExporterQueryFailing, exp_alerts: []}
+      - {eval_time: 10m, alertname: ShopDbExporterQueryFailing, exp_alerts: []}
+
+  - name: no failing query, no series, no alert
+    interval: 1m
+    input_series:
+      - series: 'cnpg_collector_last_collection_error{namespace="shop",pod="shop-db-1"}'
+        values: '0x30'
+    alert_rule_test:
+      - {eval_time: 30m, alertname: ShopDbExporterQueryFailing, exp_alerts: []}

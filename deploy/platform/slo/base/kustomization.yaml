@@ -10,6 +10,7 @@ resources:
   - gold-freshness-sli.prometheusrule.yaml
   - gold-freshness-slo.prometheusrule.yaml
   - orders-pending.prometheusrule.yaml
+  - shop-db-exporter-queries.prometheusrule.yaml
   - shop-db-replication.prometheusrule.yaml
   - wal-archive.prometheusrule.yaml
   - wal-retained.prometheusrule.yaml

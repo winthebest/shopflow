@@ -12,10 +12,10 @@
 #   --window   how far back restarts/peaks are checked (default 2h; use the time since the profiles came up)
 #
 # Checks:
-#   pipeline   Prometheus targets up; OTLP span metrics; every rule group healthy
+#   pipeline   Prometheus targets up; no shop-db exporter query failing; OTLP span metrics; every rule group healthy
 #   slo        every Sloth spec in slo/ has SLI samples (skipped while its profile is not up; a copy of this script
 #              without slo/ next to scripts/ finds no spec and fails); CDC heartbeat and WAL-retained series exist
-#              (profile data)
+#              (profile data); the Airflow dag_run series exists (profile batch, after its first 2 hours)
 #   tempo      GOMEMLIMIT set; no restart / OOMKill in the window; peak working set vs the memory limit
 #   alerts     no shopflow page firing; tickets listed; Alertmanager notification failures (placeholder webhook)
 set -uo pipefail
@@ -49,6 +49,13 @@ if [[ -z "$down" ]]; then pass "targets up" "$(count 'up == 1') targets"; else f
 
 n="$(count 'up{job=~".*cnpg.*|.*shop-db.*"} == 1 or up{namespace="shop", pod=~"shop-db-.*"} == 1')"
 if [[ "${n:-0}" -gt 0 ]]; then pass "CNPG scraped (PodMonitor cnpg-shop)" "$n target(s)"; else fail "CNPG scraped (PodMonitor cnpg-shop)" "no shop-db target up"; fi
+
+# A shop-db custom query that fails exports no series, so the alerts on its metrics cannot fire, while the target
+# stays up and cnpg_collector_last_collection_error stays 0. cnpg_errors_total holds one series per query failing on
+# the last collection (value 1, gone once it works again; increase() over it stays 0): any series is a FAIL. Its label
+# errorUserQueries reads "<query> on db <database>: <error>". Runbook: docs/runbooks/shop-db-exporter-query.md.
+qerr="$(prom 'cnpg_errors_total > 0' | jq -r '[.[] | (.metric.pod // "?") + ": " + (.metric.errorUserQueries // "?")] | unique | join("; ")')"
+if [[ -z "$qerr" ]]; then pass "shop-db exporter queries" "none failing"; else fail "shop-db exporter queries" "${qerr:0:400}"; fi
 
 n="$(count 'traces_span_metrics_calls_total{service_name="gateway", span_kind="SPAN_KIND_SERVER"}')"
 if [[ "${n:-0}" -gt 0 ]]; then pass "OTLP span metrics (gateway)" "$n series"; else fail "OTLP span metrics (gateway)" "no series: is traffic flowing and otel-gateway up?"; fi
@@ -111,6 +118,16 @@ for spec in ${specs[@]+"${specs[@]}"}; do
     fail "SLO $svc has SLI data" "$got/$want: no gateway traffic in the last 5 minutes; re-run while make app-loadtest runs"
   else fail "SLO $svc has SLI data" "$got/$want SLOs with a 5m sample (SLI source missing?)"; fi
 done
+
+# AirflowDagRunFailed reads cnpg_airflow_dag_run_last_failed, one series per DAG with a finished run: with profile
+# batch up for 2 hours (two hourly dbt runs), it must exist. Missing, every failed DAG run goes unnoticed.
+if [[ -z "$batch_age" ]]; then skip "Airflow dag_run series" "profile batch not up (namespace airflow absent)"
+elif younger "$batch_age" 7200; then skip "Airflow dag_run series" "profile batch up for less than 2h (first dbt runs)"
+else
+  n="$(count 'cnpg_airflow_dag_run_last_failed')"
+  if [[ "${n:-0}" -gt 0 ]]; then pass "Airflow dag_run series" "$n DAG(s)"
+  else fail "Airflow dag_run series" "cnpg_airflow_dag_run_last_failed missing: AirflowDagRunFailed cannot fire (exporter query failing?)"; fi
+fi
 
 if [[ "${data_up:-0}" -eq 0 ]]; then
   skip "CDC heartbeat and WAL-retained" "profile data not up (namespace lakehouse absent)"
