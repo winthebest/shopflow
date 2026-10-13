@@ -298,6 +298,10 @@ Mitigations, proposed only (nothing changed):
   background desktop load of about 5–11 on 12 cores, so only ratios within the same repetition are compared.
 - Control: `GET /products` did not change between the SHAs, so its CPU per read must agree within ±5 %. After 3
   repetitions it was 6–9 % off (host load rose to 10.8), so 4 more were run.
+- Re-run: `scripts/app-bench-checkout-cpu.sh c35f922 2372d7c` (Docker for testcontainers, so never during a
+  measurement window; results in `out/app-bench-checkout-*`). The test is
+  `services/orders/tests/integration/test_bench_checkout.py`, marked `bench`, and left out of the default and CI
+  runs.
 
 ### Results
 
@@ -319,4 +323,6 @@ Its candidates are not measured:
 - the error path at 13–26 % failed requests;
 - three processes instead of one;
 - OpenTelemetry export;
-- different measurement tools (`kubectl top` then, cgroup counters now).
+- different measurements: the 1.62 cores of 2026-10-12 come from per-pod cgroup counters read every 5 s, while the
+  881m of 2026-10-10 is the figure recorded in the chart's `values.yaml` from the ops slot, whose measuring tool was
+  not recorded.
