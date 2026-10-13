@@ -264,7 +264,7 @@ The same 80/s gave 4.06 % errors on 2026-10-10 with one orders replica, images `
 retries. Orders then used 881m on one replica (the figure in the chart's `values.yaml`). Today it used 1.62 cores
 for about 84 checkouts/s, retries included, plus 74 product reads/s: roughly 1.8× the CPU per request served. This
 is not isolated. The candidates are the `Idempotency-Key` read on every checkout, the client retries, and three
-processes instead of one; the measurement methods also differ.
+processes instead of one; the measurement methods also differ. The 2026-10-13 benchmark below rules out the code.
 
 Mitigations, proposed only (nothing changed):
 
@@ -272,4 +272,51 @@ Mitigations, proposed only (nothing changed):
 - a faster HPA `behavior.scaleUp` for step loads;
 - client retries with backoff, jitter and a retry budget: k6 retries after `Retry-After` or a flat 1 s, the
   pattern that turned (A) into a retry storm;
-- profiling orders' CPU per checkout against `sha-c35f922` before the EKS capacity test.
+- profiling orders' CPU per checkout against `sha-c35f922` before the EKS capacity test (done on 2026-10-13, below).
+
+## 2026-10-13: CPU per checkout, `sha-c35f922` vs `sha-2372d7c`
+
+### Method
+
+- One Python process: gateway → orders → payments over ASGI transports (the integration tests' `shop_client`
+  fixture), orders on a real Postgres 17.11 started by testcontainers. Each SHA was extracted with `git archive` and
+  synced from its lock (the same lock at both SHAs); the same benchmark test ran at both.
+- Each run: 200 warm-up checkouts, then 2,000 `GET /products`, then 2,000 sequential checkouts (one item, payments
+  `succeeded` with no latency). Sequential requests leave out pool waits, queueing and the error path, so what is
+  measured is the code's own cost per request:
+  - CPU is `time.process_time()` of the whole process;
+  - SQL statements are counted by a SQLAlchemy `before_cursor_execute` listener;
+  - transactions come from `pg_stat_database`.
+
+  OpenTelemetry is not set up in this harness; its code is identical at both SHAs.
+- Each repetition interleaves three configurations:
+  - `c35f922`;
+  - `2372d7c` without an `Idempotency-Key`;
+  - `2372d7c` with a fresh key per checkout, as k6 sends it.
+
+  There were 7 repetitions. The Mac was on AC power with its lid open, and did not sleep during the window. It ran a
+  background desktop load of about 5–11 on 12 cores, so only ratios within the same repetition are compared.
+- Control: `GET /products` did not change between the SHAs, so its CPU per read must agree within ±5 %. After 3
+  repetitions it was 6–9 % off (host load rose to 10.8), so 4 more were run.
+
+### Results
+
+| | `c35f922` | `2372d7c`, no key | `2372d7c`, with key |
+|---|---|---|---|
+| CPU per checkout, mean | 3.83 ms | 3.62 ms | 3.65 ms |
+| Ratio to `c35f922` in the same repetition, median (range) | | 0.94 (0.77–1.17) | 0.98 (0.82–1.07) |
+| `GET /products` CPU, mean (ratio median) | 1.00 ms | 1.02 ms (0.99) | 1.02 ms (0.96) |
+| SQL statements per checkout | 8 | 6 | 7 |
+| Transactions per checkout | 6.0 | 4.1 | 6.0 |
+
+The `2372d7c` code does not use more CPU per checkout than `c35f922`. Both medians are below 1, but both ranges
+contain 1.0, so this shows no increase, not a saving. The SQL counts are exact: two statements fewer without a key
+(the settle no longer reads the order back), and one more than that with a key (the key lookup).
+
+The roughly 1.8× CPU per request on k3d on 2026-10-12 is therefore not the code, and it is **not explained yet**.
+Its candidates are not measured:
+- CPU contention on the saturated VM;
+- the error path at 13–26 % failed requests;
+- three processes instead of one;
+- OpenTelemetry export;
+- different measurement tools (`kubectl top` then, cgroup counters now).
