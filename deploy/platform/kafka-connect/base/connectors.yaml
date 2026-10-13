@@ -32,6 +32,11 @@ spec:
     publication.name: shop_cdc
     publication.autocreate.mode: disabled
     slot.name: debezium_shop
+    # A PostgreSQL 17 failover slot, so CNPG can keep a synchronized copy on the standbys and CDC continues on a
+    # promoted replica instead of re-snapshotting (docs/adr/0203, failover with CDC). Always on: with one instance or
+    # pg.logicalSlotSync=off nothing syncs it and it behaves as a plain slot. It applies when Debezium creates the slot,
+    # as it does on a fresh cluster.
+    slot.failover: true
     # Exactly the tables of publication shop_cdc = data/contracts/*.yaml (scripts/data-validate.sh fails otherwise).
     # Without a list Debezium would also snapshot tables it cannot read (alembic_version).
     table.include.list: public.customers,public.products,public.orders,public.order_items,public.payments,public.shipments,public.heartbeat
