@@ -38,7 +38,13 @@ known-first-party = ["shopflow_common", "gateway", "orders", "payments", "fulfil
 testpaths = ["services"]
 pythonpath = ["scripts"]  # tests import scripts/check_contracts.py as `check_contracts`
 # services/freshness-exporter is sf-data's standalone uv project with its own lockfile and test run (data-ci).
-addopts = ["--import-mode=importlib", "-ra", "--strict-markers", "--ignore=services/freshness-exporter"]
+# `-m "not bench"`: benchmarks run only when selected (`-m bench`, scripts/app-bench-checkout-cpu.sh); a later -m wins.
+addopts = [
+  "--import-mode=importlib", "-ra", "--strict-markers", "--ignore=services/freshness-exporter", "-m", "not bench",
+]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-markers = ["integration: needs Docker (real Postgres via testcontainers or a real server process)"]
+markers = [
+  "integration: needs Docker (real Postgres via testcontainers or a real server process)",
+  "bench: performance measurement, not a correctness check; excluded by default (docs/perf-baseline.md)",
+]
