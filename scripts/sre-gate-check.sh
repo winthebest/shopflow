@@ -13,8 +13,9 @@
 #
 # Checks:
 #   pipeline   Prometheus targets up; OTLP span metrics; every rule group healthy
-#   slo        every Sloth spec in slo/ has SLI samples (skipped while its profile is not up); CDC heartbeat and
-#              WAL-retained series exist (profile data)
+#   slo        every Sloth spec in slo/ has SLI samples (skipped while its profile is not up; a copy of this script
+#              without slo/ next to scripts/ finds no spec and fails); CDC heartbeat and WAL-retained series exist
+#              (profile data)
 #   tempo      GOMEMLIMIT set; no restart / OOMKill in the window; peak working set vs the memory limit
 #   alerts     no shopflow page firing; tickets listed; Alertmanager notification failures (placeholder webhook)
 set -uo pipefail
@@ -92,10 +93,16 @@ not_counted() {  # prints why service $1 has no SLI samples by design, nothing w
   esac
 }
 
-# Every Sloth spec in slo/ must have SLI samples (one per SLO).
+# Every Sloth spec in slo/ must have SLI samples (one per SLO). A check that finds nothing to check fails: without
+# specs (a copy of this script without slo/) or with an unreadable one, the comparison below would pass on nothing.
 traffic="$(scalar 'sum(rate(traces_span_metrics_calls_total{service_name="gateway", span_kind="SPAN_KIND_SERVER"}[5m]))')"
-for spec in "$ROOT"/slo/*.yaml; do
+shopt -s nullglob; specs=("$ROOT"/slo/*.yaml); shopt -u nullglob
+[[ ${#specs[@]} -gt 0 ]] || fail "SLO specs found" "none in $ROOT/slo/: run the script from a checkout of the repo"
+for spec in ${specs[@]+"${specs[@]}"}; do
   svc="$(yq '.spec.service' "$spec")"; want="$(yq '.spec.slos | length' "$spec")"
+  if [[ -z "$svc" || "$svc" == null || ! "$want" =~ ^[1-9][0-9]*$ ]]; then
+    fail "SLO spec readable" "$(basename "$spec"): no .spec.service or no .spec.slos"; continue
+  fi
   why="$(not_counted "$svc")"
   if [[ -n "$why" ]]; then skip "SLO $svc has SLI data" "$why"; continue; fi
   got="$(count "slo:sli_error:ratio_rate5m{sloth_service=\"$svc\"}")"
