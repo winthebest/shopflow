@@ -2,8 +2,14 @@
 #
 # SLI, one sample per minute: 1 = bad minute, 0 = good minute, no sample = not counted.
 #   bad   some gold mart's latest data commit is 90 minutes old or more (data_refresh_age_seconds >= 5400; dbt_build
-#         runs hourly), or its probe failed (the age sample is then removed; the exporter also fails it when
-#         fct_orders or dim_customers is empty while its bronze source has rows), or the exporter is absent.
+#         runs hourly), or no probe of it has succeeded for 3 minutes (time() - freshness_last_success_timestamp >=
+#         180; a failed probe removes the age sample, and the exporter also fails it when fct_orders or dim_customers
+#         is empty while its bronze source has rows), or its probe has never succeeded, or the exporter is absent.
+#         One failed probe round is not a bad minute: the probes read gold through Polaris, whose catalog database is
+#         shop-db, so a shop-db failover (~20 s) fails them while gold is fresh. The bound is cdc-sli's: a round that
+#         fails fast stays visible for about 160 s, so 180 s tolerates up to two such rounds, and three always count.
+#         A mart whose probe never succeeded has no last-success series and counts through its failed probe instead:
+#         with six marts in one max(), `or on() vector(1)` alone would let the others hide it.
 #   none  without profile batch (namespace airflow absent), during its first 2 hours (the first hourly dbt run has
 #         not built gold yet), and during the first 15 minutes after the exporter (re)starts.
 apiVersion: monitoring.coreos.com/v1
@@ -23,6 +29,8 @@ spec:
             (
               max(
                 (data_refresh_age_seconds{table=~"gold\\..+"} >= bool 5400)
+                or
+                (time() - freshness_last_success_timestamp{table=~"gold\\..+"} >= bool 180)
                 or
                 (1 - freshness_probe_success{table=~"gold\\..+"})
               )
