@@ -153,7 +153,8 @@ else
   # With 2+ instances, logical slot sync (the chart's default) keeps a copy of debezium_shop on every standby, so CDC
   # resumes on a promoted standby. Without it a failover recreates the slot: Debezium snapshots again, and writes
   # between the promotion and the new slot reach Postgres but never bronze. Read on each standby as postgres over its
-  # local socket; a failed read is a FAIL, never "no slot".
+  # local socket; a failed read is a FAIL, never "no slot". Run it after the warm-up: in the first minutes after bring-up
+  # the standby may not have its copy yet.
   spec="$(kc -n shop get cluster.postgresql.cnpg.io shop-db -o json 2>/dev/null \
     | jq -c '{n: .spec.instances, sync: (.spec.replicationSlots.highAvailability.synchronizeLogicalDecoding // false)}')"
   inst="$(jq -r '.n // empty' <<<"${spec:-null}" 2>/dev/null)"
