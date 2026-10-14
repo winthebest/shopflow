@@ -94,6 +94,14 @@ batch() {  # batch AGE_SECONDS [DAG_RUN_SERIES]: profile batch up for that long,
 batch 3600; expect "dag_run series not required in batch's first 2 hours" 0 "SKIP  Airflow dag_run series" -- "${gate[@]}"
 batch 10800; expect "batch up 3h without the dag_run series fails" 1 "FAIL  Airflow dag_run series" -- "${gate[@]}"
 batch 10800 with-series; expect "batch up 3h with the dag_run series passes" 0 "PASS  Airflow dag_run series" -- "${gate[@]}"
+
+data() {  # data EXPORTER_AGE_SECONDS: profile data up for 2h, the freshness exporter started that long ago
+  scenario "[[\"kube_namespace_status_phase{namespace=\\\"lakehouse\\\"\", [[{}, \"1\"]]],
+    [\"kube_namespace_created{namespace=\\\"lakehouse\\\"\", [[{}, \"7200\"]]], [\"process_start_time_seconds\", [[{}, \"$1\"]]]]"
+}
+# Past the SLI rules' 900 s but before their first evaluations: no CDC series yet, by design.
+data 960; expect "exporter 960 s old: CDC SLI not expected yet" 0 $'SKIP  SLO cdc has SLI data\nSKIP  CDC heartbeat staleness series' -- "${gate[@]}"
+data 1080; expect "exporter 1080 s old: CDC SLI counted" 0 $'PASS  SLO cdc has SLI data\nPASS  CDC heartbeat staleness series' -- "${gate[@]}"
 scenario '[]'
 
 [[ $failed -eq 0 ]] && echo "sre-gate-check: all tests passed"
