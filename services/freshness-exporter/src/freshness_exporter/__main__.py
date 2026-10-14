@@ -13,8 +13,10 @@ from freshness_exporter import config, json_logging
 from freshness_exporter.probe import (
     FreshnessMetrics,
     NewestSeconds,
+    has_rows_query,
     latest_data_commit_query,
     max_source_ts_query,
+    newest_data_commit,
     probe_once,
 )
 
@@ -52,7 +54,13 @@ def newest_source_change(cfg: config.Config, scalar: Callable[[str], float | Non
 
 
 def latest_data_commit(cfg: config.Config, scalar: Callable[[str], float | None]) -> NewestSeconds:
-    return lambda table: scalar(latest_data_commit_query(cfg.trino_catalog, table))
+    def commit(table: str) -> float | None:
+        return scalar(latest_data_commit_query(cfg.trino_catalog, table))
+
+    def has_rows(table: str) -> bool:
+        return bool(scalar(has_rows_query(cfg.trino_catalog, table)))
+
+    return lambda table: newest_data_commit(table, commit, has_rows, cfg.refresh_rows_from)
 
 
 def main() -> None:

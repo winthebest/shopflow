@@ -42,6 +42,35 @@ tests:
         eval_time: 240m
         exp_samples: [{labels: 'gold:refresh_stale:minute', value: 1}]
 
+  # How the exporter reports empty marts (probe.newest_data_commit), so the rule needs nothing new; this pins it.
+  # fct_orders (and dim_customers) must hold rows whenever their bronze source does: empty with rows in bronze is a
+  # failed probe (0, no age). Empty with an empty bronze (no orders yet) keeps its commit age, and so does a filtered
+  # mart such as mart_customer_ltv (paid orders only), which is judged by its commit alone.
+  - name: empty marts are bad only when fct_orders or dim_customers is empty while its bronze source has rows
+    interval: 1m
+    input_series:
+      - series: 'kube_namespace_created{namespace="airflow"}'
+        values: '0x300'
+      - series: 'process_start_time_seconds{job="freshness-exporter"}'
+        values: '0x300'
+      # fct_orders: empty throughout; bronze orders empty until 199m (fresh commit, good), then has rows (failed).
+      - series: 'data_refresh_age_seconds{job="freshness-exporter",table="gold.fct_orders"}'
+        values: '600x199 _x100'
+      - series: 'freshness_probe_success{job="freshness-exporter",table="gold.fct_orders"}'
+        values: '1x199 0x100'
+      # mart_customer_ltv: empty throughout (nothing paid), commit-only: its fresh commit keeps it good.
+      - series: 'data_refresh_age_seconds{job="freshness-exporter",table="gold.mart_customer_ltv"}'
+        values: '600x300'
+      - series: 'freshness_probe_success{job="freshness-exporter",table="gold.mart_customer_ltv"}'
+        values: '1x300'
+    promql_expr_test:
+      - expr: gold:refresh_stale:minute
+        eval_time: 180m
+        exp_samples: [{labels: 'gold:refresh_stale:minute', value: 0}]
+      - expr: gold:refresh_stale:minute
+        eval_time: 240m
+        exp_samples: [{labels: 'gold:refresh_stale:minute', value: 1}]
+
   - name: no SLI samples and no alert without profile batch
     interval: 1m
     input_series:

@@ -2,7 +2,7 @@
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # The probe interpolates catalog/schema/table names into SQL, so anything but plain lowercase identifiers is
 # rejected up front.
@@ -24,6 +24,9 @@ class Config:
     probe_interval_seconds: float
     query_timeout_seconds: float
     metrics_port: int
+    # Refresh table -> source table: the refresh table must hold rows whenever its source does
+    # (probe.newest_data_commit).
+    refresh_rows_from: dict[str, str] = field(default_factory=dict)
 
 
 def parse_tables(raw: str, *, required: bool = True, name: str = "FRESHNESS_TABLES") -> tuple[str, ...]:
@@ -34,6 +37,19 @@ def parse_tables(raw: str, *, required: bool = True, name: str = "FRESHNESS_TABL
     if invalid:
         raise ValueError(f"{name}: invalid table names (expected <schema>.<table>, lowercase): {invalid}")
     return tables
+
+
+def parse_rows_from(raw: str, refresh_tables: tuple[str, ...]) -> dict[str, str]:
+    """REFRESH_ROWS_FROM: comma-separated `<refresh table>=<source table>` pairs."""
+    pairs: dict[str, str] = {}
+    for item in (i.strip() for i in raw.split(",") if i.strip()):
+        table, _, source = (part.strip() for part in item.partition("="))
+        if not (_TABLE_NAME.fullmatch(table) and _TABLE_NAME.fullmatch(source)):
+            raise ValueError(f"REFRESH_ROWS_FROM: expected <schema>.<table>=<schema>.<table>, lowercase: {item!r}")
+        if table not in refresh_tables:
+            raise ValueError(f"REFRESH_ROWS_FROM: {table} is not in REFRESH_TABLES")
+        pairs[table] = source
+    return pairs
 
 
 def parse_catalog(raw: str) -> str:
@@ -70,4 +86,5 @@ def load(env: dict[str, str] | None = None) -> Config:
         probe_interval_seconds=float(env.get("PROBE_INTERVAL_SECONDS", "60")),
         query_timeout_seconds=float(env.get("QUERY_TIMEOUT_SECONDS", "30")),
         metrics_port=int(env.get("METRICS_PORT", "8080")),
+        refresh_rows_from=parse_rows_from(env.get("REFRESH_ROWS_FROM", ""), refresh_tables),
     )

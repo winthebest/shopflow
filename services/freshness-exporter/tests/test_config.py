@@ -29,6 +29,25 @@ def test_refresh_tables_are_optional_and_validated() -> None:
         config.load({**REQUIRED, "REFRESH_TABLES": "gold.Fct_orders"})
 
 
+def test_rows_from_maps_refresh_tables_to_sources_and_is_validated() -> None:
+    refresh = {**REQUIRED, "REFRESH_TABLES": "gold.fct_orders, gold.dim_customers, gold.mart_customer_ltv"}
+
+    assert config.load(refresh).refresh_rows_from == {}
+    cfg = config.load(
+        {**refresh, "REFRESH_ROWS_FROM": "gold.fct_orders=bronze.orders, gold.dim_customers=bronze.customers"}
+    )
+    assert cfg.refresh_rows_from == {"gold.fct_orders": "bronze.orders", "gold.dim_customers": "bronze.customers"}
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["gold.fct_orders", "gold.fct_orders=", "gold.fct_orders=Bronze.orders", "gold.unknown=bronze.orders"],
+)
+def test_invalid_rows_from_is_rejected(raw: str) -> None:
+    with pytest.raises(ValueError, match="REFRESH_ROWS_FROM"):
+        config.load({**REQUIRED, "REFRESH_TABLES": "gold.fct_orders", "REFRESH_ROWS_FROM": raw})
+
+
 def test_a_table_cannot_be_in_both_lists() -> None:
     # Both measures share freshness_probe_success{table}.
     with pytest.raises(ValueError, match="both"):
