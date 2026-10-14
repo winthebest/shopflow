@@ -15,7 +15,8 @@
 #   pipeline   Prometheus targets up; no shop-db exporter query failing; OTLP span metrics; every rule group healthy
 #   slo        every Sloth spec in slo/ has SLI samples (skipped while its profile is not up; a copy of this script
 #              without slo/ next to scripts/ finds no spec and fails); CDC heartbeat and WAL-retained series exist
-#              (profile data); the Airflow dag_run series exists (profile batch, after its first 2 hours)
+#              and, with 2+ shop-db instances, every standby holds a synced copy of debezium_shop (profile data); the
+#              Airflow dag_run series exists (profile batch, after its first 2 hours)
 #   tempo      GOMEMLIMIT set; no restart / OOMKill in the window; peak working set vs the memory limit
 #   alerts     no shopflow page firing; tickets listed; Alertmanager notification failures (placeholder webhook)
 set -uo pipefail
@@ -133,7 +134,7 @@ else
 fi
 
 if [[ "${data_up:-0}" -eq 0 ]]; then
-  skip "CDC heartbeat and WAL-retained" "profile data not up (namespace lakehouse absent)"
+  skip "CDC heartbeat, WAL-retained, standby slot" "profile data not up (namespace lakehouse absent)"
 else
   cdc_why="$(not_counted cdc)"
   n="$(count 'cdc:bronze_heartbeat_stale:minute')"
@@ -147,6 +148,33 @@ else
     pass "WAL-retained series (debezium_shop)" "$(awk -v b="$bytes" -v r="$ratio" 'BEGIN{printf "%.0f bytes (%.1f MiB), %.2f%% of max_slot_wal_keep_size", b, b/1048576, r*100}')"
   else
     fail "WAL-retained series (debezium_shop)" "missing (Debezium slot created? cnpg-shop scraped?)"
+  fi
+
+  # With 2+ instances, logical slot sync (the chart's default) keeps a copy of debezium_shop on every standby, so CDC
+  # resumes on a promoted standby. Without it a failover recreates the slot: Debezium snapshots again, and writes
+  # between the promotion and the new slot reach Postgres but never bronze. Read on each standby as postgres over its
+  # local socket; a failed read is a FAIL, never "no slot".
+  spec="$(kc -n shop get cluster.postgresql.cnpg.io shop-db -o json 2>/dev/null \
+    | jq -c '{n: .spec.instances, sync: (.spec.replicationSlots.highAvailability.synchronizeLogicalDecoding // false)}')"
+  inst="$(jq -r '.n // empty' <<<"${spec:-null}" 2>/dev/null)"
+  if [[ ! "$inst" =~ ^[0-9]+$ ]]; then fail "CDC slot on the standby" "cannot read Cluster shop/shop-db"
+  elif (( inst < 2 )); then skip "CDC slot on the standby" "shop-db has 1 instance: no standby to promote"
+  elif [[ "$(jq -r '.sync' <<<"$spec")" != true ]]; then
+    warn "CDC slot on the standby" "logical slot sync off (PG_LOGICAL_SLOT_SYNC=off): a failover recreates debezium_shop and can miss writes"
+  else
+    standbys="$(kc -n shop get pod -l cnpg.io/cluster=shop-db,cnpg.io/instanceRole=replica -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)"
+    bad="" ok=""
+    for pod in $standbys; do
+      if ! slot="$(kc -n shop exec "$pod" -c postgres -- psql -d shop -qAtX \
+          -c "SELECT failover, synced FROM pg_replication_slots WHERE slot_name = 'debezium_shop'" 2>&1)"; then
+        bad+="; $pod: cannot read pg_replication_slots (${slot%%$'\n'*})"
+      elif [[ "$slot" == "t|t" ]]; then ok+=" $pod"
+      elif [[ -z "$slot" ]]; then bad+="; $pod: no copy of debezium_shop"
+      else bad+="; $pod: failover|synced = $slot"; fi
+    done
+    if [[ -z "$standbys" ]]; then fail "CDC slot on the standby" "$inst instances but no standby pod"
+    elif [[ -n "$bad" ]]; then fail "CDC slot on the standby" "${bad#; }: a failover would recreate the slot and can miss writes"
+    else pass "CDC slot on the standby" "debezium_shop failover and synced on${ok}"; fi
   fi
 fi
 
