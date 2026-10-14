@@ -7,13 +7,16 @@
 #   r without c                created while Debezium re-snapshotted: in bronze, but not in Flink's KPI (it counts c)
 #   status differs             silver shows bronze's state (latest_state prefers streamed c/u over r), not Postgres'
 #   acked, not in Postgres     k6 got a 201 for it and the order is gone (with --acks)
+# The other writers get the same comparison (except the ack check), each in its own subdirectory of --out: payments
+#   (written by the payments service) and shipments (by the fulfillment worker; no status column, presence only).
+#   Only rows created in the window are compared: an update in the window to an older row is not covered.
 # The window is on created_at (Postgres' clock); --acks filters k6's acked_at (the laptop's clock) on the same window.
 # Bronze is read in one CDC epoch: --epoch, else the one the sink stamps on new rows (Secret kafka/cdc-epoch). The epoch
 #   silver reads (latest in meta.cdc_epochs with a completed snapshot) is printed too; they differ only while a
 #   re-snapshot into a new epoch is in progress. Debezium's own snapshot after a lost offset keeps the epoch.
 # Also printed: bronze.orders rows with _op = 'r' ingested since --from, the bronze-side proof of such a snapshot.
 # Reads Postgres as shop_app and bronze through Trino as `exporter` (catalog lake_ro); passwords go to the pods on stdin.
-# Writes pg.tsv, bronze.tsv and one file per finding into --out; prints the counts.
+# Writes pg.tsv, bronze.tsv and one file per finding into --out (orders) and --out/<table>; prints the counts.
 # Run it once CDC has caught up (cdc-lag green, or a minute after the load stops): an order changed in the last seconds
 #   would otherwise show as a status difference.
 # Usage: scripts/sre-cdc-gap.sh --from RFC3339 --to RFC3339 [--context CTX] [--epoch N] [--acks acks.jsonl] [--out DIR]
@@ -71,41 +74,48 @@ read_by_silver="$(psql_shop <<< "SELECT max(epoch) FROM meta.cdc_epochs WHERE sn
 echo "orders created in [$A, $B) UTC — context $CTX, bronze read in epoch $EPOCH, output $OUT"
 echo "epoch stamped on new rows: $stamped; epoch silver reads: ${read_by_silver:-none}$([[ "$stamped" != "$read_by_silver" ]] && echo ' (differ: a re-snapshot into a new epoch is in progress)')"
 
-# id, status — sorted as text, for join(1).
-psql_shop <<SQL | sort -k1,1 > "$OUT/pg.tsv" || { echo "Postgres query failed" >&2; exit 1; }
-SELECT id, status FROM orders WHERE created_at >= '$A+00' AND created_at < '$B+00' ORDER BY id;
+# compare TABLE DIR STATUS: rows of TABLE created in the window, Postgres against bronze, into DIR. STATUS is the column
+# silver shows (orders, payments: status), or '' for a table without one (shipments: presence only).
+compare() {
+  local table="$1" dir="$2" status="$3" T=$'\t'
+  mkdir -p "$dir" || exit 1
+  # id, status — sorted as text, for join(1).
+  psql_shop <<SQL | sort -k1,1 > "$dir/pg.tsv" || { echo "Postgres query on $table failed" >&2; exit 1; }
+SELECT id, $status FROM $table WHERE created_at >= '$A+00' AND created_at < '$B+00' ORDER BY id;
 SQL
-# id, seen_c, seen_r, status as silver will rank it, deleted. Ids come from the window on rows other than deletes (a
-# delete carries only its key: Debezium fills created_at with a zero value under the default replica identity), then
-# every row of those ids is ranked exactly like latest_state: snapshot rows last, then the highest _lsn.
-trino_ro "WITH window_ids AS (
-    SELECT DISTINCT id FROM bronze.orders
-    WHERE _cdc_epoch = $EPOCH AND _op <> 'd'
-      AND created_at >= TIMESTAMP '$A UTC' AND created_at < TIMESTAMP '$B UTC'
-  ), ranked AS (
-    SELECT b.id, b._op, b.status,
-      row_number() OVER (PARTITION BY b.id ORDER BY (b._op <> 'r') DESC, b._lsn DESC) AS rk
-    FROM bronze.orders b JOIN window_ids w ON b.id = w.id
-    WHERE b._cdc_epoch = $EPOCH
-  )
-  SELECT id, bool_or(_op = 'c'), bool_or(_op = 'r'),
-    max(CASE WHEN rk = 1 THEN status END), max(CASE WHEN rk = 1 THEN _op END) = 'd'
-  FROM ranked
-  GROUP BY id" | sort -k1,1 > "$OUT/bronze.tsv" || { echo "Trino query failed" >&2; exit 1; }
+  # id, seen_c, seen_r, status as silver will rank it, deleted. Ids come from the window on rows other than deletes (a
+  # delete carries only its key: Debezium fills created_at with a zero value under the default replica identity), then
+  # every row of those ids is ranked exactly like latest_state: snapshot rows last, then the highest _lsn.
+  trino_ro "WITH window_ids AS (
+      SELECT DISTINCT id FROM bronze.$table
+      WHERE _cdc_epoch = $EPOCH AND _op <> 'd'
+        AND created_at >= TIMESTAMP '$A UTC' AND created_at < TIMESTAMP '$B UTC'
+    ), ranked AS (
+      SELECT b.id, b._op, $status AS status,
+        row_number() OVER (PARTITION BY b.id ORDER BY (b._op <> 'r') DESC, b._lsn DESC) AS rk
+      FROM bronze.$table b JOIN window_ids w ON b.id = w.id
+      WHERE b._cdc_epoch = $EPOCH
+    )
+    SELECT id, bool_or(_op = 'c'), bool_or(_op = 'r'),
+      max(CASE WHEN rk = 1 THEN status END), max(CASE WHEN rk = 1 THEN _op END) = 'd'
+    FROM ranked
+    GROUP BY id" | sort -k1,1 > "$dir/bronze.tsv" || { echo "Trino query on bronze.$table failed" >&2; exit 1; }
 
+  join -t "$T" -v 1 "$dir/pg.tsv" "$dir/bronze.tsv" > "$dir/only-in-postgres.tsv"
+  # Not in Postgres: bronze's latest row is a delete (expected), or the row was lost (id, seen_c, seen_r, status, deleted).
+  join -t "$T" -v 2 "$dir/pg.tsv" "$dir/bronze.tsv" > "$dir/only-in-bronze.tsv"
+  awk -F "$T" '$5 == "true"' "$dir/only-in-bronze.tsv" > "$dir/deleted-in-postgres.tsv"
+  awk -F "$T" '$5 != "true"' "$dir/only-in-bronze.tsv" > "$dir/lost-by-failover.tsv"
+  # Joined: id, pg_status, seen_c, seen_r, bronze_status, deleted.
+  join -t "$T" "$dir/pg.tsv" "$dir/bronze.tsv" > "$dir/both.tsv"
+  awk -F "$T" '$3 == "false" && $4 == "true"' "$dir/both.tsv" > "$dir/r-without-c.tsv"
+  awk -F "$T" '$2 != $5 || $6 == "true"' "$dir/both.tsv" > "$dir/status-differs.tsv"
+}
+rows() { wc -l < "$1" | tr -d ' '; }
+
+compare orders "$OUT" status
 resnapshot_rows="$(trino_ro "SELECT count(*) FROM bronze.orders WHERE _op = 'r' AND _ingested_at >= TIMESTAMP '$A UTC'")"
 
-T=$'\t'
-join -t "$T" -v 1 "$OUT/pg.tsv" "$OUT/bronze.tsv" > "$OUT/only-in-postgres.tsv"
-# Not in Postgres: bronze's latest row is a delete (expected), or the order was lost (id, seen_c, seen_r, status, deleted).
-join -t "$T" -v 2 "$OUT/pg.tsv" "$OUT/bronze.tsv" > "$OUT/only-in-bronze.tsv"
-awk -F "$T" '$5 == "true"' "$OUT/only-in-bronze.tsv" > "$OUT/deleted-in-postgres.tsv"
-awk -F "$T" '$5 != "true"' "$OUT/only-in-bronze.tsv" > "$OUT/lost-by-failover.tsv"
-# Joined: id, pg_status, seen_c, seen_r, bronze_status, deleted.
-join -t "$T" "$OUT/pg.tsv" "$OUT/bronze.tsv" > "$OUT/both.tsv"
-awk -F "$T" '$3 == "false" && $4 == "true"' "$OUT/both.tsv" > "$OUT/r-without-c.tsv"
-awk -F "$T" '$2 != $5 || $6 == "true"' "$OUT/both.tsv" > "$OUT/status-differs.tsv"
-rows() { wc -l < "$1" | tr -d ' '; }
 printf '%-28s %s\n' "in Postgres" "$(rows "$OUT/pg.tsv")" "in bronze" "$(rows "$OUT/bronze.tsv")" \
   "only in Postgres (CDC gap)" "$(rows "$OUT/only-in-postgres.tsv")" \
   "deleted (bronze saw it)" "$(rows "$OUT/deleted-in-postgres.tsv")" \
@@ -113,6 +123,18 @@ printf '%-28s %s\n' "in Postgres" "$(rows "$OUT/pg.tsv")" "in bronze" "$(rows "$
   "r without c (KPI misses)" "$(rows "$OUT/r-without-c.tsv")" \
   "status differs (silver)" "$(rows "$OUT/status-differs.tsv")" \
   "r rows ingested since --from" "${resnapshot_rows:-?} (non-zero: Debezium snapshotted again)"
+
+for t in payments shipments; do
+  st=status; [[ "$t" == shipments ]] && st="''"
+  compare "$t" "$OUT/$t" "$st"
+  echo "$t created in the window ($OUT/$t)"
+  printf '  %-28s %s\n' "in Postgres" "$(rows "$OUT/$t/pg.tsv")" "in bronze" "$(rows "$OUT/$t/bronze.tsv")" \
+    "only in Postgres (CDC gap)" "$(rows "$OUT/$t/only-in-postgres.tsv")" \
+    "deleted (bronze saw it)" "$(rows "$OUT/$t/deleted-in-postgres.tsv")" \
+    "lost by failover" "$(rows "$OUT/$t/lost-by-failover.tsv")" \
+    "r without c (snapshot only)" "$(rows "$OUT/$t/r-without-c.tsv")"
+  [[ "$t" == shipments ]] || printf '  %-28s %s\n' "status differs (silver)" "$(rows "$OUT/$t/status-differs.tsv")"
+done
 
 if [[ -n "$ACKS" ]]; then
   # k6's console output: one {"ack": {...}} per acknowledged checkout; acked_at in UTC with milliseconds.
