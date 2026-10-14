@@ -1,12 +1,14 @@
 {#
-  `relationships` for silver tables, which read bronze at different moments: each silver model is its own Cosmos
-  task, and the Iceberg sink commits every table on its own. A child can then be newer than everything its parent
-  table holds, e.g. an order item whose order reached bronze just after silver `orders` was built, and a plain
-  `relationships` test fails on it until the next run (a retry re-runs only the test, on the same tables). So only
-  children older than the parent table's newest change must find their parent. `_source_ts_ms` is the source
-  commit time, the same for a parent and a child written in one transaction; strictly older, so a tie never fails.
-  A real orphan is still reported as soon as the parent table has moved past it. Right after a re-snapshot, while
-  the parent table has no change newer than its snapshot, children read later in the snapshot are skipped.
+  `relationships` for silver children of a parent written together with them (orders and its order items and
+  payments). The silver models read bronze at different moments: each is its own Cosmos task, and the Iceberg sink
+  commits every table on its own. A child can then be newer than everything its parent table holds, e.g. an order
+  item whose order reached bronze just after silver `orders` was built, and a plain `relationships` test fails on it
+  until the next run (a retry re-runs only the test, on the same tables). So only children older than the parent
+  table's newest change must find their parent. `_source_ts_ms` is the source commit time, the same for a parent
+  and a child written in one transaction; strictly older, so a tie never fails. A real orphan is still reported as
+  soon as the parent table has moved past it, and an empty parent table fails every child, as `relationships` does.
+  Only for parents that keep changing: with a parent that changes rarely (seeded customers, products), its newest
+  change stays old and every newer child would be skipped.
 #}
 {% test relationships_up_to_parent_cut(model, column_name, to, field) %}
 with parent_cut as (
@@ -21,5 +23,5 @@ left join {{ to }} as parent on child.{{ column_name }} = parent.{{ field }}
 where
     child.{{ column_name }} is not null
     and parent.{{ field }} is null
-    and child._source_ts_ms < parent_cut.source_ts_ms
+    and (parent_cut.source_ts_ms is null or child._source_ts_ms < parent_cut.source_ts_ms)
 {% endtest %}
