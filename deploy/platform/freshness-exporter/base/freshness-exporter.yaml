@@ -48,7 +48,7 @@ spec:
       containers:
         - name: freshness-exporter
           # Published by data-images.yml (job freshness-exporter); bump tag + digest from that run's summary.
-          image: ghcr.io/winthebest/shopflow-freshness-exporter:sha-34a852c@sha256:0b4f2650e7d26e80bf959dbd24fcc54f5c436deeada9a3d811553ec46296bdba
+          image: ghcr.io/winthebest/shopflow-freshness-exporter:sha-dac273f@sha256:5f5cc41ef439e89cd01a5b13bb2ec2e850287e3a3a97047f62719a007e5e3012
           ports:
             - name: metrics
               containerPort: 8080
