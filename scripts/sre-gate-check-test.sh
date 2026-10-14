@@ -4,7 +4,8 @@
 # used to pass on nothing (a copy of the script without slo/, a spec without service or SLOs); two pin which context
 # the check reaches (the default k3d-sf-main, or KUBE_CONTEXT). The rest set what Prometheus answers per case
 # (scenario): a failing shop-db exporter query, as measured on a cluster (cnpg_errors_total constant at 1, so
-# increase() over it is 0 and a check on increase would pass on it), and the Airflow dag_run series with profile batch.
+# increase() over it is 0 and a check on increase would pass on it), the Airflow dag_run series with profile batch, and
+# the standby's copy of debezium_shop (psql through the fake kubectl).
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d)"
@@ -21,6 +22,15 @@ case "${args[*]}" in
   "get --raw /readyz") echo ok ;;
   "-n observability port-forward svc/kps-prometheus :9090") exec python3 "$FAKE_DIR/prom.py" ;;
   "-n observability get pod tempo-0") echo 'Error from server (NotFound): pods "tempo-0" not found' >&2; exit 1 ;;
+  # shop-db: one instance unless $FAKE_DIR/shopdb.json says otherwise; standby names in $FAKE_DIR/standbys; what psql
+  # prints on each standby in $FAKE_DIR/slot-<pod> ("ERROR..." makes psql fail).
+  "-n shop get cluster.postgresql.cnpg.io shop-db -o json") cat "$FAKE_DIR/shopdb.json" 2>/dev/null || echo '{"spec": {"instances": 1}}' ;;
+  "-n shop get pod -l cnpg.io/cluster=shop-db,cnpg.io/instanceRole=replica -o jsonpath={.items[*].metadata.name}")
+    printf '%s' "$(cat "$FAKE_DIR/standbys" 2>/dev/null)" ;;
+  "-n shop exec "*" -c postgres -- psql -d shop -qAtX -c SELECT failover, synced FROM pg_replication_slots WHERE slot_name = 'debezium_shop'")
+    f="$FAKE_DIR/slot-${args[3]}"; [[ -f "$f" ]] || { echo "Error from server (NotFound): pods \"${args[3]}\" not found" >&2; exit 1; }
+    [[ "$(cat "$f")" == ERROR* ]] && { echo "psql: error: connection to server on socket failed" >&2; exit 2; }
+    printf '%s' "$(cat "$f")" ;;
   *) echo "kubectl (fake): unexpected arguments: ${args[*]}" >&2; exit 1 ;;
 esac
 FAKE
@@ -102,6 +112,19 @@ data() {  # data EXPORTER_AGE_SECONDS: profile data up for 2h, the freshness exp
 # Past the SLI rules' 900 s but before their first evaluations: no CDC series yet, by design.
 data 960; expect "exporter 960 s old: CDC SLI not expected yet" 0 $'SKIP  SLO cdc has SLI data\nSKIP  CDC heartbeat staleness series' -- "${gate[@]}"
 data 1080; expect "exporter 1080 s old: CDC SLI counted" 0 $'PASS  SLO cdc has SLI data\nPASS  CDC heartbeat staleness series' -- "${gate[@]}"
+
+standby() {  # standby INSTANCES SYNC SLOT: shop-db with that many instances and slot sync; what psql shows on shop-db-2
+  printf '{"spec": {"instances": %s, "replicationSlots": {"highAvailability": {"synchronizeLogicalDecoding": %s}}}}\n' "$1" "$2" > "$TMP/shopdb.json"
+  echo shop-db-2 > "$TMP/standbys"; printf '%s' "$3" > "$TMP/slot-shop-db-2"
+}
+data 7200
+expect "one shop-db instance: no standby slot to check" 0 "SKIP  CDC slot on the standby" -- "${gate[@]}"
+standby 2 true 't|t'; expect "standby holds a synced failover copy" 0 "PASS  CDC slot on the standby" -- "${gate[@]}"
+standby 2 true ''; expect "standby without the copy fails" 1 $'FAIL  CDC slot on the standby\nshop-db-2: no copy of debezium_shop' -- "${gate[@]}"
+standby 2 true 't|f'; expect "a copy not synced fails" 1 "shop-db-2: failover|synced = t|f" -- "${gate[@]}"
+standby 2 true 'ERROR'; expect "a failed read is a FAIL, not 'no slot'" 1 "shop-db-2: cannot read pg_replication_slots (psql: error" -- "${gate[@]}"
+standby 2 false ''; expect "slot sync off with 2 instances warns" 0 "WARN  CDC slot on the standby" -- "${gate[@]}"
+rm -f "$TMP/shopdb.json" "$TMP/standbys" "$TMP/slot-shop-db-2"
 scenario '[]'
 
 [[ $failed -eq 0 ]] && echo "sre-gate-check: all tests passed"
