@@ -87,16 +87,19 @@ data_age="$(scalar 'time() - max(kube_namespace_created{namespace="lakehouse"})'
 batch_age="$(scalar 'time() - max(kube_namespace_created{namespace="airflow"})')"
 exporter_age="$(scalar 'time() - max(process_start_time_seconds{job="freshness-exporter"})')"
 younger() { [[ -n "$1" ]] && awk -v a="$1" -v l="$2" 'BEGIN{exit !(a < l)}'; }  # age $1 (seconds) below $2
+# The SLI rules drop their first 900 s, but the series only appears at the next 1m rule evaluations after that: a
+# check at 900–1020 s would find nothing yet. So the check waits two evaluations longer than the rules.
+sli_guard=1020
 not_counted() {  # prints why service $1 has no SLI samples by design, nothing when samples are expected
   case "$1" in
     cdc)
       if [[ "${data_up:-0}" -eq 0 ]]; then echo "profile data not up (namespace lakehouse absent)"
-      elif younger "$data_age" 900; then echo "profile data up for less than 15 minutes"
-      elif younger "$exporter_age" 900; then echo "freshness exporter (re)started less than 15 minutes ago"; fi ;;
+      elif younger "$data_age" "$sli_guard"; then echo "profile data up for less than 17 minutes (15-minute SLI guard + 2 rule evaluations)"
+      elif younger "$exporter_age" "$sli_guard"; then echo "freshness exporter (re)started less than 17 minutes ago (15-minute SLI guard + 2 rule evaluations)"; fi ;;
     gold)
       if [[ -z "$batch_age" ]]; then echo "profile batch not up (namespace airflow absent)"
       elif younger "$batch_age" 7200; then echo "profile batch up for less than 2h (first dbt run)"
-      elif younger "$exporter_age" 900; then echo "freshness exporter (re)started less than 15 minutes ago"; fi ;;
+      elif younger "$exporter_age" "$sli_guard"; then echo "freshness exporter (re)started less than 17 minutes ago (15-minute SLI guard + 2 rule evaluations)"; fi ;;
   esac
 }
 
