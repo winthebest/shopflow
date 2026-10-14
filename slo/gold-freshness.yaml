@@ -3,8 +3,9 @@
 #
 # gold-freshness: 99% of minutes, every gold mart was refreshed (latest data commit) less than 90 minutes ago.
 # The SLI is the per-minute recording rule gold:refresh_stale:minute (gold-freshness-sli.prometheusrule.yaml):
-# 1 = bad (some mart's data commit is 90 minutes old or more, a probe failed, or the exporter is absent), 0 = good,
-# no sample = not counted (no profile batch, its first 2 hours, the exporter's first 15 minutes).
+# 1 = bad (some mart's data commit is 90 minutes old or more, no probe of a mart has succeeded for 3 minutes or ever,
+# or the exporter is absent), 0 = good, no sample = not counted (no profile batch, its first 2 hours, the exporter's
+# first 15 minutes).
 # Measured from `$snapshots` without `replace` snapshots: the daily optimize/manifest rewrite is not a refresh.
 apiVersion: sloth.slok.dev/v1
 kind: PrometheusServiceLevel

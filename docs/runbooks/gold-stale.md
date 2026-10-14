@@ -9,11 +9,11 @@
 ## What it means
 
 A gold mart (`lake.gold.*`, read by Metabase) has had no data commit for 90 minutes or more, its freshness probe
-fails (also when `fct_orders` or `dim_customers` is empty while its bronze source has rows), or the freshness
-exporter is gone. dbt rebuilds gold every hour (Airflow DAG `dbt_build`), so a healthy mart
-is at most about one hour old. The age comes from `data_refresh_age_seconds{table="gold.<mart>"}`: the latest
-snapshot in `lake_ro.gold."<mart>$snapshots"`, not counting `replace` snapshots (the daily optimize and manifest
-rewrite change no rows, so they are not a refresh).
+has failed for 3 minutes or has never succeeded (also when `fct_orders` or `dim_customers` is empty while its bronze
+source has rows), or the freshness exporter is gone. dbt rebuilds gold every hour (Airflow DAG `dbt_build`), so a
+healthy mart is at most about one hour old. The age comes from `data_refresh_age_seconds{table="gold.<mart>"}`: the
+latest snapshot in `lake_ro.gold."<mart>$snapshots"`, not counting `replace` snapshots (the daily optimize and
+manifest rewrite change no rows, so they are not a refresh).
 
 Only clusters with profile `batch` count, from 2 hours after namespace `airflow` was created.
 
