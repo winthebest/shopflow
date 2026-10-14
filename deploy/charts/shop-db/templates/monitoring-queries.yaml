@@ -1,8 +1,12 @@
 {{- if .Values.databases.airflow.enabled }}
 # Custom queries for CNPG's metrics exporter, added to its default queries (sf-data's alert when a DAG such as
-# dbt_build fails: deploy/platform/slo). The exporter runs them read-only, as postgres on the primary, in database
-# airflow. Airflow's tables exist only after its migration Job (profile batch); until then predicate_query skips the
-# query without an error. The cnpg.io/reload label makes the instance manager reload the queries.
+# dbt_build fails: deploy/platform/slo). The exporter runs them read-only on the primary, in database airflow, as role
+# cnpg_metrics_exporter (a member of pg_monitor), not as a superuser. Tables owned by airflow are readable only through
+# an explicit grant, which Airflow's migration Job makes (deploy/platform/airflow):
+# SELECT (dag_id, state, end_date) ON dag_run TO pg_monitor. A query that reads other columns or tables needs that
+# grant widened first. Without it the query fails with "permission denied", which shows only in cnpg_errors_total.
+# Airflow's tables exist only after its migration Job (profile batch); until then predicate_query skips the query
+# without an error. The cnpg.io/reload label makes the instance manager reload the queries.
 apiVersion: v1
 kind: ConfigMap
 metadata:
