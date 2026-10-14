@@ -96,6 +96,25 @@ migrateDatabaseJob:
   jobAnnotations:
     argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+  # After the schema change, the read shop-db's monitoring query airflow_dag_run needs (the input of alert
+  # AirflowDagRunFailed): pg_monitor, which the CNPG exporter runs as, may read dag_run's dag_id, state and end_date.
+  # The tables belong to airflow, so the grant runs as airflow through Airflow's own engine; GRANT is idempotent and
+  # every migrate reapplies it. Widen it here before the query reads another column.
+  args:
+    - bash
+    - -c
+    - |
+      set -e
+      airflow db migrate
+      exec python - <<'EOF'
+      from airflow import settings
+      from sqlalchemy import text
+      if settings.engine is None:
+          settings.configure_orm()
+      with settings.engine.begin() as conn:
+          conn.execute(text("GRANT SELECT (dag_id, state, end_date) ON public.dag_run TO pg_monitor"))
+      print("dag_run: SELECT (dag_id, state, end_date) granted to pg_monitor")
+      EOF
 
 # Admin login from Secret airflow-admin (scripts/data-secrets.sh), created on deploy: the UI never starts without one.
 # Wave 1: after the migration hook (wave 0) has created the schema.
