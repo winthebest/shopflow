@@ -9,6 +9,14 @@
 
 CREATE SCHEMA IF NOT EXISTS lake.bronze;
 
+-- dbt's schemas, created once here before any model runs. Each Cosmos task is its own `dbt run` that creates its
+-- schema if missing, and Trino's IF NOT EXISTS checks, then creates: on a fresh cluster the parallel silver models
+-- raced it, and the losers failed with Polaris's "Namespace already exists". Ordered before the models without new
+-- coupling: dbt_build's cdc_epoch_guard needs a completed epoch, which scripts/cdc-epoch.sh records only once
+-- bronze.heartbeat holds its snapshot rows, and that table exists only after this file ran (it stops at an error).
+CREATE SCHEMA IF NOT EXISTS lake.silver;
+CREATE SCHEMA IF NOT EXISTS lake.gold;
+
 CREATE TABLE IF NOT EXISTS lake.bronze.customers (
     id            bigint,
     email         varchar,
