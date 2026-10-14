@@ -124,5 +124,44 @@ stack plus Trino 483.
   - Each later `dbt_build` took 52-59 s while orders grew from about 6,000 to 26,000.
   - RAM at the end, with both raised limits: server 7.6 GiB + agent 5.5 GiB. Namespace `airflow` peaked at
     1.14 GiB; namespace `lakehouse` used 3.0 GiB.
+- Verified on the cluster (batch slot, 2026-10-14 05:50Z to 06:28Z, `core,obs-lite,data,batch` at `10413e2`, k3d,
+  k6 at 2 checkouts/s from 06:03:34Z; on battery by the user's decision, lid open, 0 host sleeps). This was the live
+  proof of the P5 follow-ups:
+  - **`AirflowDagRunFailed` works as deployed (#269).** The migrate Job logged
+    "dag_run: SELECT (dag_id, state, end_date) granted to pg_monitor"; its container finished at 06:01:22Z.
+    - The first DAG run finished at 06:01:46Z. At 06:05:02Z the `cnpg_airflow_dag_run_last_failed` series existed
+      and no `cnpg_errors_total` series did.
+    - `pg_monitor` holds no privilege on the table, only on the three columns. No GRANT was made by hand.
+    - Game day 4 had measured the alert path itself (+65m09s); the series it needs now exists without any manual step.
+  - **Sizing (#271), configuration only.**
+    - Polaris ran with `MaxRAMPercentage=70.0` under a 1Gi limit, peaking at 497 MiB. Its 3 restarts all came at
+      bring-up (05:54:50Z to 05:55:49Z, "database \"catalog\" does not exist"), not from memory.
+    - The Trino coordinator peaked at 2382 MiB, above the old 2Gi limit, under the new 3Gi.
+    - There were no OOM kills. A long slot still has to show that.
+  - **Catch-up runs (#273, #275).** The cluster start's `reconciliation` run (interval ended 4605 s before)
+    skipped both tasks through `on_time_guard` and ended green, so no false ticket. A manual run ran both tasks
+    and passed.
+  - **Silver relationships flake (#272).** Run 0 was the cluster start's scheduled `dbt_build`. Ten manual runs
+    followed under k6, all green.
+    - In all 11 runs, no `order_items` or `payments` row older than the orders cut lacked its order.
+    - In the first manual run, one row of each, at or after the cut, had no order yet. The old plain `relationships`
+      test fails on such a row; `relationships_up_to_parent_cut` passed.
+    - Each manual run was seen finished 57-77 s after its trigger (polled every 15 s).
+    - Run 0 started at 06:01:29Z, before k6, so traffic began mid-run. Its first task started only at 06:06:49Z,
+      likely `cdc_epoch_guard`'s retry: no epoch had completed at 06:01:3xZ, and `retry_delay` is 5 minutes. This
+      is not verified, because the attempt logs went with the cluster.
+    - Three of run 0's silver models failed their first attempt with "Cannot create namespace silver. Namespace
+      already exists": they raced `customers` in creating the schema. They passed on the retry. The bronze DDL Job
+      now creates `silver` and `gold` before any model runs (#285).
+  - **Freshness exporter (#277, #278).** The pinned image ran with `REFRESH_ROWS_FROM` set to both pairs. All 6 gold
+    probes were 1, and none logged "table has no rows" from 90 s after the first green run under traffic.
+    - The other half, an empty `fct_orders` or `dim_customers` while bronze has rows, did not occur. It is covered
+      by tests only.
+    - The 14 "table has no rows" lines at bring-up (06:00:24Z to 06:03:28Z) came from bronze tables before CDC data
+      arrived. Before the first build, the gold probes failed with SCHEMA_NOT_FOUND.
+  - **Alerts.** `AirflowDagRunFailed` did not fire in the slot, and `ShopDbExporterQueryFailing` stayed at 0 with
+    its rule group loaded. `scripts/sre-gate-check.sh` reported PASS for "shop-db exporter queries" and SKIP for
+    "Airflow dag_run series" (batch up for under 2 hours).
+  - RAM at the end: server 7.1 GiB + agent 5.4 GiB; namespace `lakehouse` 3.1 GiB; `airflow` peaked at 0.97 GiB.
 - When to revisit: tasks need isolation or more parallelism than one scheduler pod gives (KubernetesExecutor), or
   Cosmos breaks on an Airflow upgrade (fall back to `dbt build` in one BashOperator).
