@@ -32,7 +32,9 @@ tests:
     input_series:
       - series: 'cnpg_errors_total{errorUserQueries="airflow_dag_run on db airflow: failed to connect to `user=cnpg_metrics_exporter database=airflow`: server error: FATAL: database \"airflow\" does not exist (SQLSTATE 3D000)",namespace="shop",pod="shop-db-1"}'
         values: '1 1 stale'
+    # At 0m the series is still there: without `for` the alert would already fire.
     alert_rule_test:
+      - {eval_time: 0m, alertname: ShopDbExporterQueryFailing, exp_alerts: []}
       - {eval_time: 1m, alertname: ShopDbExporterQueryFailing, exp_alerts: []}
       - {eval_time: 10m, alertname: ShopDbExporterQueryFailing, exp_alerts: []}
 
