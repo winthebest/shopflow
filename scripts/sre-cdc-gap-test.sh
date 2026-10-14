@@ -85,15 +85,16 @@ clean='"orders": {"pg": [[1, "paid"], [2, "paid"], [3, "failed"]],
 
 scenario "{$clean}"
 expect "every table complete" 0 $'only in Postgres (CDC gap)   0\npayments created in the window\n  only in Postgres (CDC gap)   0\n  status differs (silver)      0\nshipments created in the window\n  in Postgres                  1\n  in bronze                    1' -- "${gap[@]}"
-[[ -s "$TMP/out/payments/pg.tsv" && -s "$TMP/out/shipments/bronze.tsv" && -s "$TMP/out/pg.tsv" ]] \
-  && echo "PASS files per table" || { echo "FAIL files per table: $(find "$TMP/out" -type f | sort)" >&2; failed=1; }
+if [[ -s "$TMP/out/payments/pg.tsv" && -s "$TMP/out/shipments/bronze.tsv" && -s "$TMP/out/pg.tsv" ]]; then echo "PASS files per table"
+else echo "FAIL files per table: $(find "$TMP/out" -type f | sort)" >&2; failed=1; fi
 
 # A payment and a shipment written but never delivered by CDC: the hazard window's other writers.
 scenario "{$clean, \"payments\": {\"pg\": [[11, \"succeeded\"], [12, \"pending\"]], \"bronze\": [[11, true, false, \"succeeded\", false]]},
   \"shipments\": {\"pg\": [[21, \"\"], [22, \"\"]], \"bronze\": [[21, true, false, \"\", false]]}}"
 expect "a payment and a shipment missing from bronze are CDC gaps" 0 $'payments created in the window\n  in Postgres                  2\n  in bronze                    1\n  only in Postgres (CDC gap)   1' -- "${gap[@]}"
-[[ "$(cut -f1 "$TMP/out/payments/only-in-postgres.tsv")" == 12 && "$(cut -f1 "$TMP/out/shipments/only-in-postgres.tsv")" == 22 ]] \
-  && echo "PASS the missing ids are listed" || { echo "FAIL the missing ids are listed" >&2; failed=1; }
+if [[ "$(cut -f1 "$TMP/out/payments/only-in-postgres.tsv")" == 12 && "$(cut -f1 "$TMP/out/shipments/only-in-postgres.tsv")" == 22 ]]; then
+  echo "PASS the missing ids are listed"
+else echo "FAIL the missing ids are listed" >&2; failed=1; fi
 
 # An update CDC missed: Postgres has the payment succeeded, silver will still show it pending.
 scenario "{$clean, \"payments\": {\"pg\": [[11, \"succeeded\"]], \"bronze\": [[11, true, false, \"pending\", false]]}}"
