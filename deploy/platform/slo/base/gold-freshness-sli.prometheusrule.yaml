@@ -2,8 +2,8 @@
 #
 # SLI, one sample per minute: 1 = bad minute, 0 = good minute, no sample = not counted.
 #   bad   some gold mart's latest data commit is 90 minutes old or more (data_refresh_age_seconds >= 5400; dbt_build
-#         runs hourly), or its probe failed (the age sample is then removed; the exporter fails the probe of an empty
-#         mart even right after a commit), or the exporter is absent.
+#         runs hourly), or its probe failed (the age sample is then removed; the exporter also fails it when
+#         fct_orders or dim_customers is empty while its bronze source has rows), or the exporter is absent.
 #   none  without profile batch (namespace airflow absent), during its first 2 hours (the first hourly dbt run has
 #         not built gold yet), and during the first 15 minutes after the exporter (re)starts.
 apiVersion: monitoring.coreos.com/v1

@@ -25,18 +25,22 @@ Per-minute recording rule `gold:refresh_stale:minute` (1 = bad, 0 = good, no sam
   probe time minus `max(committed_at)` of `lake_ro.gold."<mart>$snapshots"`, counting only snapshots whose
   `operation` is not `replace`. The daily Iceberg maintenance (`optimize`, `optimize_manifests`) commits `replace`
   snapshots that change no rows; counting them would make gold look refreshed every day at 03:30 while dbt is
-  stopped. (`_source_ts_ms` is the wrong clock here: a mart can be rebuilt from old data and still be fresh.) The
-  query returns an age only while the mart has rows (`EXISTS`): an empty mart is a failed probe.
+  stopped. (`_source_ts_ms` is the wrong clock here: a mart can be rebuilt from old data and still be fresh.)
+  `fct_orders` and `dim_customers` must also hold rows whenever bronze `orders` / `customers` do
+  (`REFRESH_ROWS_FROM`): empty while their source is not, their probe fails. The other marts filter or aggregate
+  (paid orders only) and can be empty legitimately (no orders yet, nothing paid): their commit alone counts.
 - **Bad** when any mart is 90 minutes old or more (the next hourly run is due 60 minutes after the last commit, so
-  one missed run plus a 30-minute margin), when a mart's probe fails or the mart is empty (the age sample is then
-  removed), or when the exporter is absent (`or on() vector(1)`). A blind SLI never looks green.
+  one missed run plus a 30-minute margin), when a mart's probe fails (the age sample is then removed; this includes
+  `fct_orders` or `dim_customers` empty while their bronze source has rows), or when the exporter is absent
+  (`or on() vector(1)`). A blind SLI never looks green.
 - **Not counted** without profile `batch` (namespace `airflow` absent), during its first 2 hours (the first hourly
   run has not built gold yet), and during the first 15 minutes after the exporter (re)starts.
 - **Empty marts:** a commit alone is not freshness. dbt rewrites every mart each hour (CREATE OR REPLACE, `append`
   snapshots) even when silver is empty. Seen on 2026-10-10: on a fresh cluster nothing recorded the CDC epoch in
   `meta.cdc_epochs`, so silver joined no epoch, and gold would have been empty yet "fresh". `make up` now waits for
   the epoch's snapshot (`cdc-epoch.sh wait`), the dbt test `assert_completed_cdc_epoch_exists` fails such a run
-  (`AirflowDagRunFailed` raises a ticket), and an empty mart now counts as a bad minute here.
+  (`AirflowDagRunFailed` raises a ticket), and `fct_orders` or `dim_customers` empty while bronze has rows now counts
+  as a bad minute here. A shop with no orders yet, or with nothing paid, stays green.
 
 ## Alerting
 

@@ -70,6 +70,10 @@ spec:
             # gold-freshness SLI (slo/gold-freshness.yaml): age of each mart's latest data commit (dbt, profile batch).
             - name: REFRESH_TABLES
               value: gold.fct_orders,gold.dim_customers,gold.mart_daily_revenue,gold.mart_payment_success_rate,gold.mart_customer_ltv,gold.mart_product_sales
+            # These marts must hold rows whenever their bronze source does (an empty one fails its probe). The other
+            # marts filter or aggregate (paid orders only) and can be empty legitimately: commit time only.
+            - name: REFRESH_ROWS_FROM
+              value: gold.fct_orders=bronze.orders,gold.dim_customers=bronze.customers
             - name: PROBE_INTERVAL_SECONDS
               value: "60"
           readinessProbe:

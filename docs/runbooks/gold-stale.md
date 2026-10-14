@@ -8,8 +8,9 @@
 
 ## What it means
 
-A gold mart (`lake.gold.*`, read by Metabase) has had no data commit for 90 minutes or more, has no rows, its
-freshness probe fails, or the freshness exporter is gone. dbt rebuilds gold every hour (Airflow DAG `dbt_build`), so a healthy mart
+A gold mart (`lake.gold.*`, read by Metabase) has had no data commit for 90 minutes or more, its freshness probe
+fails (also when `fct_orders` or `dim_customers` is empty while its bronze source has rows), or the freshness
+exporter is gone. dbt rebuilds gold every hour (Airflow DAG `dbt_build`), so a healthy mart
 is at most about one hour old. The age comes from `data_refresh_age_seconds{table="gold.<mart>"}`: the latest
 snapshot in `lake_ro.gold."<mart>$snapshots"`, not counting `replace` snapshots (the daily optimize and manifest
 rewrite change no rows, so they are not a refresh).
@@ -20,10 +21,10 @@ Only clusters with profile `batch` count, from 2 hours after namespace `airflow`
 
 1. Which mart and how old: in Grafana Explore, `data_refresh_age_seconds{table=~"gold.*"}` and
    `freshness_probe_success{table=~"gold.*"}`. All marts old → dbt is not running. One mart old → that model fails.
-   Probe failing → the exporter log names the cause. `table has no rows`: the mart is empty although dbt committed
-   it, usually because silver is empty (no completed CDC epoch, or a failed upstream model); check the latest
-   `dbt_build` run and [cdc-lag](cdc-lag.md). Any other error → [freshness-probe-down](freshness-probe-down.md)
-   (same exporter, same Trino path).
+   Probe failing → the exporter log names the cause. `table has no rows` on `fct_orders` or `dim_customers`: the
+   mart is empty although bronze has orders or customers, so silver lost its input (no completed CDC epoch, or a
+   failed upstream model); check the latest `dbt_build` run and [cdc-lag](cdc-lag.md). Any other error →
+   [freshness-probe-down](freshness-probe-down.md) (same exporter, same Trino path).
 2. Is `dbt_build` running? Airflow UI (`kubectl -n airflow port-forward svc/airflow-api-server 8080`): DAG paused,
    runs queued (scheduler down), or failing. Scheduler health:
    `kubectl -n airflow get pods -l component=scheduler` and its logs.
