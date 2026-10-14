@@ -42,6 +42,33 @@ tests:
         eval_time: 240m
         exp_samples: [{labels: 'gold:refresh_stale:minute', value: 1}]
 
+  # The exporter reports an empty mart as a failed probe even right after dbt committed it (its commit query returns
+  # NULL without rows): probe 0 and no age sample, so the rule needs nothing new; this pins that contract.
+  - name: an empty mart with a fresh commit is a bad minute, the same mart with rows is good
+    interval: 1m
+    input_series:
+      - series: 'kube_namespace_created{namespace="airflow"}'
+        values: '0x300'
+      - series: 'process_start_time_seconds{job="freshness-exporter"}'
+        values: '0x300'
+      # dim_customers has rows and is fresh throughout.
+      - series: 'data_refresh_age_seconds{job="freshness-exporter",table="gold.dim_customers"}'
+        values: '600x300'
+      - series: 'freshness_probe_success{job="freshness-exporter",table="gold.dim_customers"}'
+        values: '1x300'
+      # mart_product_sales: committed every hour but empty until 199m (probe 0, no age), then 5 minutes old with rows.
+      - series: 'data_refresh_age_seconds{job="freshness-exporter",table="gold.mart_product_sales"}'
+        values: '_x200 300x99'
+      - series: 'freshness_probe_success{job="freshness-exporter",table="gold.mart_product_sales"}'
+        values: '0x199 1x100'
+    promql_expr_test:
+      - expr: gold:refresh_stale:minute
+        eval_time: 180m
+        exp_samples: [{labels: 'gold:refresh_stale:minute', value: 1}]
+      - expr: gold:refresh_stale:minute
+        eval_time: 240m
+        exp_samples: [{labels: 'gold:refresh_stale:minute', value: 0}]
+
   - name: no SLI samples and no alert without profile batch
     interval: 1m
     input_series:

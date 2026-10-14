@@ -25,21 +25,18 @@ Per-minute recording rule `gold:refresh_stale:minute` (1 = bad, 0 = good, no sam
   probe time minus `max(committed_at)` of `lake_ro.gold."<mart>$snapshots"`, counting only snapshots whose
   `operation` is not `replace`. The daily Iceberg maintenance (`optimize`, `optimize_manifests`) commits `replace`
   snapshots that change no rows; counting them would make gold look refreshed every day at 03:30 while dbt is
-  stopped. (`_source_ts_ms` is the wrong clock here: a mart can be rebuilt from old data and still be fresh.)
+  stopped. (`_source_ts_ms` is the wrong clock here: a mart can be rebuilt from old data and still be fresh.) The
+  query returns an age only while the mart has rows (`EXISTS`): an empty mart is a failed probe.
 - **Bad** when any mart is 90 minutes old or more (the next hourly run is due 60 minutes after the last commit, so
-  one missed run plus a 30-minute margin), when a mart's probe fails
-  (the age sample is then removed), or when the exporter is absent (`or on() vector(1)`). A blind SLI never looks
-  green.
+  one missed run plus a 30-minute margin), when a mart's probe fails or the mart is empty (the age sample is then
+  removed), or when the exporter is absent (`or on() vector(1)`). A blind SLI never looks green.
 - **Not counted** without profile `batch` (namespace `airflow` absent), during its first 2 hours (the first hourly
   run has not built gold yet), and during the first 15 minutes after the exporter (re)starts.
-- **Known gap:** the SLI measures that dbt committed a snapshot, not that gold holds data. dbt rewrites every mart
-  each hour (CREATE OR REPLACE, `append` snapshots) even when silver is empty. Seen on 2026-10-10: on a fresh cluster
-  nothing recorded the CDC epoch in `meta.cdc_epochs`, so silver joined no epoch, and gold would have been empty yet
-  "fresh". `make up` now waits for the epoch's snapshot (`cdc-epoch.sh wait`). The dbt test
-  `assert_completed_cdc_epoch_exists` would fail that `dbt_build` run, but a failed run shows only in the Airflow UI
-  (no alert pages for it), and gold still gets fresh `append` snapshots, so `GoldFreshnessBurn` stays quiet. The
-  daily reconciliation (Postgres vs gold) catches an empty gold a day later. Follow-up: count a mart with no rows as
-  bad, or alert on a failed `dbt_build` run.
+- **Empty marts:** a commit alone is not freshness. dbt rewrites every mart each hour (CREATE OR REPLACE, `append`
+  snapshots) even when silver is empty. Seen on 2026-10-10: on a fresh cluster nothing recorded the CDC epoch in
+  `meta.cdc_epochs`, so silver joined no epoch, and gold would have been empty yet "fresh". `make up` now waits for
+  the epoch's snapshot (`cdc-epoch.sh wait`), the dbt test `assert_completed_cdc_epoch_exists` fails such a run
+  (`AirflowDagRunFailed` raises a ticket), and an empty mart now counts as a bad minute here.
 
 ## Alerting
 

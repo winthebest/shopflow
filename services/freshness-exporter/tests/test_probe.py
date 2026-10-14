@@ -26,10 +26,10 @@ def test_source_query_quotes_catalog_schema_and_table() -> None:
     )
 
 
-def test_commit_query_reads_snapshots_without_replace_operations() -> None:
+def test_commit_query_reads_snapshots_without_replace_operations_and_only_with_rows() -> None:
     assert latest_data_commit_query("lake_ro", "gold.fct_orders") == (
         'SELECT to_unixtime(max(committed_at)) FROM "lake_ro"."gold"."fct_orders$snapshots" '
-        "WHERE operation <> 'replace'"
+        """WHERE operation <> 'replace' AND EXISTS (SELECT 1 FROM "lake_ro"."gold"."fct_orders")"""
     )
 
 
@@ -60,6 +60,16 @@ def test_empty_table_is_a_failed_probe(registry, metrics) -> None:
 
     assert sample(registry, "freshness_probe_success", "bronze.orders") == 0
     assert sample(registry, "data_freshness_seconds", "bronze.orders") is None
+
+
+def test_empty_mart_with_a_fresh_commit_is_a_failed_probe(registry, metrics) -> None:
+    # Fresh and non-empty first; then dbt commits again but the mart is empty: the commit query returns NULL.
+    probe_once(["gold.fct_orders"], lambda _: NOW - 60, metrics.refresh_age, metrics, now=lambda: NOW)
+    probe_once(["gold.fct_orders"], lambda _: None, metrics.refresh_age, metrics, now=lambda: NOW + 60)
+
+    assert sample(registry, "freshness_probe_success", "gold.fct_orders") == 0
+    assert sample(registry, "data_refresh_age_seconds", "gold.fct_orders") is None
+    assert sample(registry, "freshness_last_success_timestamp", "gold.fct_orders") == NOW
 
 
 @pytest.mark.parametrize("gauge", ["freshness", "refresh_age"])

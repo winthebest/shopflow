@@ -4,8 +4,9 @@ Two measures, each for its own table list:
 - data_freshness_seconds: now - max(_source_ts_ms), the source commit time of the newest change (bronze, CDC lag);
 - data_refresh_age_seconds: now - the latest data commit of the table (`$snapshots`, gold, rebuilt by dbt).
 
-A failed probe (query error, timeout, empty table) sets freshness_probe_success{table}=0 and removes the age sample,
-so a broken probe can never look fresh: the SLO counts the minute as bad and the absent-metric alert can fire.
+A failed probe (query error, timeout, empty table under either measure) sets freshness_probe_success{table}=0 and
+removes the age sample, so a broken probe or an empty table can never look fresh: the SLO counts the minute as bad and
+the absent-metric alert can fire.
 """
 
 import contextlib
@@ -34,14 +35,16 @@ def max_source_ts_query(catalog: str, table: str) -> str:
 
 
 def latest_data_commit_query(catalog: str, table: str) -> str:
-    """SQL for the time of the table's latest data commit, in Unix seconds.
+    """SQL for the time of the table's latest data commit, in Unix seconds; NULL when the table has no rows.
 
     `replace` snapshots (optimize, manifest rewrites by the daily Iceberg maintenance) change no rows: counting them
-    would make a table look refreshed while its producer (dbt) is stopped.
+    would make a table look refreshed while its producer (dbt) is stopped. An empty table gives NULL even after a
+    fresh commit: dbt rewrites every mart each hour (CREATE OR REPLACE), also when its input is empty, so a commit
+    alone would make an empty mart look fresh. NULL makes the probe fail, as for an empty table under the source time.
     """
     return (
         f"SELECT to_unixtime(max(committed_at)) FROM {_relation(catalog, table, '$snapshots')} "  # noqa: S608
-        "WHERE operation <> 'replace'"
+        f"WHERE operation <> 'replace' AND EXISTS (SELECT 1 FROM {_relation(catalog, table)})"
     )
 
 
