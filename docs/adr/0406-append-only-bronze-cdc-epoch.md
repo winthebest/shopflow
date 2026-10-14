@@ -61,4 +61,17 @@ Kafka the offsets restart at 0, so with the same control topic every commit woul
   - 2026-10-12, `k3d-sf-data` (rt slot 2): a second `make up` on the running cluster logged "snapshot already
     completed at 2026-10-12 05:48:23" and was ready in 19 s. The epoch Secret, `meta.cdc_epochs`, the control topics
     and the connector generations were identical before and after (#189).
+  - 2026-10-14, `k3d-sf-data` (P5 slot, `9fa67e1`): a re-snapshot following docs/runbooks/cdc-resnapshot.md, with
+    5 paid orders (ids 1-5) deleted in Postgres while the source connector was stopped (23:18:24-29Z). k6 kept
+    sending 2 checkouts/s.
+    - The new epoch 1791933505 finished its snapshot in 70 s (23:18:31-23:19:41Z).
+    - The old epoch 1791925589 holds ids 1-5: 10 order rows, 9 order item rows and 5 payment rows. The new epoch
+      holds none of them. After the next `dbt_build`, neither do silver `orders`, silver `payments` or gold
+      `fct_orders`.
+    - The reconciliation DAG passed 5 of 5 two-way checks against Postgres (customers, products, orders, order_items,
+      payments).
+    - Silver equals Postgres: 26,409 orders, 52,829 order items and 26,409 payments. k6 made 26,414 checkouts =
+      26,409 orders + the 5 deleted.
+    - During the re-snapshot, only the bronze freshness probes failed (23:19:29-23:19:59Z). The CDC SLI counts a
+      failed probe as a stale minute, and the `CdcLagBurn` ticket fired from 23:21:29Z until about 00:45Z.
 - When to revisit: if the Iceberg sink stops keying its offsets by control topic.
