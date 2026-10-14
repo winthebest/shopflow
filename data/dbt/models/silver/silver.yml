@@ -7,6 +7,8 @@ version: 2
 # not_null on every column gold reads that the contracts (data/contracts) make NOT NULL: a column renamed or dropped
 # in Postgres reaches bronze as NULL (the sink drops unknown fields), and accepted_values / relationships pass NULLs,
 # so without it only the daily reconciliation would notice.
+# Foreign keys use relationships_up_to_parent_cut (tests/generic): the silver models read bronze at different moments,
+# so a child newer than its parent table's newest change is not checked yet.
 
 models:
   - name: customers
@@ -40,7 +42,7 @@ models:
       - name: customer_id
         data_tests:
           - not_null
-          - relationships:
+          - relationships_up_to_parent_cut:
               arguments: {to: ref('customers'), field: id}
       - name: status
         data_tests:
@@ -65,12 +67,12 @@ models:
       - name: order_id
         data_tests:
           - not_null
-          - relationships:
+          - relationships_up_to_parent_cut:
               arguments: {to: ref('orders'), field: id}
       - name: product_id
         data_tests:
           - not_null
-          - relationships:
+          - relationships_up_to_parent_cut:
               arguments: {to: ref('products'), field: id}
       - name: quantity
         data_tests: [not_null]
@@ -88,7 +90,7 @@ models:
       - name: order_id
         data_tests:
           - not_null
-          - relationships:
+          - relationships_up_to_parent_cut:
               arguments: {to: ref('orders'), field: id}
       - name: status
         data_tests:

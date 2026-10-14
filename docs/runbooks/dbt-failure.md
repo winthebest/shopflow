@@ -40,7 +40,10 @@ login in Secret `airflow/airflow-admin`). By task:
   change. Bronze then gets NULL, because the sink drops unknown fields. Compare `\d <table>` in Postgres with
   `data/contracts/<table>.yaml`. Once the schema is back, re-emit the affected rows (an UPDATE that touches them) or
   re-snapshot ([cdc-resnapshot](cdc-resnapshot.md)). Only then rerun.
-- `models.relationships_*`: runs after both parents; a failure is a real orphan, not an ordering problem.
+- `models.relationships_*` (`relationships_up_to_parent_cut_*` in silver): runs after both parents. The silver
+  models read bronze at different moments, so silver skips children newer than the parent table's newest change
+  (`tests/generic/relationships_up_to_parent_cut.sql`). A failure is then a real orphan, older than the parent's
+  cut, not an ordering problem.
 - `source_freshness`: `bronze.heartbeat` older than 30 minutes, which means CDC is behind. It does not block the
   models, see [cdc-lag](cdc-lag.md).
 
