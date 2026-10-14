@@ -4,7 +4,8 @@
 # also holds CDC back: the primary sends logical changes only once that standby has the WAL (synchronized_standby_slots).
 # Not "streaming replicas < instances - 1": CNPG's streaming_replicas counts every walsender, Debezium's logical one
 # included, and the desired instance count is not a metric. Metrics: CloudNativePG default queries (pg_replication_slots,
-# pg_replication), scraped by the cnpg-shop PodMonitor. Runbook: docs/runbooks/shop-db-standby.md.
+# pg_replication), scraped by the cnpg-shop PodMonitor. Runbooks: docs/runbooks/shop-db-standby.md,
+# docs/runbooks/shop-db-failover.md.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
@@ -29,3 +30,19 @@ spec:
           annotations:
             summary: "The standby behind slot {{ $labels.slot_name }} has not streamed WAL from primary {{ $labels.pod }} for 5m: no safe failover, and with slot sync CDC waits for it."
             runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/shop-db-standby.md
+        # A pod that was a standby (in_recovery 1) now runs as the primary (0): CloudNativePG promoted it, after a
+        # failover or a switchover. Nothing else marks it: checkouts fail for ~25 s and recover, and CDC resumes on its
+        # own, so without this ticket nobody checks why the old primary went away or whether CDC lost writes. The old
+        # primary going 0 -> 1 as a returning standby does not match, nor does a primary restarting in place (no sample
+        # while it recovers). The ticket stays up for 30 minutes after the promotion.
+        - alert: PostgresPrimaryChanged
+          expr: |
+            max by (namespace, pod) (cnpg_pg_replication_in_recovery == 0)
+            and on (namespace, pod)
+            max by (namespace, pod) (changes(cnpg_pg_replication_in_recovery[30m]) > 0)
+          labels:
+            severity: ticket
+            team: sf-sre
+          annotations:
+            summary: "{{ $labels.pod }} was promoted to primary in the last 30 minutes: find out why the old primary went away, and check that CDC resumed without a gap."
+            runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/shop-db-failover.md
