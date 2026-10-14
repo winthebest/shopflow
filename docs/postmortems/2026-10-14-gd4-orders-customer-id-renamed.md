@@ -207,9 +207,9 @@ Two gaps remain:
 
 | Action | Owner | Status |
 |---|---|---|
-| Durable grant on `dag_run` (`dag_id`, `state`, `end_date`) to `pg_monitor`, in Airflow's migration Job right after `airflow db migrate`; the shop-db query documents it | sf-data; sf-platform ([#265](https://github.com/winthebest/shopflow/pull/265)) | open |
-| Live proof of the grant on a fresh cluster: the `dag_run` series is present without a grant by hand | sf-data, sf-sre (next batch slot) | open |
-| Alert while any `cnpg_errors_total` series exists (`for` long enough to skip the bring-up error before Airflow's database exists), naming the query from `errorUserQueries`. The gate check fails when any such series is present, and checks that the `dag_run` series exists when profile batch is up. Both get a fake-tool test like #260's | sf-sre | open |
+| Durable grant on `dag_run` (`dag_id`, `state`, `end_date`) to `pg_monitor`, in Airflow's migration Job right after `airflow db migrate`; the shop-db query documents it | sf-data; sf-platform ([#265](https://github.com/winthebest/shopflow/pull/265)) | done ([#269](https://github.com/winthebest/shopflow/pull/269)) |
+| Live proof of the grant on a fresh cluster: the `dag_run` series is present without a grant by hand | sf-data, sf-sre (next batch slot) | done (batch slot at 10413e2, 06:05Z: `cnpg_airflow_dag_run_last_failed` present, no `cnpg_errors_total` series, no grant by hand) |
+| Alert while any `cnpg_errors_total` series exists (`for` long enough to skip the bring-up error before Airflow's database exists), naming the query from `errorUserQueries`. The gate check fails when any such series is present, and checks that the `dag_run` series exists when profile batch is up. Both get a fake-tool test like #260's | sf-sre | done ([#267](https://github.com/winthebest/shopflow/pull/267)) |
 | A test that the contract gate rejects this rename in both forms: `orders.customer_id` renamed with the contract unchanged, and with the contract updated but no version bump, each fail `check_contracts.py` | sf-app | open |
 | Alertmanager delivery: the local webhook is a placeholder, so no game day has delivered a notification. A delivery test needs the real webhook | user decision | open |
 | `not_null` on silver `orders.total` and `orders.status` (found while preparing: `accepted_values` passes NULLs) | sf-data | done ([#237](https://github.com/winthebest/shopflow/pull/237)) |
