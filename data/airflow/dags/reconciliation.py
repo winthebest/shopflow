@@ -8,7 +8,9 @@ out; any other difference fails the task.
 `on_time_guard` skips a scheduled run that starts more than an hour after its interval ended. When a cluster starts,
 the scheduler at once runs the interval that ended before it (catchup=False still runs the latest one), while silver
 does not exist yet: that run would fail and raise a false AirflowDagRunFailed ticket. The next scheduled run
-reconciles; manual runs always run.
+reconciles; manual runs always run. The cost: a run delayed by a scheduler outage is skipped the same way, and that
+day's check is lost behind a green run. After an outage, trigger this DAG by hand
+(docs/runbooks/reconciliation-failure.md).
 """
 
 from datetime import UTC, datetime
