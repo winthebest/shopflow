@@ -1,5 +1,5 @@
-# Creates the bronze schema and tables (bronze-tables.sql) through Trino as `dbt`, the owner of catalog lake,
-# after every sync of this app. The Iceberg sink only appends; it never creates tables. Every statement is
+# Creates the bronze, silver and gold schemas and the bronze tables (bronze-tables.sql) through Trino as `dbt`, the
+# owner of catalog lake, after every sync of this app. The Iceberg sink only appends; it never creates tables. Every statement is
 # `IF NOT EXISTS`, so the file is retried as a whole: inside the pod for about 60s, because under the k3s
 # NetworkPolicies a new pod's first connections are REJECTed for a few seconds ("Connection refused") and a Job retry
 # starts a new pod with the same problem (docs/runbooks/data-setup-hooks.md); then by the Job's backoff, which covers

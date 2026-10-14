@@ -66,7 +66,7 @@ Default-deny per namespace; these flows must be allowed. Owners add rows when th
 | `lakehouse` trino | `shop` shop-db | 5432 | catalog `pg` | sf-data |
 | `lakehouse` polaris | `shop` shop-db; `lakehouse` seaweedfs | 5432; 8333 | metadata DB `catalog`; object store | sf-data |
 | `lakehouse` polaris-setup Job | `lakehouse` polaris | 8181 | bootstrap principals | sf-data |
-| `lakehouse` trino-bronze-tables Job | `lakehouse` trino | 8443 | create bronze tables | sf-data |
+| `lakehouse` trino-bronze-tables Job | `lakehouse` trino | 8443 | create the bronze, silver and gold schemas and the bronze tables | sf-data |
 | `observability` Prometheus | `lakehouse` freshness-exporter; `kafka` cdc-connect | 8080; 9404 | scrape freshness + Connect/Debezium JMX metrics | sf-data |
 | `lakehouse` freshness-exporter | `lakehouse` trino | 8443 | freshness probe queries (`lake_ro`, user `exporter`) | sf-data |
 | `external-secrets` controller | AWS STS/SSM; Pod Identity agent | 443; 169.254.170.23:80 | SSM → Secrets (AWS only) | sf-cloud |

@@ -30,6 +30,9 @@ login in Secret `airflow/airflow-admin`). By task:
   not finished: `CLUSTER=<cluster> scripts/cdc-epoch.sh wait`, see [cdc-lag](cdc-lag.md).
 - `models.<model>.run`, Trino errors:
   - `TABLE_NOT_FOUND` on `lake.bronze.*`: the bronze DDL Job (`trino-bronze-tables`) did not run;
+  - `Cannot create namespace silver. Namespace already exists` (or `gold`): parallel models created a missing
+    schema at the same time. That Job creates both schemas before any model runs, so check that it ran; the task's
+    retry passes once the schema exists;
   - `Access Denied`: `rules.json` in `deploy/platform/trino/base/values.yaml` (user `dbt`: `lake` all, `pg` read);
   - catalog or storage errors: Polaris or SeaweedFS (as in [cdc-lag](cdc-lag.md), step 4).
 - `models.<model>.test`: a data test failed. Find the failing rows with
