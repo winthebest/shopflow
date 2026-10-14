@@ -9,8 +9,8 @@ images:
   airflow:
     # Published by data-images.yml (job airflow); bump tag + digest from that run's summary.
     repository: ghcr.io/winthebest/shopflow-airflow
-    tag: sha-f53e975
-    digest: sha256:5b1a8a4d2244647f22a39f680503d42692d75593cf306c71324dd78ac7eca867
+    tag: sha-4913f2d
+    digest: sha256:0a2b4ded4d9be251af61b1fefc1366bcdf773a3f6b514d08656071da147f79b3
     pullPolicy: IfNotPresent
 
 # Copied in the cluster from shop/shop-db-airflow with the key `connection` (base/secret-copy.yaml).
