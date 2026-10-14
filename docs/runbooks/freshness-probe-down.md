@@ -4,7 +4,7 @@
 |---|---|
 | Alert | `CdcFreshnessProbeDown` (`severity=ticket`), after 10 minutes, held for the first 15 minutes after namespace `lakehouse` is created or the exporter starts |
 | Rule | [`deploy/platform/slo/base/cdc-sli.prometheusrule.yaml`](../../deploy/platform/slo/base/cdc-sli.prometheusrule.yaml) |
-| Why it exists | A blind SLI must not look green: while the probe fails, every minute counts as bad for `cdc-lag` |
+| Why it exists | A blind SLI must not look green: once no probe has succeeded for 3 minutes, every minute counts as bad for `cdc-lag` |
 
 ## What it means
 

@@ -38,6 +38,75 @@ tests:
         eval_time: 100m
         exp_samples: [{labels: 'cdc:bronze_heartbeat_stale:minute', value: 1}]
 
+  # One failed probe is not a bad minute: during a shop-db failover the probe (through Polaris, whose catalog database
+  # is shop-db) fails for one round while CDC is on time. Here at minute 27, 12 minutes into the SLI's history, when a
+  # single bad minute would be 1 in 12 and page.
+  - name: one failed probe is not a bad minute and does not page a young cluster
+    interval: 1m
+    input_series:
+      - series: 'kube_namespace_status_phase{namespace="lakehouse",phase="Active"}'
+        values: '1x60'
+      - series: 'process_start_time_seconds{job="freshness-exporter"}'
+        values: '0x60'
+      - series: 'data_freshness_seconds{job="freshness-exporter",table="bronze.heartbeat"}'
+        values: '20x26 stale 20x32'
+      - series: 'freshness_probe_success{job="freshness-exporter",table="bronze.heartbeat"}'
+        values: '1x26 0 1x32'
+      - series: 'freshness_last_success_timestamp{job="freshness-exporter",table="bronze.heartbeat"}'
+        values: '0+60x26 1560 1680+60x31'
+    promql_expr_test:
+      - expr: cdc:bronze_heartbeat_stale:minute
+        eval_time: 27m
+        exp_samples: [{labels: 'cdc:bronze_heartbeat_stale:minute', value: 0}]
+    alert_rule_test:
+      - {eval_time: 28m, alertname: CdcLagBurn, exp_alerts: []}
+      - {eval_time: 31m, alertname: CdcLagBurn, exp_alerts: []}
+
+  # The realistic worst case of one failed round: rounds take a few seconds besides the 60 s wait, and the next success
+  # reaches Prometheus up to a scrape later. Last success at 25m15s, still the latest sample at 28m (165 s old).
+  - name: one failed round seen 165 s after the last success is still a good minute
+    interval: 30s
+    input_series:
+      - series: 'kube_namespace_status_phase{namespace="lakehouse",phase="Active"}'
+        values: '1x80'
+      - series: 'process_start_time_seconds{job="freshness-exporter"}'
+        values: '0x80'
+      - series: 'data_freshness_seconds{job="freshness-exporter",table="bronze.heartbeat"}'
+        values: '20x50 stale _x5 20x20'
+      - series: 'freshness_probe_success{job="freshness-exporter",table="bronze.heartbeat"}'
+        values: '1x50 0x5 1x20'
+      - series: 'freshness_last_success_timestamp{job="freshness-exporter",table="bronze.heartbeat"}'
+        values: '0+30x50 1515x5 1710+30x20'
+    promql_expr_test:
+      - expr: cdc:bronze_heartbeat_stale:minute
+        eval_time: 28m
+        exp_samples: [{labels: 'cdc:bronze_heartbeat_stale:minute', value: 0}]
+
+  # Three failed probes in a row: bad from the third (no success for 180 s), good again once a probe succeeds.
+  - name: a probe failing for 3 minutes makes bad minutes
+    interval: 1m
+    input_series:
+      - series: 'kube_namespace_status_phase{namespace="lakehouse",phase="Active"}'
+        values: '1x60'
+      - series: 'process_start_time_seconds{job="freshness-exporter"}'
+        values: '0x60'
+      - series: 'data_freshness_seconds{job="freshness-exporter",table="bronze.heartbeat"}'
+        values: '20x26 stale _x2 20x30'
+      - series: 'freshness_probe_success{job="freshness-exporter",table="bronze.heartbeat"}'
+        values: '1x26 0x2 1x30'
+      - series: 'freshness_last_success_timestamp{job="freshness-exporter",table="bronze.heartbeat"}'
+        values: '0+60x26 1560x2 1800+60x29'
+    promql_expr_test:
+      - expr: cdc:bronze_heartbeat_stale:minute
+        eval_time: 28m
+        exp_samples: [{labels: 'cdc:bronze_heartbeat_stale:minute', value: 0}]
+      - expr: cdc:bronze_heartbeat_stale:minute
+        eval_time: 29m
+        exp_samples: [{labels: 'cdc:bronze_heartbeat_stale:minute', value: 1}]
+      - expr: cdc:bronze_heartbeat_stale:minute
+        eval_time: 30m
+        exp_samples: [{labels: 'cdc:bronze_heartbeat_stale:minute', value: 0}]
+
   # A fresh `make up`: namespace lakehouse is Active minutes before the exporter process starts and reports
   # process_start_time_seconds, so the exporter's own start-up guard cannot cover that gap.
   - name: no bad minutes and no page while the data profile is still coming up
