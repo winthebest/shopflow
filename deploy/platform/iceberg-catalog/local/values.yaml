@@ -2,9 +2,11 @@
 # new token with their client credentials. Running more replicas needs a shared key secret (authentication.tokenBroker).
 replicaCount: 1
 
+# The heap is JAVA_MAX_MEM_RATIO (base values) of the limit: about 717Mi heap at 1Gi. 768Mi was OOM-killed after
+# about 90 minutes of a long slot (working set ~760Mi, heap capped at ~614Mi); the peak seen was 789Mi.
 resources:
   requests:
     cpu: 100m
     memory: 512Mi
   limits:
-    memory: 768Mi
+    memory: 1Gi
