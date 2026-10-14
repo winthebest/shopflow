@@ -30,7 +30,7 @@ def main() -> None:
     expected = {
         "dbt_build": ("@hourly", {"cdc_epoch_guard", "source_freshness"}),
         "iceberg_maintenance": ("30 3 * * *", {"maintain_bronze", "maintain_silver", "maintain_gold"}),
-        "reconciliation": ("45 4 * * *", {"reconcile"}),
+        "reconciliation": ("45 4 * * *", {"on_time_guard", "reconcile"}),
     }
     if set(bag.dag_ids) != set(expected):
         problems.append(f"DAG ids {sorted(bag.dag_ids)} != {sorted(expected)}")
