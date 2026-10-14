@@ -4,6 +4,9 @@ server:
     query:
       maxMemory: 1GB
 
+# Memory: the heap stays at 1536M (query memory 768MB per node + Trino's 30% heap headroom fit under it); the limit
+# leaves the rest for non-heap memory (metaspace, threads, direct and native buffers). At a 2Gi limit the coordinator
+# sat at ~1.9 GiB at rest and was OOM-killed during dbt runs, so non-heap needs more than 512Mi; 3Gi gives it 1.5Gi.
 coordinator:
   jvm:
     maxHeapSize: 1536M
@@ -15,4 +18,4 @@ coordinator:
       cpu: 250m
       memory: 2Gi
     limits:
-      memory: 2Gi
+      memory: 3Gi

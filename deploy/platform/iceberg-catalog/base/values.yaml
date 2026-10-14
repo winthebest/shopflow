@@ -31,6 +31,10 @@ extraEnv:
     valueFrom: {secretKeyRef: {name: polaris-storage, key: access-key-id}}
   - name: AWS_SECRET_ACCESS_KEY
     valueFrom: {secretKeyRef: {name: polaris-storage, key: secret-access-key}}
+  # Heap = 70% of the container memory limit (the image's run-java.sh default is 80%). Metaspace, threads and
+  # buffers need the rest: at 80% of 768Mi the working set grew past the limit and the pod was OOM-killed.
+  - name: JAVA_MAX_MEM_RATIO
+    value: "70"
 
 advancedConfig:
   quarkus.http.access-log.enabled: true
