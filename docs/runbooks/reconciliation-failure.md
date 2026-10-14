@@ -6,6 +6,11 @@
 | Test | [`data/dbt/tests/generic/reconciles_with_postgres.sql`](../../data/dbt/tests/generic/reconciles_with_postgres.sql) on every silver table |
 | Decision | docs/adr/0413 (silver), 0412 (reconciliation tests, var `reconcile`) |
 
+A scheduled run that starts more than an hour after its interval ended is **skipped**, and the run shows green
+(task `on_time_guard`; the DAG's doc says why). This happens at every cluster start, and also after a scheduler
+outage around 04:45 UTC. That day's check is then lost without a signal: after an outage, trigger `reconciliation`
+by hand. Manual runs always run.
+
 ## What it means
 
 For at least one shop table, silver and Postgres disagree on a row that is not explained by CDC lag: a key on one
