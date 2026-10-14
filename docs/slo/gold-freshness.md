@@ -50,3 +50,8 @@ Sloth's multi-window burn alerts (`GoldFreshnessBurn`): page at 1h/5m or 6h/30m,
   for 2 hours always pages, whether or not the shop has traffic.
 - An hourly run keeps gold green for days; no samples and no alert without profile `batch` or while the exporter
   starts; a stale mart, a failing probe and an absent exporter each give bad minutes.
+
+On a fresh cluster, the 6h, 1d and 3d windows hold only the SLI's short history, which starts 2 hours after
+namespace `airflow` appears. So the ticket fires on the first bad minute (3d/6h above 1%), and the 6h/30m page fires
+after a few bad minutes. Only the 1h/5m page leg behaves as it would with a full history: it fires after 9 bad
+minutes. Measured once on a cluster (ADR 0414): the 1h/5m leg crossed about 99 minutes after the last refresh.

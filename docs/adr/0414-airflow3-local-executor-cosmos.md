@@ -84,5 +84,45 @@ stack plus Trino 483.
     game day A) will measure it.
   - RAM: server 7.84 GB + agent 4.55 GB, about 12.4 GB; namespace `airflow` 0.85 GB. That is above the 11 GB
     budget for shared slots, so `batch` runs as an exclusive slot, like `rt`.
+- Verified on the cluster (P5 slot, 2026-10-13 21:05Z to 2026-10-14 01:04Z, `core,obs-lite,data,batch` at `9fa67e1`,
+  k3d, k6 at 2 checkouts/s; game day 4 ran inside it; 0 host sleeps):
+  - **As deployed at `9fa67e1`, `AirflowDagRunFailed` cannot fire.** The exporter role has no privilege on
+    `dag_run`, so the query `airflow_dag_run` fails ("permission denied for table dag_run") and its series never
+    exists. Only `cnpg_errors_total` shows the failure; `cnpg_collector_last_collection_error` stays 0. Game day 4
+    measured the alert path with a manual GRANT (21:30:06Z): the alert fired 65m09s after the inject. The Gate 3 row
+    "DAG failure → alert" stays open until the durable fix (the migrate Job grants the three columns, #269) is proven
+    live.
+  - **Gold-freshness SLO, first measurement.** `dbt_build` was paused at 23:18:08Z, and the shop had traffic
+    throughout.
+    - The oldest mart's last commit was at 23:13:46Z, so it reached 90 minutes at 00:43:46Z. There were 0 bad minutes
+      before that, and the first bad minute was 00:44:49Z.
+    - `GoldFreshnessBurn` raised the ticket at 00:45:15Z (+1.5 min, 1 bad minute, 3d/6h leg).
+    - The page fired at about 00:51:05Z (+7m20s, 7 bad minutes, 6h/30m leg).
+    - The 1h/5m leg crossed at about 00:53Z (+9m10s, 9 bad minutes).
+    - The SLI counts only 2 hours after namespace `airflow` appears, so both 6h legs held about 100 minutes of history
+      and fired earlier than they would with a full history. The 1h/5m leg had its full window, so it is the
+      representative number: the page came about 99 minutes after the last refresh, within the unit-tested "page by
+      +105 minutes".
+    - After `dbt_build` resumed, gold was good again from 00:57Z, and the 1h/5m leg cleared at 01:01Z.
+  - Two in-place memory resizes by the orchestrator, without restarts:
+    - Polaris 768Mi → 1Gi at 23:47:19Z, before an expected second OOM kill; the gold measurement was otherwise
+      untouched.
+    - The Trino coordinator 2Gi → 3Gi at 00:58:26Z, after its second OOM kill. The reconcile and the deleted-order
+      checks ran after it.
+    - Polaris had been OOM-killed at 22:41:06Z: its working set grew to about 760 MiB, with the JVM at
+      `MaxRAMPercentage=80`. The sink task died with it, and Strimzi restarted it 98 s later.
+    - Trino was OOM-killed at 23:18:46Z and 00:57:19Z: about 1.9 GiB at rest, 2047 MiB at peak. The second kill
+      happened during the checks right after two `dbt_build` runs.
+  - The re-snapshot with deleted orders and the exact reconciliation after it: ADR 0406 (2026-10-14).
+  - Catch-up runs on a fresh cluster. With `dags_are_paused_at_creation` False, the scheduled runs start at
+    bring-up:
+    - `reconciliation` failed before silver existed (21:09Z), which raised a false
+      `AirflowDagRunFailed{reconciliation}` ticket until the next green run.
+    - The first `dbt_build` failed on the `relationships` test from `order_items` to `orders`, because silver
+      `orders` and `order_items` are built in parallel while the sink commits each table separately. A manual run went
+      green.
+  - Each later `dbt_build` took 52-59 s while orders grew from about 6,000 to 26,000.
+  - RAM at the end, with both raised limits: server 7.6 GiB + agent 5.5 GiB. Namespace `airflow` peaked at
+    1.14 GiB; namespace `lakehouse` used 3.0 GiB.
 - When to revisit: tasks need isolation or more parallelism than one scheduler pod gives (KubernetesExecutor), or
   Cosmos breaks on an Airflow upgrade (fall back to `dbt build` in one BashOperator).
