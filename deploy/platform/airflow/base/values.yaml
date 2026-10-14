@@ -96,8 +96,9 @@ migrateDatabaseJob:
   jobAnnotations:
     argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
-  # After the schema change, the read shop-db's monitoring query airflow_dag_run needs (the input of alert
-  # AirflowDagRunFailed): pg_monitor, which the CNPG exporter runs as, may read dag_run's dag_id, state and end_date.
+  # After the migration, grant what shop-db's monitoring query airflow_dag_run reads
+  # (deploy/charts/shop-db/templates/monitoring-queries.yaml; the input of alert AirflowDagRunFailed): pg_monitor, which
+  # the CNPG exporter runs as, may read dag_run's dag_id, state and end_date.
   # The tables belong to airflow, so the grant runs as airflow through Airflow's own engine; GRANT is idempotent and
   # every migrate reapplies it. Widen it here before the query reads another column.
   args:
