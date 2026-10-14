@@ -15,6 +15,7 @@ configMapGenerator:
     namespace: metabase
     files:
       - copy-secret.py
+      - wait-for-source.sh
     options:
       annotations:
         argocd.argoproj.io/sync-wave: "-2"
