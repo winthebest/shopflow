@@ -2,9 +2,11 @@
 
 import asyncio
 import shutil
+from pathlib import Path
 
 import pytest
-from check_contracts import CONTRACTS_DIR, REPO_ROOT, main
+import yaml
+from check_contracts import CONTRACTS_DIR, REPO_ROOT, load_contracts, main
 from sqlalchemy import text
 
 from orders.db import create_engine
@@ -43,6 +45,67 @@ def test_schema_change_without_contract_update_fails(app_database, capsys):
 
     assert main(["--database-url", url]) == 1
     assert "ERROR payments: column provider_ref is in the contract but not in the database" in capsys.readouterr().out
+
+
+ORDERS_VERSION = load_contracts(REPO_ROOT / CONTRACTS_DIR)["orders"].version
+
+
+def contracts_with_orders_column(tmp_path: Path, name: str, version_bump: int) -> Path:
+    """A copy of data/contracts: orders column `customer_id` called `name`, version raised by `version_bump`."""
+    contracts = tmp_path / "contracts"
+    shutil.copytree(REPO_ROOT / CONTRACTS_DIR, contracts)
+    path = contracts / "orders.yaml"
+    raw = yaml.safe_load(path.read_text())
+    raw["version"] += version_bump
+    for column in raw["columns"]:
+        if column["name"] == "customer_id":
+            column["name"] = name
+    path.write_text(yaml.safe_dump(raw, sort_keys=False))
+    return contracts
+
+
+@pytest.mark.parametrize(
+    ("contract_column", "version_bump", "expected_errors"),
+    [
+        (
+            "customer_id",
+            0,
+            [
+                "ERROR orders: column buyer_id is in the database but not in the contract",
+                "ERROR orders: column customer_id is in the contract but not in the database (dropped or renamed?)",
+            ],
+        ),
+        (
+            "buyer_id",
+            0,
+            [
+                f"ERROR orders: breaking change without a version bump (still {ORDERS_VERSION}):"
+                " column customer_id removed or renamed"
+            ],
+        ),
+        ("buyer_id", 1, []),
+    ],
+    ids=["contract-unchanged", "contract-renamed-same-version", "contract-renamed-version-bumped"],
+)
+def test_renamed_column(app_database, tmp_path, capsys, request, contract_column, version_bump, expected_errors):
+    """A migration renames orders.customer_id to buyer_id; the gate runs as in CI, against the committed contracts.
+
+    Contract unchanged: only schema drift (the contract no longer describes the table). Contract renamed, same
+    version: only the missing version bump. Contract renamed and version bumped: the gate passes, although silver
+    still reads customer_id; nothing here checks the consumers.
+    """
+    url = app_database("contracts_" + request.node.callspec.id.replace("-", "_"))
+    assert main(["--database-url", url]) == 0
+    execute(url, "ALTER TABLE orders RENAME COLUMN customer_id TO buyer_id")
+    contracts = contracts_with_orders_column(tmp_path, contract_column, version_bump)
+    capsys.readouterr()
+
+    exit_code = main(["--database-url", url, "--contracts-dir", str(contracts), "--base-ref", "HEAD"])
+    out = capsys.readouterr().out
+    assert [line for line in out.splitlines() if line.startswith("ERROR")] == expected_errors
+    assert exit_code == (1 if expected_errors else 0)
+    if not expected_errors:
+        assert "data contracts OK" in out
 
 
 def test_publication_and_contract_files_must_match(app_database, tmp_path, capsys):

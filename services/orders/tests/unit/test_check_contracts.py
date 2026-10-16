@@ -123,6 +123,22 @@ def test_healthy_database_passes():
     assert check(healthy(), {"orders": ORDERS}) == []
 
 
+def test_renamed_column_is_schema_drift_or_a_breaking_change():
+    """A rename fails as drift while the contract still has the old name, and as unversioned once it has the new one."""
+    renamed = with_column(without(ORDERS, "status"), Column("state", "text", False))
+    db = healthy(tables={"orders": replace(renamed, version=0)})
+    base = {"orders": ORDERS}
+
+    assert check(db, {"orders": ORDERS}, base) == [
+        ("orders", "column state is in the database but not in the contract"),
+        ("orders", "column status is in the contract but not in the database (dropped or renamed?)"),
+    ]
+    assert check(db, {"orders": renamed}, base) == [
+        ("orders", "breaking change without a version bump (still 1): column status removed or renamed"),
+    ]
+    assert check(db, {"orders": replace(renamed, version=2)}, base) == []
+
+
 @pytest.mark.parametrize(
     ("db", "expected"),
     [
