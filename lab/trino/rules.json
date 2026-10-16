@@ -18,6 +18,9 @@
     {"user": "(harness|agent_planner|executor)", "catalog": "system", "privileges": ["SELECT"]},
     {"privileges": []}
   ],
+  "queries": [
+    {"allow": ["execute"]}
+  ],
   "catalog_session_properties": [
     {"property": "(expire_snapshots_min_retention|remove_orphan_files_min_retention)", "allow": false},
     {"allow": true}

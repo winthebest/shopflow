@@ -13,6 +13,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8.4",
+    "requests>=2.32",  # the tests call Trino's REST API directly
     "ruff>=0.14",
 ]
 

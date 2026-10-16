@@ -180,6 +180,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
+    { name = "requests" },
     { name = "ruff" },
 ]
 
@@ -189,6 +190,7 @@ requires-dist = [{ name = "trino", specifier = "==0.340.0" }]
 [package.metadata.requires-dev]
 dev = [
     { name = "pytest", specifier = ">=8.4" },
+    { name = "requests", specifier = ">=2.32" },
     { name = "ruff", specifier = ">=0.14" },
 ]
 

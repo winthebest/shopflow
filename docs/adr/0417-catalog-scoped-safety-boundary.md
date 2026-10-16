@@ -58,6 +58,9 @@ Also found:
 - Polaris refuses Trino's DROP TABLE, which is a purge, unless the catalog sets `polaris.config.drop-with-purge.enabled`
   (`Unable to purge entity …`; off by default, so also on the platform's `lake`).
 - `CALL` procedures are refused for everyone: file-based access control has no `procedures` rule.
+- Without a `queries` section, file-based access control lets every user view and kill every query (found in review,
+  then reproduced on 2026-10-16): `agent_planner` saw `executor`'s running query in `system.runtime.queries` (with its
+  SQL), `GET /v1/query/<id>` answered 200, and `DELETE /v1/query/<id>` answered 204 and the query FAILED.
 
 ## Decision
 
@@ -72,6 +75,8 @@ The boundary is the Trino catalog, and each catalog belongs to one zone:
    refuse `remove_orphan_files`.
 4. Nobody may set `*_min_retention` by session property. Floors: `lab_ops`, `lab_sbx`, `lab_ro` 7d; `lab_exp` 0s.
 5. `drop-with-purge` only on the warehouses where dropping is normal work (`lab_exp`, `lab_sandbox`).
+6. Queries: `"queries": [{"allow": ["execute"]}]`. Everyone may run queries; each identity sees and cancels only its
+   own (owners always may), so no identity reads another's SQL or kills its work.
 
 | Catalog | Identity | Warehouse, bucket | Mode |
 |---|---|---|---|
@@ -80,8 +85,11 @@ The boundary is the Trino catalog, and each catalog belongs to one zone:
 | `lab_ro` | `agent_planner` | `lab_evalprod`, `lab-evalprod` | read only in Trino, Polaris and S3 |
 | `lab_sbx` | `executor` | `lab_sandbox`, `lab-sandbox` | read/write, floors 7d, drop allowed |
 
-`lakeops/tests/test_deny_matrix.py` checks it: 3 identities × 4 catalogs × 15 operations plus the catalog listing
-(181 tests passed on a fresh stack, 2026-10-16 14:48Z, 52 s). The `lab_base_<run>` catalogs come with the harness.
+`lakeops/tests/test_deny_matrix.py` checks it: 3 identities × 4 catalogs × 15 operations, the catalog listing, and
+query isolation (for every pair of identities, the viewer finds no row in `system.runtime.queries` for the owner's
+running query and gets 403 from `GET` and `DELETE /v1/query/<id>`, while the owner gets 200 and 204; each identity
+sees only its own queries). 190 tests passed on a fresh stack, 2026-10-16 15:07Z, 66 s; the 9 query tests failed
+before the `queries` rule. The `lab_base_<run>` catalogs come with the harness.
 
 ## Alternatives considered
 
@@ -95,7 +103,7 @@ The boundary is the Trino catalog, and each catalog belongs to one zone:
 ## Consequences
 
 - Positive: three independent layers for `agent_planner`, each measured; the matrix fails if a rule, a catalog
-  property or a Trino upgrade changes any of the 180 outcomes.
+  property or a Trino upgrade changes any of the 180 catalog outcomes or the query isolation.
 - Negative / risks: four catalogs with near-identical properties and one credential pair per zone. Schema and table
   names leak across catalogs through error messages; contents and listings do not.
 - Platform: the findings confirm ADR 0410's three layers for `lake_ro` (the RO key covers `remove_orphan_files`), and

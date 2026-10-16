@@ -7,15 +7,18 @@ The boundary is the catalog (docs/adr/0417-catalog-scoped-safety-boundary.md):
 - no identity may set the *_min_retention session properties, and the 7d floors of lab_ops, lab_sbx and lab_ro
   reject shorter procedure thresholds;
 - CALL procedures are refused for everyone (no `procedures` rule), and Polaris refuses Trino's DROP TABLE (a purge)
-  on the evaluation warehouse, where drop-with-purge stays off.
+  on the evaluation warehouse, where drop-with-purge stays off;
+- an identity sees and cancels only its own queries (`queries` rule): without it, any identity could read another's
+  SQL in system.runtime.queries and kill it through the REST API.
 Each case gets a fresh table (CREATE + 2 INSERTs = 3 snapshots), created by the zone's writer.
 """
 
+import time
 import uuid
 
 import pytest
 import trino
-from lab_trino import connect, query
+from lab_trino import connect, query, rest
 
 pytestmark = pytest.mark.lab
 
@@ -134,3 +137,53 @@ def test_each_identity_sees_only_its_catalogs(lab) -> None:
         "agent_planner": {"lab_ro", "system"},
         "executor": {"lab_ops", "lab_sbx", "system"},
     }
+
+
+# A query that stays RUNNING while its client does not fetch: 10^8 rows fill the output buffer and Trino waits.
+SLOW = "SELECT x FROM UNNEST(sequence(1, 10000)) a(x) CROSS JOIN UNNEST(sequence(1, 10000)) b(y)"
+
+
+def state(user: str, query_id: str) -> str | None:
+    rows = query(connect(user), f"SELECT state FROM system.runtime.queries WHERE query_id = '{query_id}'")
+    return rows[0][0] if rows else None
+
+
+@pytest.fixture
+def running_query(lab):
+    """start(owner) -> id of a RUNNING query of `owner`; every query started is cancelled afterwards."""
+    started = []
+
+    def start(owner: str) -> str:
+        cur = connect(owner).cursor()
+        cur.execute(SLOW)
+        started.append((owner, cur.query_id))
+        deadline = time.monotonic() + 30
+        while state(owner, cur.query_id) != "RUNNING":
+            assert time.monotonic() < deadline, f"query {cur.query_id} did not reach RUNNING"
+            time.sleep(0.5)
+        return cur.query_id
+
+    yield start
+    for owner, query_id in started:
+        rest(owner, "DELETE", f"/v1/query/{query_id}")
+
+
+@pytest.mark.parametrize(("viewer", "owner"), [(v, o) for v in IDENTITIES for o in IDENTITIES if v != o])
+def test_another_identity_cannot_see_or_cancel_a_query(running_query, viewer: str, owner: str) -> None:
+    query_id = running_query(owner)
+    seen = query(connect(viewer), f"SELECT count(*) FROM system.runtime.queries WHERE query_id = '{query_id}'")
+    assert seen == [[0]]
+    assert rest(viewer, "GET", f"/v1/query/{query_id}").status_code == 403
+    assert rest(viewer, "DELETE", f"/v1/query/{query_id}").status_code == 403
+    assert state(owner, query_id) == "RUNNING"
+    # The owner still can (control).
+    assert rest(owner, "GET", f"/v1/query/{query_id}").status_code == 200
+    assert rest(owner, "DELETE", f"/v1/query/{query_id}").status_code == 204
+
+
+@pytest.mark.parametrize("identity", IDENTITIES)
+def test_each_identity_sees_only_its_own_queries(lab, identity: str) -> None:
+    for other in IDENTITIES:  # every identity has a query in the history
+        query(connect(other), "SELECT 1")
+    users = {row[0] for row in query(connect(identity), 'SELECT DISTINCT "user" FROM system.runtime.queries')}
+    assert users == {identity}

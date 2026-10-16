@@ -18,6 +18,8 @@
 #   lab_ro   agent_planner   warehouse lab_evalprod  bucket lab-evalprod  read only (Trino, Polaris and S3)
 #   lab_sbx  executor        warehouse lab_sandbox   bucket lab-sandbox   read/write, floors 7d
 # Nobody may set the *_min_retention session properties. Every other catalog is `allow: none` for every identity.
+# Each identity sees and cancels only its own queries (rules.json `queries`; without that section Trino lets every
+# user view and kill every query).
 # Needs docker compose, openssl, htpasswd, jq.
 set -euo pipefail
 
@@ -155,7 +157,12 @@ case "${1:-}" in
   down) if [[ -f "$RUN/.env" ]]; then compose --profile '*' down --remove-orphans; fi ;;
   reset)
     if [[ -f "$RUN/.env" ]]; then compose --profile '*' down -v --remove-orphans; fi
-    rm -rf "$RUN"
+    # Deletes only a run directory this script made, or one under out/: a mistyped LAB_RUN_DIR stays untouched.
+    if [[ -e "$RUN" ]]; then
+      [[ "$RUN" == "$REPO/out/"?* ]] || grep -q '^LAB_MODE=' "$RUN/.env" 2> /dev/null \
+        || die "refusing to delete $RUN: not under $REPO/out and not a lab run directory"
+      rm -rf "$RUN"
+    fi
     ;;
   mem)
     ids="$(compose ps -q)"
