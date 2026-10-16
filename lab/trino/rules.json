@@ -1,0 +1,25 @@
+{
+  "catalogs": [
+    {"user": "harness", "catalog": "lab_exp", "allow": "all"},
+    {"user": "agent_planner", "catalog": "lab_ro", "allow": "read-only"},
+    {"user": "executor", "catalog": "(lab_ops|lab_sbx)", "allow": "all"},
+    {"user": "(harness|agent_planner|executor)", "catalog": "system", "allow": "read-only"},
+    {"catalog": ".*", "allow": "none"}
+  ],
+  "schemas": [
+    {"user": "harness", "catalog": "lab_exp", "schema": ".*", "owner": true},
+    {"user": "executor", "catalog": "(lab_ops|lab_sbx)", "schema": ".*", "owner": true},
+    {"catalog": ".*", "schema": ".*", "owner": false}
+  ],
+  "tables": [
+    {"user": "harness", "catalog": "lab_exp", "privileges": ["SELECT", "INSERT", "DELETE", "UPDATE", "OWNERSHIP"]},
+    {"user": "executor", "catalog": "(lab_ops|lab_sbx)", "privileges": ["SELECT", "INSERT", "DELETE", "UPDATE", "OWNERSHIP"]},
+    {"user": "agent_planner", "catalog": "lab_ro", "privileges": ["SELECT"]},
+    {"user": "(harness|agent_planner|executor)", "catalog": "system", "privileges": ["SELECT"]},
+    {"privileges": []}
+  ],
+  "catalog_session_properties": [
+    {"property": "(expire_snapshots_min_retention|remove_orphan_files_min_retention)", "allow": false},
+    {"allow": true}
+  ]
+}

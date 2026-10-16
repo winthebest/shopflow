@@ -1,0 +1,35 @@
+# Standalone uv project (not a member of the shop services workspace): lakehouse operations shared by the lab and,
+# later, production (snapshots, fingerprints, features). For now it holds the safety-boundary tests that run against
+# the lab stack (lab/stack.sh up).
+[project]
+name = "lakeops"
+version = "0.1.0"
+description = "Lakehouse operations and their safety boundary, tested on the lab stack"
+requires-python = ">=3.12"
+dependencies = [
+    "trino==0.340.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4",
+    "ruff>=0.14",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S608"]  # SQL in tests uses constant names and ids the test created
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--import-mode=importlib", "-ra", "--strict-markers"]
+pythonpath = ["tests"]  # tests import their helper module lab_trino
+markers = [
+  "lab: needs the lab stack running (lab/stack.sh up); skipped when it is not",
+]

@@ -33,6 +33,8 @@ on:
       - scripts/data-*.sh
       - scripts/cdc-epoch.sh
       - mk/data.mk
+      - lab/**
+      - lakeops/**
       - .github/workflows/data-ci.yml
   push:
     branches: [main]
@@ -78,7 +80,7 @@ jobs:
         run: make data-metabase-test
 
       - name: shellcheck (sf-data scripts)
-        run: shellcheck scripts/data-*.sh scripts/cdc-epoch.sh images/kafka-connect/*.sh images/kafka-connect/smoke/*.sh deploy/platform/metabase/base/*.sh
+        run: shellcheck scripts/data-*.sh scripts/cdc-epoch.sh images/kafka-connect/*.sh images/kafka-connect/smoke/*.sh deploy/platform/metabase/base/*.sh lab/*.sh lab/spike/*.sh
 
   freshness-exporter:
     runs-on: ubuntu-24.04

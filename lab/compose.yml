@@ -1,0 +1,127 @@
+# Lakehouse lab: the platform's query path in docker compose, outside k3d, on its own warehouses.
+#   Trino 483 (same digest as deploy/platform/trino) ─ Polaris 1.8.0 (same as deploy/platform/iceberg-catalog,
+#   metadata in Postgres) ─ SeaweedFS 4.48 (same as deploy/platform/seaweedfs, buckets lab-*, never `lake`).
+# Run it through lab/stack.sh: it generates the credentials into $LAB_RUN_DIR (out/lab, gitignored, mode 0700),
+# renders the Trino rules and catalogs there, and starts the services in order. Only Trino HTTPS is published,
+# on 127.0.0.1:28443 (docs/contracts/environment.md). Memory limits of the long-running services add up to 4.8 GiB
+# (4.9 GiB with the spike overlay's OPA).
+name: shopflow-lab
+
+services:
+  catalog-db:
+    image: postgres:17.11@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
+    environment:
+      POSTGRES_PASSWORD: ${CATALOG_DB_SUPERUSER_PASSWORD:?run via lab/stack.sh}
+    volumes:
+      - catalog-db:/var/lib/postgresql/data
+      # Role polaris owns database catalog and its schema polaris_schema (rendered by stack.sh: it holds a password).
+      - ${LAB_RUN_DIR:?run via lab/stack.sh}/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # TCP, not the socket: the init-time server listens on the socket only, before the init scripts finish.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "polaris", "-d", "catalog"]
+      interval: 2s
+      retries: 30
+    mem_limit: 256m
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    # Same flags as deploy/platform/seaweedfs. One bucket per zone, so each S3 identity can be limited to one bucket.
+    command: ["mini", "-dir=/data", "-s3.config=/etc/seaweedfs/s3.json", "-bucket=${LAB_BUCKETS:?run via lab/stack.sh}",
+              "-s3.port.iceberg=0", "-webdav=false", "-admin.ui=false", "-master.telemetry=false"]
+    user: "1000:1000"
+    volumes:
+      - seaweedfs:/data
+      - ${LAB_RUN_DIR}/seaweedfs:/etc/seaweedfs:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8333/healthz > /dev/null"]
+      interval: 3s
+      retries: 40
+    # 363 MiB peak under a 384m limit during the boundary spike (2026-10-16); the platform sets no limit.
+    mem_limit: 768m
+
+  # Creates the realm and its root principal in the metastore; a second run finds it bootstrapped and exits 0.
+  polaris-bootstrap:
+    image: apache/polaris-admin-tool:1.8.0@sha256:34dde19bb321aef5925a14ba90b69e26e982a5dcbda76a9d0cfc1aac1534ba4e
+    command: ["bootstrap", "--realm=POLARIS", "--credential=POLARIS,root,${POLARIS_ROOT_SECRET:?run via lab/stack.sh}"]
+    environment: &polaris-persistence
+      polaris.persistence.type: relational-jdbc
+      quarkus.datasource.jdbc.url: jdbc:postgresql://catalog-db:5432/catalog
+      quarkus.datasource.jdbc.additional-jdbc-properties.currentSchema: polaris_schema
+      quarkus.datasource.username: polaris
+      quarkus.datasource.password: ${POLARIS_DB_PASSWORD:?run via lab/stack.sh}
+    depends_on:
+      catalog-db: {condition: service_healthy}
+    restart: "no"
+    mem_limit: 512m
+
+  polaris:
+    image: apache/polaris:1.8.0@sha256:347615e736cab2c9be0d8c464552ac930be4755302bb0aeb745216bbae99ba5b
+    environment:
+      <<: *polaris-persistence
+      polaris.realm-context.realms: POLARIS
+      # With stsUnavailable the server writes metadata through the AWS SDK default chain (as in the chart values).
+      AWS_ACCESS_KEY_ID: ${POLARIS_S3_ACCESS_KEY:?run via lab/stack.sh}
+      AWS_SECRET_ACCESS_KEY: ${POLARIS_S3_SECRET_KEY:?run via lab/stack.sh}
+      AWS_REGION: us-east-1
+      # Same heap share as the platform (deploy/platform/iceberg-catalog/base/values.yaml).
+      JAVA_MAX_MEM_RATIO: "70"
+      quarkus.otel.sdk.disabled: "true"
+    depends_on:
+      polaris-bootstrap: {condition: service_completed_successfully}
+      seaweedfs: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8182/q/health > /dev/null"]
+      interval: 3s
+      retries: 40
+    mem_limit: 768m
+
+  trino:
+    image: trinodb/trino:483@sha256:db58cc93e593a2706553745f276bb119c9810e69918be56ecde088ba7ccb0534
+    environment:
+      TRINO_INTERNAL_SHARED_SECRET: ${TRINO_INTERNAL_SHARED_SECRET:?run via lab/stack.sh}
+      LAB_ACCESS_CONTROL_FILES: ${LAB_ACCESS_CONTROL_FILES:-/etc/trino/access-control.properties}
+    # Catalog credentials: S3 keys from stack.sh, Polaris principals from polaris-setup.py.
+    env_file:
+      - path: ${LAB_RUN_DIR}/trino.env
+        required: true
+      - path: ${LAB_RUN_DIR}/polaris.env
+        required: false
+    volumes:
+      - ./trino/etc/config.properties:/etc/trino/config.properties:ro
+      - ./trino/etc/jvm.config:/etc/trino/jvm.config:ro
+      - ./trino/etc/node.properties:/etc/trino/node.properties:ro
+      - ./trino/etc/password-authenticator.properties:/etc/trino/password-authenticator.properties:ro
+      - ./trino/etc/access-control.properties:/etc/trino/access-control.properties:ro
+      # Rendered by stack.sh: rules.json, the catalog files, password.db (bcrypt) and the TLS key + certificate.
+      - ${LAB_RUN_DIR}/trino/rules.json:/etc/trino/rules.json:ro
+      - ${LAB_RUN_DIR}/trino/catalog:/etc/trino/catalog:ro
+      - ${LAB_RUN_DIR}/trino/password.db:/etc/trino/password.db:ro
+      - ${LAB_RUN_DIR}/trino/tls:/etc/trino/tls:ro
+    ports: ["127.0.0.1:28443:8443"]
+    depends_on:
+      polaris: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "/usr/lib/trino/bin/health-check"]
+      interval: 5s
+      retries: 60
+    # Pinned like the platform's coordinator: 1536M heap (jvm.config) under a 3 GiB limit, 2 CPUs.
+    mem_limit: 3g
+    cpus: 2
+
+  # One-off helper (docker compose run --rm setup ...): Polaris catalogs, principals and grants.
+  setup:
+    profiles: [tools]
+    image: python:3.12-slim@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f
+    working_dir: /lab
+    environment:
+      POLARIS_URL: http://polaris:8181
+      POLARIS_ROOT_SECRET: ${POLARIS_ROOT_SECRET}
+      S3_ENDPOINT: http://seaweedfs:8333
+      OUTPUT_ENV_FILE: /run/lab/polaris.env
+    volumes:
+      - .:/lab:ro
+      - ${LAB_RUN_DIR}:/run/lab
+
+volumes:
+  catalog-db:
+  seaweedfs:

@@ -1,0 +1,6 @@
+# Lab tooling: the repository's rules (pyproject.toml), plus one exception for the spike probes, which build SQL from
+# constants and the table names they created, and run docker compose with fixed arguments.
+extend = "../pyproject.toml"
+
+[lint.per-file-ignores]
+"spike/**" = ["S603", "S608"]
