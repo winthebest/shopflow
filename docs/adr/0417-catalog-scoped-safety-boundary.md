@@ -61,6 +61,10 @@ Also found:
 - Without a `queries` section, file-based access control lets every user view and kill every query (found in review,
   then reproduced on 2026-10-16): `agent_planner` saw `executor`'s running query in `system.runtime.queries` (with its
   SQL), `GET /v1/query/<id>` answered 200, and `DELETE /v1/query/<id>` answered 204 and the query FAILED.
+- The other defaults of the file-based rules, checked as `agent_planner` the same day: impersonating `executor`, table
+  functions (`table_changes`), `CALL system.runtime.kill_query` and `ALTER SCHEMA … SET AUTHORIZATION` are refused;
+  system session properties (`SET SESSION query_max_memory = …`) and `system.runtime.nodes` are open to everyone.
+  Those set resources and show the node, not data; they stay open here.
 
 ## Decision
 
