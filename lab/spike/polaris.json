@@ -1,0 +1,21 @@
+{
+  "catalogs": [
+    {"name": "spike", "location": "s3://lab-spike/warehouse",
+     "properties": {"polaris.config.drop-with-purge.enabled": "true"}, "namespaces": [["probe"], ["granted"], ["ungranted"]]}
+  ],
+  "principals": [
+    {"name": "spike_admin", "catalog": "spike",
+     "grants": [{"on": {"type": "catalog"}, "privileges": ["CATALOG_MANAGE_CONTENT"]}]},
+    {"name": "spike_reader", "catalog": "spike",
+     "grants": [{"on": {"type": "catalog"}, "privileges": ["NAMESPACE_LIST", "NAMESPACE_READ_PROPERTIES", "TABLE_LIST",
+                                                         "TABLE_READ_PROPERTIES", "TABLE_READ_DATA"]}]},
+    {"name": "spike_ns", "catalog": "spike",
+     "grants": [
+       {"on": {"type": "namespace", "namespace": ["granted"]},
+        "privileges": ["NAMESPACE_READ_PROPERTIES", "TABLE_LIST", "TABLE_READ_PROPERTIES", "TABLE_READ_DATA",
+                       "TABLE_WRITE_DATA", "TABLE_WRITE_PROPERTIES", "TABLE_CREATE", "TABLE_DROP"]},
+       {"on": {"type": "namespace", "namespace": ["ungranted"]},
+        "privileges": ["NAMESPACE_READ_PROPERTIES", "TABLE_LIST", "TABLE_READ_PROPERTIES", "TABLE_READ_DATA"]}
+     ]}
+  ]
+}
