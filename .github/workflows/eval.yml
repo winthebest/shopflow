@@ -1,5 +1,6 @@
 # Agent and eval CI: never calls an LLM API and holds no API key. The provider contract runs against fakes that
-# reject like the real backends; the live tests (Claude API, local Ollama) skip and say why in the -ra summary.
+# reject like the real backends, recorded LLM calls replay from cassettes (evals/replay.py), and the live tests
+# (Claude API, local Ollama) skip and say why in the -ra summary. Golden guard decisions join when the guard exists.
 # Same supply-chain rules as ci.yml: actions pinned to full SHAs, least-privilege permissions per job, no cache.
 name: eval
 
@@ -45,9 +46,9 @@ jobs:
           enable-cache: false
       - name: Install agent project (locked)
         run: uv sync --locked
-      - name: ruff
+      - name: ruff (agent/ and evals/)
         run: |
-          uv run ruff check --output-format=github .
-          uv run ruff format --check .
-      - name: pytest (live Claude and Ollama tests skip here; the summary lists why)
+          uv run ruff check --output-format=github . ../evals
+          uv run ruff format --check . ../evals
+      - name: pytest (provider contract and LLM replay; live Claude and Ollama tests skip, the summary lists why)
         run: uv run pytest

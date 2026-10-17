@@ -5,3 +5,12 @@ title = "shopflow"
 
 [extend]
 useDefault = true
+
+# Discord webhook URLs carry their own token: whoever has the URL can post to the channel. The default ruleset does
+# not catch them (gitleaks 8.30.1, checked 2026-10-18 with a random 68-character token). Alertmanager and eval
+# cassettes are where one could leak (evals/replay.py redacts them before recording).
+[[rules]]
+id = "discord-webhook-url"
+description = "Discord webhook URL: the last path segment is the webhook's token"
+regex = '''https://(?:(?:ptb|canary)\.)?discord(?:app)?\.com/api/webhooks/[0-9]{17,20}/[A-Za-z0-9_-]{60,100}'''
+keywords = ["discord"]
