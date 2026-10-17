@@ -232,10 +232,10 @@ Pending: at least one, from the dev or held-out runs.
 
 ## How to rerun
 
-The unit tests, with no lab needed:
+The unit tests need no lab. They run in `make lab-check` (CI job `lab`), or alone:
 
 ```sh
-uv run --project lakeops pytest lab/experiments/e7_concurrency
+cd lab && uv run --frozen pytest experiments/e7_concurrency
 ```
 
 Runs on the lab: pending the runner.

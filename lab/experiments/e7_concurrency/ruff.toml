@@ -1,5 +1,0 @@
-# The lab's rules. lab/ruff.toml's per-file-ignores replace the repository's, so the tests' exception is restated.
-extend = "../../ruff.toml"
-
-[lint]
-extend-per-file-ignores = { "tests/**" = ["S101"] }
