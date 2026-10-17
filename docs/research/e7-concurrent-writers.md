@@ -162,6 +162,10 @@ Each oracle rule was also removed in turn, and each removal made the correspondi
   - **OPTIMIZE per partition**, skipping the partitions being written.
   - Iceberg `commit.retry.*`, if Trino honours them (question 3).
 - Both arms process the same op stream, from the same seed.
+- The method is `lakeops.writes` (`write`, `insert_if_absent`, `add_once`) plus the arm in `method.py`. Its starting
+  parameters (5 attempts, backoff 0.1–3 s with full jitter, 60 s to settle an attempt, polled every 0.5 s) are tuned
+  on dev and frozen before held-out. It is correct when two things hold: every statement is idempotent, and no two
+  attempts of one write run at once. Then a write lands at most once, whatever the errors say.
 
 ## Contention levels and the dev / held-out split
 

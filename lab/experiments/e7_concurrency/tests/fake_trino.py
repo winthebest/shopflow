@@ -27,10 +27,14 @@ class FakeCursor:
     def fetchall(self) -> list:
         return self._rows
 
+    def cancel(self) -> None:
+        self.conn.cancelled.append(self.query_id)
+
 
 class FakeConnection:
     def __init__(self, respond: Respond = lambda _statement: [[1]]) -> None:
         self.statements: list[str] = []
+        self.cancelled: list[str | None] = []
         self.respond = respond
 
     def cursor(self) -> FakeCursor:
