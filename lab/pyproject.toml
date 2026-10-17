@@ -1,0 +1,34 @@
+# Standalone uv project (not a member of the shop services workspace): the research harness that runs experiments on
+# the lab stack (lab/compose.yml, lab/stack.sh). Package lab in src/lab/; it builds on lakeops (../lakeops).
+# Experiments live in experiments/ and run inside this project (`uv run --project lab …`).
+[project]
+name = "lab"
+version = "0.1.0"
+description = "Research harness for lakehouse experiments on the lab stack"
+requires-python = ">=3.12"
+dependencies = [
+    "lakeops",
+    "requests>=2.32",
+    "trino==0.340.0",
+]
+
+[tool.uv.sources]
+lakeops = { path = "../lakeops", editable = true }
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4",
+    "pyyaml>=6.0",  # tests read lab/compose.yml and the platform's manifests
+    "ruff>=0.14",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "experiments"]
+addopts = ["--import-mode=importlib", "-ra", "--strict-markers"]
+markers = [
+  "lab: needs the lab stack running (lab/stack.sh up); skipped when it is not, failed when LAB_REQUIRED=1",
+]
