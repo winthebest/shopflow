@@ -11,6 +11,7 @@ import requests
 import trino
 
 from lab.guard import check_table, guarded_connect
+from lab.runner import RunContext
 from lab.session import ArmSession
 from lab.trino_client import Settings, query
 
@@ -93,3 +94,23 @@ def test_the_floors_hold_in_simulated_days(lab: Settings):
     finally:
         session.execute(f"DROP TABLE {table}")
         session.execute("DROP SCHEMA lab_sbx.time_probe")
+
+
+def test_a_run_context_logs_sessions_and_captures_as_observer(lab: Settings, tmp_path):
+    context = RunContext("e0_toy", "dev", "r_live", 0, bundle=tmp_path / "r_live-x", settings=lab)
+    harness = context.session("harness")
+    namespace = f"capture_probe_{int(time.time())}"
+    harness.execute(f"CREATE SCHEMA lab_exp.{namespace}")
+    harness.execute(f"CREATE TABLE lab_exp.{namespace}.t (id bigint) WITH (format_version = 2)")
+    harness.execute(f"INSERT INTO lab_exp.{namespace}.t VALUES (1), (2)")
+    try:
+        entry = context.capture("after:probe", "lab_exp", namespace)
+        assert (entry["read_catalog"], entry["tables"]["t"]["rows"]) == ("lab_exp_ro", 2)
+        logged = [json.loads(line) for line in (tmp_path / "r_live-x.statements.jsonl").read_text().splitlines()]
+        assert [(r["identity"], r["state"]) for r in logged] == [("harness", "FINISHED")] * 3
+        assert logged[2]["rows"] == 2
+        users = query(guarded_connect("harness", settings=lab), 'SELECT DISTINCT "user" FROM system.runtime.queries')
+        assert users == [["harness"]]  # the observer's capture is not in the harness's view
+    finally:
+        harness.execute(f"DROP TABLE lab_exp.{namespace}.t")
+        harness.execute(f"DROP SCHEMA lab_exp.{namespace}")

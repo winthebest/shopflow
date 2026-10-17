@@ -1,0 +1,5 @@
+# Toy experiment (lab/experiments/e0_toy): n and the known sum 1 + … + n.
+scenarios:
+  - {id: d1, n: 10, expected: 55}
+  - {id: d2, n: 100, expected: 5050}
+  - {id: d3, n: 1, expected: 1}

@@ -1,7 +1,8 @@
 # Lakehouse lab targets (docs/contracts/environment.md: `lab-*`, sf-data). The stack is docker compose, outside k3d:
 # lab/compose.yml through lab/stack.sh (docs/adr/0419-lab-stack-separate-from-platform.md).
 
-.PHONY: lab-up lab-down lab-reset lab-base lab-base-drop lab-py lab-mem lab-test lab-check lab-report
+.PHONY: lab-up lab-down lab-reset lab-base lab-base-drop lab-py lab-mem lab-test lab-check lab-report lab-freeze \
+	lab-run lab-ledger lab-publish-holdout
 
 lab-up: ## Start the lab stack: Trino https://127.0.0.1:28443, OTLP 127.0.0.1:24317/24318 (limits 4.9 GiB)
 	lab/stack.sh up
@@ -48,3 +49,19 @@ lab-report: ## README tables and chart of one split's results (EXP=…, SPLIT=de
 .PHONY: lab-noise
 lab-noise: ## Measure the lab's noise floor: A/A comparisons of two queries (RUNS=25), written to lab/results/e0_noise
 	cd lab && uv run --frozen python -m lab.noise $(if $(RUNS),--runs $(RUNS))
+
+# Experiments (docs/research/protocol.md): dev runs at will; the held-out split once, from frozen code.
+lab-freeze: ## Freeze an experiment's code before its held-out run (EXP=…; writes lab/freezes/<EXP>.json)
+	@test -n "$(EXP)" || { echo "usage: make lab-freeze EXP=<experiment>"; exit 2; }
+	cd lab && uv run --frozen python -m lab.runner freeze $(EXP)
+
+lab-run: ## Run an experiment (EXP=…, SPLIT=dev|holdout, SEED=0; RERUN_REASON=… only after an infra failure)
+	@test -n "$(EXP)" && test -n "$(SPLIT)" || { echo "usage: make lab-run EXP=<experiment> SPLIT=dev|holdout"; exit 2; }
+	cd lab && uv run --frozen python -m lab.runner run $(EXP) $(SPLIT) --seed $(or $(SEED),0) \
+		$(if $(RERUN_REASON),--rerun-after-infra-failure "$(RERUN_REASON)")
+
+lab-ledger: ## Every held-out attempt of an experiment, for its README (EXP=…)
+	cd lab && uv run --frozen python -m lab.runner ledger $(EXP)
+
+lab-publish-holdout: ## After the held-out run finished: write the decrypted held-out scenarios (EXP=…; the age key)
+	cd lab && uv run --frozen python -m lab.runner publish $(EXP)
