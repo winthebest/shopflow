@@ -28,6 +28,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "experiments"]
+pythonpath = ["experiments"]  # each experiment is a package (e.g. `import e7_concurrency.oplog`)
 addopts = ["--import-mode=importlib", "-ra", "--strict-markers"]
 markers = [
   "lab: needs the lab stack running (lab/stack.sh up); skipped when it is not, failed when LAB_REQUIRED=1",
