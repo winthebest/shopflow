@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from opentelemetry import metrics, trace
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
-from opentelemetry.trace import Status, StatusCode
+from opentelemetry.trace import Link, Status, StatusCode
 
 from agent import instruments
 from agent.llm.base import ToolCall, Turn
@@ -94,7 +94,7 @@ OUTCOMES = ("executed", "approved", "blocked", "clarified", "failed", "invalid")
 
 
 class ContentFreeExporter(SpanExporter):
-    """Exports only allowlisted attributes, no events, and no status description, whatever the span carried."""
+    """Exports only allowlisted attributes, no events, no link attributes and no status description."""
 
     def __init__(self, exporter: SpanExporter) -> None:
         self.exporter = exporter
@@ -117,7 +117,7 @@ def _content_free(span: ReadableSpan) -> ReadableSpan:
         resource=span.resource,
         attributes={k: v for k, v in (span.attributes or {}).items() if k in ALLOWED_ATTRIBUTES},
         events=(),
-        links=span.links,
+        links=tuple(Link(link.context) for link in span.links),  # a link's attributes are content too
         kind=span.kind,
         status=Status(span.status.status_code),
         start_time=span.start_time,

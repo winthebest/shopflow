@@ -11,7 +11,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.semconv._incubating.attributes import gen_ai_attributes as semconv
-from opentelemetry.trace import Status, StatusCode
+from opentelemetry.trace import Link, Status, StatusCode
 
 from agent import instruments, tracing
 from agent.llm.base import ToolCall, ToolResult, ToolSpec
@@ -128,6 +128,18 @@ def test_the_exporter_drops_content_set_by_mistake(telemetry):
     exported = spans.get_finished_spans()[0]
     assert (dict(exported.attributes), exported.events, exported.status.description) == ({}, (), None)
     assert exported.status.status_code is StatusCode.ERROR
+
+
+def test_links_keep_their_target_but_lose_their_attributes(telemetry):
+    telemetry, spans, _ = telemetry
+    with telemetry.tracer.start_as_current_span("invoke_agent lakehouse-operator") as earlier:
+        pass
+    link = Link(earlier.get_span_context(), {"reason": f"retry of {MARKER}"})
+    with telemetry.tracer.start_as_current_span("invoke_agent lakehouse-operator", links=[link]):
+        pass
+    (exported_link,) = spans.get_finished_spans()[1].links
+    assert exported_link.context == earlier.get_span_context()
+    assert dict(exported_link.attributes or {}) == {}
 
 
 def test_a_failing_tool_records_the_error_class_only(telemetry):
