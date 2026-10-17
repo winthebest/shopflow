@@ -15,7 +15,6 @@ FAKE_CLI = Path(__file__).with_name("fake_cli.py")
 FAKED_TOOLS = ("aws", "tofu", "kubectl", "helm", "gh", "curl", "uv", "openssl", "htpasswd")
 ACCOUNT = "123456789012"
 OPERATOR_ARN = f"arn:aws:sts::{ACCOUNT}:assumed-role/shopflow-operator/me"
-REAPER_ARN = f"arn:aws:sts::{ACCOUNT}:assumed-role/shopflow-reaper/GitHubActions"
 NOT_FOUND = "\nAn error occurred ({code}) when calling the {op} operation: not found\n"
 
 # Operations that change something, per tool. Used to prove dry-run is read-only.

@@ -7,20 +7,20 @@ mock_provider "aws" {
   mock_resource "aws_iam_policy" {
     defaults = { arn = "arn:aws:iam::123456789012:policy/mock" }
   }
-  mock_resource "aws_iam_openid_connect_provider" {
-    defaults = { arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com" }
-  }
   mock_resource "aws_s3_bucket" {
     defaults = { arn = "arn:aws:s3:::mock" }
   }
   mock_resource "aws_sns_topic" {
-    defaults = { arn = "arn:aws:sns:ap-southeast-1:123456789012:shopflow-alerts" }
+    defaults = { arn = "arn:aws:sns:ap-southeast-2:123456789012:shopflow-alerts" }
   }
   mock_resource "aws_cloudwatch_log_group" {
-    defaults = { arn = "arn:aws:logs:ap-southeast-1:123456789012:log-group:mock" }
+    defaults = { arn = "arn:aws:logs:ap-southeast-2:123456789012:log-group:mock" }
+  }
+  mock_resource "aws_sqs_queue" {
+    defaults = { arn = "arn:aws:sqs:ap-southeast-2:123456789012:shopflow-reaper-dlq" }
   }
   mock_resource "aws_lambda_function" {
-    defaults = { arn = "arn:aws:lambda:ap-southeast-1:123456789012:function:shopflow-reaper" }
+    defaults = { arn = "arn:aws:lambda:ap-southeast-2:123456789012:function:shopflow-reaper" }
   }
   mock_resource "aws_ce_anomaly_monitor" {
     defaults = { arn = "arn:aws:ce::123456789012:anomalymonitor/mock" }
@@ -52,7 +52,7 @@ run "every_role_carries_the_boundary" {
 
   assert {
     # operator, eks cluster/node, ci-plan, reaper, budget action, 7 pod roles, 6 ESO namespace roles, Lambda + scheduler
-    condition     = length(output.role_boundaries) == 21
+    condition     = length(output.role_boundaries) == 19
     error_message = "A role was added without being listed in role_boundaries."
   }
 }
@@ -63,8 +63,8 @@ run "boundary_keeps_work_in_one_region_and_protects_guardrails" {
   assert {
     condition = one([
       for s in jsondecode(aws_iam_policy.boundary.policy).Statement : s.Condition.StringNotEquals["aws:RequestedRegion"] if s.Sid == "DenyOtherRegions"
-    ]) == ["ap-southeast-1"]
-    error_message = "Everything outside ap-southeast-1 is denied."
+    ]) == ["ap-southeast-2"]
+    error_message = "Everything outside ap-southeast-2 is denied."
   }
 
   assert {
@@ -118,8 +118,8 @@ run "operator_is_fenced" {
   }
 
   assert {
-    condition     = strcontains(jsonencode(jsondecode(aws_iam_role.operator.assume_role_policy).Statement[0].Condition.ArnLike["aws:PrincipalArn"]), "AWSReservedSSO_ShopflowOperator_")
-    error_message = "Only the Identity Center operator permission set may assume the role by default."
+    condition     = jsondecode(aws_iam_role.operator.assume_role_policy).Statement[0].Condition.ArnLike["aws:PrincipalArn"] == ["arn:aws:iam::123456789012:role/managed/AccountFullAccessRole"]
+    error_message = "By default only the account's `aws login` admin role may assume the operator role."
   }
 
   assert {
@@ -128,54 +128,33 @@ run "operator_is_fenced" {
   }
 }
 
-run "ci_plan_reads_but_never_secrets_or_data" {
+run "no_github_oidc_and_an_hourly_reaper_sweep" {
   command = plan
 
   assert {
-    condition     = jsondecode(module.ci_plan_role.trust_policy).Statement[0].Condition.StringLike["token.actions.githubusercontent.com:sub"] == ["repo:winthebest/shopflow:pull_request:job_workflow_ref:winthebest/shopflow/.github/workflows/infra-ci.yml@refs/pull/*/merge"]
-    error_message = "ci-plan trusts only infra-ci.yml on pull requests of this repository."
-  }
-
-  assert {
-    condition = toset(flatten([for s in jsondecode(module.ci_plan_role.policy).Statement : s.Action if s.Sid == "NeverReadSecrets"])) == toset([
-      "ssm:GetParameter*", "kms:Decrypt", "secretsmanager:GetSecretValue",
-    ])
-    error_message = "ci-plan explicitly cannot read SSM parameters or decrypt."
-  }
-
-  assert {
-    condition = length([
-      for a in flatten([for s in jsondecode(module.ci_plan_role.policy).Statement : flatten([s.Action]) if s.Effect == "Allow"]) : a
-      if can(regex(":(Put|Delete|Create|Update|Attach|Run|Terminate)", a))
-    ]) == 0
-    error_message = "ci-plan has no write permission."
-  }
-}
-
-run "reaper_only_deletes_tagged_session_compute" {
-  command = plan
-
-  assert {
-    condition     = jsondecode(module.reaper_role.trust_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == ["repo:winthebest/shopflow:ref:refs/heads/main:job_workflow_ref:winthebest/shopflow/.github/workflows/cloud-reaper.yml@refs/heads/main"]
-    error_message = "The reaper role trusts only cloud-reaper.yml on main."
+    condition     = !strcontains(jsonencode(output.role_boundaries), "ci-plan") && !contains(keys(output.role_boundaries), "shopflow-reaper")
+    error_message = "No role is trusted by GitHub Actions: project accounts deny OIDC providers (iam:*Provider*)."
   }
 
   assert {
     condition = alltrue([
-      for s in jsondecode(module.reaper_role.policy).Statement : try(s.Condition.StringEquals["aws:ResourceTag/project"] == "shopflow", false)
-      if s.Effect == "Allow" && length([for a in flatten([s.Action]) : a if can(regex("^(eks|ec2|elasticloadbalancing):(Delete|Terminate|Release|Disassociate)", a))]) > 0
+      for st in jsondecode(aws_iam_policy.operator.policy).Statement : !contains(flatten([st.Resource]), "arn:aws:scheduler:ap-southeast-2:123456789012:schedule/shopflow/shopflow-reaper-sweep")
+      && !contains(flatten([st.Resource]), "arn:aws:scheduler:ap-southeast-2:123456789012:schedule/shopflow/*")
+      if st.Effect == "Allow" && length([for a in flatten([st.Action]) : a if contains(["scheduler:CreateSchedule", "scheduler:UpdateSchedule", "scheduler:DeleteSchedule"], a)]) > 0
     ])
-    error_message = "Every delete requires project=shopflow on the resource."
+    error_message = "The operator may create, update or delete only the per-session schedule, never the sweep."
   }
 
   assert {
-    condition     = one([for s in jsondecode(module.reaper_role.policy).Statement : s.Resource if s.Sid == "LockAndWriteClusterStateOnly"]) == ["arn:aws:s3:::shopflow-tfstate-123456789012/cluster/terraform.tfstate", "arn:aws:s3:::shopflow-tfstate-123456789012/cluster/terraform.tfstate.tflock"]
-    error_message = "The reaper writes and locks only the cluster layer state."
+    condition = one([
+      for st in jsondecode(aws_iam_policy.boundary.policy).Statement : st.Resource if st.Sid == "ProtectReaperSweep"
+    ]) == "arn:aws:scheduler:ap-southeast-2:123456789012:schedule/shopflow/shopflow-reaper-sweep"
+    error_message = "The boundary denies every role any change to the sweep."
   }
 
   assert {
-    condition     = toset(["iam:Create*", "iam:Attach*", "iam:PassRole"]) == setintersection(toset(one([for s in jsondecode(module.reaper_role.policy).Statement : s.Action if s.Sid == "NeverChangeIam"])), toset(["iam:Create*", "iam:Attach*", "iam:PassRole"]))
-    error_message = "IAM create/attach/pass are explicitly denied."
+    condition     = output.reaper.sweep_schedule == "shopflow-reaper-sweep"
+    error_message = "Layer 0 keeps an hourly sweep that runs the reaper, independent of cloud-up."
   }
 }
 
@@ -232,7 +211,7 @@ run "pod_roles_are_scoped_by_prefix" {
   }
 
   assert {
-    condition     = jsondecode(aws_iam_role_policy.eso_namespace["shop"].policy).Statement[0].Resource == ["arn:aws:ssm:ap-southeast-1:123456789012:parameter/shopflow/aws/shop", "arn:aws:ssm:ap-southeast-1:123456789012:parameter/shopflow/aws/shop/*"]
+    condition     = jsondecode(aws_iam_role_policy.eso_namespace["shop"].policy).Statement[0].Resource == ["arn:aws:ssm:ap-southeast-2:123456789012:parameter/shopflow/aws/shop", "arn:aws:ssm:ap-southeast-2:123456789012:parameter/shopflow/aws/shop/*"]
     error_message = "The shop SecretStore role reads only /shopflow/aws/shop/*."
   }
 

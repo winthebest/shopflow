@@ -5,7 +5,7 @@ import json
 from script_harness import Harness, operator
 
 SESSION = {"id": "20261009t120000z", "operatorCidr": "203.0.113.10/32"}
-LB_ARN = "arn:aws:elasticloadbalancing:ap-southeast-1:123456789012:loadbalancer/net/k8s-shop/abc"
+LB_ARN = "arn:aws:elasticloadbalancing:ap-southeast-2:123456789012:loadbalancer/net/k8s-shop/abc"
 FINAL = "shop-db-20261009t120000z-final"
 APPS = {
     "items": [
@@ -74,7 +74,6 @@ def session_world(h: Harness, *, cluster: str = "ACTIVE", desired: str = "2") ->
     h.on("kubectl", r"get pv -o json", json_out={"items": []})
     h.on("aws", r"ec2 describe-volumes --filters Name=tag:project", "")
     # Orphan check
-    h.on("aws", r"ec2 describe-regions", "ap-southeast-1\n")
     for match, out in EMPTY_REGION:
         h.on("aws", match, json_out=out)
     return h
@@ -99,7 +98,7 @@ def test_graceful_teardown_runs_in_order(fake):
         r"delete persistentvolumeclaims --all",
         r"helm uninstall argocd",
         r"tofu .*cluster destroy -auto-approve",
-        r"ec2 describe-regions",
+        r"--region ap-southeast-2 --output json ec2 describe-instances",
         r"ssm delete-parameter --name /shopflow/aws/control/lease-expires-at",
         r"scheduler delete-schedule",
     ]
@@ -176,6 +175,6 @@ def test_orphans_fail_the_run_after_cleanup(fake):
     result = fake.run("cloud-down.sh")
 
     assert result.returncode != 0
-    assert "UNKNOWN  ap-southeast-1 volume vol-0stranger" in result.stderr
+    assert "UNKNOWN  ap-southeast-2 volume vol-0stranger" in result.stderr
     fake.index_of(r"ssm delete-parameter --name /shopflow/aws/control/lease-expires-at")
     assert not any("delete-volume" in c.line for c in fake.calls())

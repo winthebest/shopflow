@@ -18,7 +18,7 @@ Usage: scripts/aws-orphan-check.sh [--dry-run] [--delete-tagged] [--alert] [--re
 
   --delete-tagged  delete orphans tagged as shopflow (home region only)
   --alert          publish findings to the shopflow-alerts SNS topic
-  --regions LIST   regions to scan (default: every region enabled in the account)
+  --regions LIST   regions to scan (default: contract scan_regions, the only ones the account's SCPs allow)
 EOF
 }
 
@@ -105,7 +105,9 @@ main() {
     shift
   done
   require_cmds aws jq xargs
-  [ -n "$REGIONS" ] || REGIONS="$(aws_ ec2 describe-regions --query 'Regions[].RegionName' --output text)"
+  # The project account's RegionFloor SCP denies every API call outside these regions, so nothing can be billed
+  # elsewhere, and a scan of other regions would only fail on access denied.
+  [ -n "$REGIONS" ] || REGIONS="$(contract '.scan_regions | join(" ")')"
 
   local findings="" r
   for r in $REGIONS; do

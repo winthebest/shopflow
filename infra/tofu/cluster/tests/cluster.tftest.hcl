@@ -19,7 +19,7 @@ mock_provider "aws" {
     defaults = { id = "lt-0123456789abcdef0", latest_version = 1 }
   }
   mock_resource "aws_eks_cluster" {
-    defaults = { arn = "arn:aws:eks:ap-southeast-1:123456789012:cluster/shopflow" }
+    defaults = { arn = "arn:aws:eks:ap-southeast-2:123456789012:cluster/shopflow" }
   }
 }
 
@@ -52,26 +52,26 @@ run "api_endpoint_only_for_the_operator" {
   }
 }
 
-run "nodes_are_graviton_spot_in_one_az_without_pod_imds" {
+run "nodes_are_graviton_on_demand_in_one_az_without_pod_imds" {
   command = plan
 
   assert {
-    condition     = aws_eks_node_group.spot.capacity_type == "SPOT" && aws_eks_node_group.spot.ami_type == "AL2023_ARM_64_STANDARD"
-    error_message = "Nodes are Graviton spot."
+    condition     = aws_eks_node_group.nodes.capacity_type == "ON_DEMAND" && aws_eks_node_group.nodes.ami_type == "AL2023_ARM_64_STANDARD"
+    error_message = "Nodes are Graviton on-demand (project accounts deny spot)."
   }
 
   assert {
-    condition     = aws_eks_node_group.spot.instance_types == tolist(jsondecode(file("../../cloud-contract.json")).node_instance_types)
+    condition     = aws_eks_node_group.nodes.instance_types == tolist(jsondecode(file("../../cloud-contract.json")).node_instance_types)
     error_message = "Node types come from cloud-contract.json (ADR 0505)."
   }
 
   assert {
-    condition     = aws_eks_node_group.spot.subnet_ids == toset(["subnet-0aaaaaaaaaaaaaaaa"])
+    condition     = aws_eks_node_group.nodes.subnet_ids == toset(["subnet-0aaaaaaaaaaaaaaaa"])
     error_message = "Nodes live only in the AZ-a subnet."
   }
 
   assert {
-    condition     = one(aws_eks_node_group.spot.scaling_config).min_size == 0
+    condition     = one(aws_eks_node_group.nodes.scaling_config).min_size == 0
     error_message = "The node group can scale to zero (cloud-pause)."
   }
 

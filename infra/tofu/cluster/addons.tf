@@ -51,5 +51,5 @@ resource "aws_eks_addon" "after_nodes" {
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "OVERWRITE"
 
-  depends_on = [aws_eks_node_group.spot, aws_eks_pod_identity_association.this]
+  depends_on = [aws_eks_node_group.nodes, aws_eks_pod_identity_association.this]
 }

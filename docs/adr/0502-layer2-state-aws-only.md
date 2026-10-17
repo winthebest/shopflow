@@ -3,6 +3,8 @@
 - Status: Accepted
 - Date: 2026-10-09
 - Lane: sf-cloud
+- Amended by 0513 (2026-10-18): the reaper that takes the layer-2 state lock is `scripts/cloud-reap.sh` run from
+  the laptop under the operator role, not a GitHub workflow
 
 ## Context
 

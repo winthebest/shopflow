@@ -18,7 +18,7 @@ terraform {
   # (docs/runbooks/cloud-session.md, "Bootstrap layer 0").
   backend "s3" {
     key          = "bootstrap/terraform.tfstate"
-    region       = "ap-southeast-1"
+    region       = "ap-southeast-2"
     encrypt      = true
     use_lockfile = true
   }

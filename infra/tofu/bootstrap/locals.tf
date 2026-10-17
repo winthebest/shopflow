@@ -12,12 +12,6 @@ locals {
   state_bucket = "${local.contract.state_bucket_prefix}${local.account_id}"
   data_bucket  = "${local.contract.data_bucket_prefix}${local.account_id}"
 
-  github_repository = local.contract.github_repository
-  workflows = {
-    ci_plan = ".github/workflows/infra-ci.yml"
-    reaper  = ".github/workflows/cloud-reaper.yml"
-  }
-
   arn = {
     account      = "arn:aws:iam::${local.account_id}:root"
     role         = "arn:aws:iam::${local.account_id}:role"
@@ -29,13 +23,17 @@ locals {
     glue         = "arn:aws:glue:${local.region}:${local.account_id}"
     reaper_fn    = "arn:aws:lambda:${local.region}:${local.account_id}:function:${local.contract.reaper.function_name}"
     schedules    = "arn:aws:scheduler:${local.region}:${local.account_id}:schedule/${local.contract.reaper.schedule_group}/*"
+    session_rule = "arn:aws:scheduler:${local.region}:${local.account_id}:schedule/${local.contract.reaper.schedule_group}/${local.contract.reaper.schedule_name}"
+    sweep_rule   = "arn:aws:scheduler:${local.region}:${local.account_id}:schedule/${local.contract.reaper.schedule_group}/${local.contract.reaper.sweep_schedule_name}"
   }
 
   boundary_name    = "${local.project}-boundary"
   deny_policy_name = "${local.project}-budget-deny"
 
+  # The account's admin is the role `aws login` signs in to on an AWS-managed project account (no Identity Center:
+  # its SCPs deny sso:CreateInstance). AWS manages that role under the path /managed/.
   operator_principal_arns = coalesce(var.operator_principal_arns, [
-    "arn:aws:iam::${local.account_id}:role/aws-reserved/sso.amazonaws.com/*AWSReservedSSO_ShopflowOperator_*",
+    "arn:aws:iam::${local.account_id}:role/managed/AccountFullAccessRole",
   ])
 
   # Pod roles reached through Pod Identity, keyed like contract.pod_identities.

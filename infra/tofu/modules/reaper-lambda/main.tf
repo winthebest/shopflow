@@ -1,5 +1,8 @@
-# Backup kill switch that does not depend on GitHub: EventBridge Scheduler invokes this function
-# from lease + grace until the session's billable resources are gone. AWS APIs only, so it works
+# The two in-AWS kill switches, one function: EventBridge Scheduler invokes it
+#   - every hour, always (the sweep schedule, created here): it tears down any session whose lease has expired, so
+#     a session is reaped even if cloud-up never armed its own schedule;
+#   - from lease + grace until nothing is left (the per-session schedule cloud-up creates; the function deletes it).
+# The function re-reads the lease on every call and does nothing while it is valid. AWS APIs only, so it works
 # when the node group is scaled to zero or the cluster endpoint is unreachable.
 
 locals {
@@ -97,7 +100,7 @@ resource "aws_iam_role_policy" "lambda" {
 #trivy:ignore:AWS-0066 X-Ray tracing adds cost and permissions for a function that runs a few times per month.
 resource "aws_lambda_function" "this" {
   function_name    = var.function_name
-  description      = "Backup kill switch: tears down the ${var.cluster_name} EKS session once its lease has expired."
+  description      = "Kill switch: tears down the ${var.cluster_name} EKS session once its lease has expired."
   role             = aws_iam_role.lambda.arn
   runtime          = "python3.13"
   architectures    = ["arm64"]
@@ -106,6 +109,8 @@ resource "aws_lambda_function" "this" {
   source_code_hash = data.archive_file.package.output_base64sha256
   timeout          = 900
   memory_size      = 256
+  # The sweep and the per-session schedule may fire together: one teardown at a time.
+  reserved_concurrent_executions = 1
 
   environment {
     variables = {
@@ -141,6 +146,29 @@ resource "aws_scheduler_schedule_group" "this" {
   name = var.schedule_group_name
 }
 
+# The hourly sweep: independent of cloud-up, so a session it never armed (a crash between apply and arming, a
+# deleted schedule) is still reaped. With no lease and no cluster it is a no-op that sends nothing.
+resource "aws_scheduler_schedule" "sweep" {
+  name                = var.sweep_schedule_name
+  group_name          = aws_scheduler_schedule_group.this.name
+  schedule_expression = var.sweep_rate
+  state               = "ENABLED"
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  target {
+    arn      = aws_lambda_function.this.arn
+    role_arn = aws_iam_role.scheduler.arn
+    input    = jsonencode({ trigger = "sweep" })
+
+    dead_letter_config {
+      arn = aws_sqs_queue.dead_letter.arn
+    }
+  }
+}
+
 resource "aws_iam_role" "scheduler" {
   name                 = var.scheduler_role_name
   permissions_boundary = var.permissions_boundary_arn
@@ -160,10 +188,42 @@ resource "aws_iam_role_policy" "scheduler" {
   role = aws_iam_role.scheduler.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = "lambda:InvokeFunction"
-      Resource = aws_lambda_function.this.arn
-    }]
+    Statement = [
+      {
+        Sid      = "InvokeReaper"
+        Effect   = "Allow"
+        Action   = "lambda:InvokeFunction"
+        Resource = aws_lambda_function.this.arn
+      },
+      {
+        Sid      = "ReportUndelivered"
+        Effect   = "Allow"
+        Action   = "sqs:SendMessage"
+        Resource = aws_sqs_queue.dead_letter.arn
+      },
+    ]
   })
+}
+
+# Where Scheduler puts an invocation it could not deliver: the spend-limit SCP denies lambda:InvokeFunction near the
+# limit, or the scheduler role is broken. Neither shows up as a Lambda error, so a message here raises its own alarm.
+resource "aws_sqs_queue" "dead_letter" {
+  name                      = var.dead_letter_queue_name
+  message_retention_seconds = 1209600
+  sqs_managed_sse_enabled   = true
+}
+
+resource "aws_cloudwatch_metric_alarm" "undelivered" {
+  alarm_name          = "${var.function_name}-undelivered"
+  alarm_description   = "A reaper schedule could not invoke the function (messages in ${var.dead_letter_queue_name}): the kill switch is not running. Run make cloud-down from the laptop."
+  namespace           = "AWS/SQS"
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  dimensions          = { QueueName = aws_sqs_queue.dead_letter.name }
+  statistic           = "Maximum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [var.alert_topic_arn]
 }

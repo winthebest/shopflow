@@ -11,7 +11,7 @@ terraform {
   # Bucket passed at init: -backend-config=bucket=shopflow-tfstate-<account>.
   backend "s3" {
     key          = "cluster/terraform.tfstate"
-    region       = "ap-southeast-1"
+    region       = "ap-southeast-2"
     encrypt      = true
     use_lockfile = true
   }

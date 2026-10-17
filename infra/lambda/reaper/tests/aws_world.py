@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import boto3
 
-REGION = "ap-southeast-1"
+REGION = "ap-southeast-2"
 CLUSTER = "shopflow"
 PROJECT = "shopflow"
 LEASE_PARAM = "/shopflow/aws/control/lease-expires-at"

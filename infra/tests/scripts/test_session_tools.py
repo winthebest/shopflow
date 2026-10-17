@@ -3,7 +3,7 @@
 import json
 from datetime import UTC, datetime, timedelta
 
-from script_harness import REAPER_ARN, Harness, operator
+from script_harness import Harness, operator
 
 
 def iso(dt: datetime) -> str:
@@ -239,7 +239,7 @@ def orphan_world(h: Harness) -> Harness:
     operator(h)
     tagged = {"Volumes": [{"VolumeId": "vol-0ours", "Tags": [{"Key": "project", "Value": "shopflow"}]}]}
     stranger = {"Volumes": [{"VolumeId": "vol-0stranger", "Tags": [{"Key": "Name", "Value": "someone"}]}]}
-    h.on("aws", r"--region ap-southeast-1 .*ec2 describe-volumes", json_out=tagged)
+    h.on("aws", r"--region ap-southeast-2 .*ec2 describe-volumes", json_out=tagged)
     h.on("aws", r"--region us-east-1 .*ec2 describe-volumes", json_out=stranger)
     h.on("aws", r"ec2 describe-instances", json_out={"Reservations": []})
     h.on("aws", r"ec2 describe-network-interfaces", json_out={"NetworkInterfaces": []})
@@ -251,26 +251,26 @@ def orphan_world(h: Harness) -> Harness:
 def test_orphan_check_deletes_ours_and_reports_strangers(fake):
     orphan_world(fake)
 
-    result = fake.run("aws-orphan-check.sh", "--regions", "ap-southeast-1 us-east-1", "--delete-tagged")
+    result = fake.run("aws-orphan-check.sh", "--regions", "ap-southeast-2 us-east-1", "--delete-tagged")
 
     assert result.returncode == 2, result.stderr
     deletes = [c.line for c in fake.calls("aws") if "delete-volume" in c.argv]
-    assert deletes == ["aws --region ap-southeast-1 --output json ec2 delete-volume --volume-id vol-0ours"]
+    assert deletes == ["aws --region ap-southeast-2 --output json ec2 delete-volume --volume-id vol-0ours"]
     assert "UNKNOWN  us-east-1 volume vol-0stranger" in result.stderr
 
 
 def test_untagged_load_balancers_in_the_shopflow_vpc_block_cleanup(fake):
     """A Classic ELB from EKS's legacy cloud provider carries only the cluster tag: reapers cannot delete it."""
     orphan_world(fake)
-    nlb = "arn:aws:elasticloadbalancing:ap-southeast-1:123456789012:loadbalancer/net/k8s-shop/abc"
-    fake.on("aws", r"--region ap-southeast-1 .*ec2 describe-vpcs", json_out=["vpc-0shopflow"])
-    fake.on("aws", r"--region ap-southeast-1 .*elbv2 describe-load-balancers", json_out=[{"id": nlb, "vpc": "vpc-0shopflow"}])
+    nlb = "arn:aws:elasticloadbalancing:ap-southeast-2:123456789012:loadbalancer/net/k8s-shop/abc"
+    fake.on("aws", r"--region ap-southeast-2 .*ec2 describe-vpcs", json_out=["vpc-0shopflow"])
+    fake.on("aws", r"--region ap-southeast-2 .*elbv2 describe-load-balancers", json_out=[{"id": nlb, "vpc": "vpc-0shopflow"}])
     fake.on(
         "aws",
         r"elbv2 describe-tags",
         json_out={"TagDescriptions": [{"ResourceArn": nlb, "Tags": [{"Key": "project", "Value": "shopflow"}]}]},
     )
-    fake.on("aws", r"--region ap-southeast-1 .*elb describe-load-balancers", json_out=[{"id": "a1b2c3", "vpc": "vpc-0shopflow"}])
+    fake.on("aws", r"--region ap-southeast-2 .*elb describe-load-balancers", json_out=[{"id": "a1b2c3", "vpc": "vpc-0shopflow"}])
     fake.on(
         "aws",
         r"elb describe-tags",
@@ -279,32 +279,31 @@ def test_untagged_load_balancers_in_the_shopflow_vpc_block_cleanup(fake):
         },
     )
 
-    result = fake.run("aws-orphan-check.sh", "--regions", "ap-southeast-1", "--delete-tagged")
+    result = fake.run("aws-orphan-check.sh", "--regions", "ap-southeast-2", "--delete-tagged")
 
     assert result.returncode == 2, result.stderr
-    assert "UNTAGGED ap-southeast-1 classic-load-balancer a1b2c3 (in the shopflow VPC" in result.stderr
+    assert "UNTAGGED ap-southeast-2 classic-load-balancer a1b2c3 (in the shopflow VPC" in result.stderr
     deleted = [c.line for c in fake.calls("aws") if "delete-load-balancer" in c.argv]
-    assert deleted == [f"aws --region ap-southeast-1 --output json elbv2 delete-load-balancer --load-balancer-arn {nlb}"]
+    assert deleted == [f"aws --region ap-southeast-2 --output json elbv2 delete-load-balancer --load-balancer-arn {nlb}"]
 
 
 def test_orphan_check_without_delete_reports_ours(fake):
     orphan_world(fake)
 
-    result = fake.run("aws-orphan-check.sh", "--regions", "ap-southeast-1")
+    result = fake.run("aws-orphan-check.sh", "--regions", "ap-southeast-2")
 
     assert result.returncode == 3
-    assert "ORPHAN   ap-southeast-1 volume vol-0ours" in result.stderr
+    assert "ORPHAN   ap-southeast-2 volume vol-0ours" in result.stderr
     assert fake.mutations() == []
 
 
 # ---- cloud-reap -----------------------------------------------------------------------------------
 
-REAP_ENV = {"GITHUB_ACTIONS": "true", "GITHUB_RUN_ID": "42"}
+REAP_ENV: dict[str, str] = {}
 
 
 def reap_world(h: Harness, *, lock_exit: int = 0, lock_age: timedelta = timedelta(minutes=5), lease_exit: int = 0) -> Harness:
-    h.on("aws", r"sts get-caller-identity --query Account", "123456789012\n")
-    h.on("aws", r"sts get-caller-identity --query Arn", f"{REAPER_ARN}\n")
+    operator(h)  # run from the laptop, under the operator role
     h.on("aws", r"eks describe-cluster --name", "ACTIVE\n")
     h.on("aws", r"elbv2 describe-load-balancers", "")
     h.on(
@@ -317,7 +316,6 @@ def reap_world(h: Harness, *, lock_exit: int = 0, lock_age: timedelta = timedelt
     h.on("aws", r"ssm get-parameter --name /shopflow/aws/control/lease-expires-at ", iso(datetime.now(UTC) - timedelta(hours=3)))
     h.not_found("aws", r"ssm get-parameter", "ParameterNotFound", "GetParameter")
     h.on("uv", r"python -m reaper .* lease ", exit=lease_exit)
-    h.on("aws", r"ec2 describe-regions", "ap-southeast-1\n")
     for match, out in (
         (r"ec2 describe-instances", {"Reservations": []}),
         (r"ec2 describe-volumes", {"Volumes": []}),
@@ -340,7 +338,7 @@ def test_reaper_reaps_an_expired_session_under_the_state_lock(fake):
         r"uv run .*python -m reaper .* lease --parameter /shopflow/aws/control/lease-expires-at",
         r"uv run .*teardown --cluster shopflow --project shopflow --keep-cluster --wait",
         r"tofu .*cluster destroy -auto-approve -input=false -lock=false",
-        r"ec2 describe-regions",
+        r"--region ap-southeast-2 --output json ec2 describe-instances",
         r"s3api delete-object .*cluster/terraform.tfstate.tflock",
     ]
     positions = [fake.index_of(s) for s in steps]
@@ -402,4 +400,4 @@ def test_reaper_has_nothing_to_do_without_a_cluster(fake):
 
     assert result.returncode == 0 and "nothing to reap" in result.stderr
     assert fake.mutations() == []
-    fake.index_of(r"ec2 describe-regions")  # still checks for orphans every hour
+    fake.index_of(r"--region ap-southeast-2 --output json ec2 describe-instances")  # still checks for orphans

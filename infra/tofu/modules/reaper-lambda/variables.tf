@@ -38,6 +38,22 @@ variable "schedule_name" {
   type        = string
 }
 
+variable "sweep_schedule_name" {
+  description = "Hourly schedule that always runs the reaper (it acts only on an expired lease)."
+  type        = string
+}
+
+variable "sweep_rate" {
+  description = "Rate of the sweep schedule."
+  type        = string
+  default     = "rate(1 hour)"
+}
+
+variable "dead_letter_queue_name" {
+  description = "SQS queue that receives reaper invocations Scheduler could not deliver (alarmed)."
+  type        = string
+}
+
 variable "alert_topic_arn" {
   description = "SNS topic for reaper results and failures."
   type        = string

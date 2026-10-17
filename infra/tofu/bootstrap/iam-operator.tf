@@ -1,6 +1,6 @@
-# shopflow-operator: the role a human assumes (IAM Identity Center -> role chaining) to run
+# shopflow-operator: the role a human assumes (`aws login` admin session -> role chaining) to run
 # cloud-up/down and apply the network and cluster layers. It cannot change IAM, so layer 0 itself
-# is applied with the Identity Center admin permission set, never with this role.
+# is applied with the admin session (role/managed/AccountFullAccessRole), never with this role.
 
 locals {
   operator_state_write_keys = [
@@ -53,7 +53,7 @@ locals {
           StringEquals = {
             "iam:AWSServiceName" = [
               "eks.amazonaws.com", "eks-nodegroup.amazonaws.com", "autoscaling.amazonaws.com",
-              "spot.amazonaws.com", "elasticloadbalancing.amazonaws.com",
+              "elasticloadbalancing.amazonaws.com",
             ]
           }
         }
@@ -96,9 +96,16 @@ locals {
         Resource = "${local.arn.data_bucket}/${local.prefixes.evidence}*"
       },
       {
-        Sid      = "ReaperSchedule"
+        # Only the per-session schedule: the hourly sweep must not depend on the operator (the boundary also denies it).
+        Sid      = "SessionReaperSchedule"
         Effect   = "Allow"
-        Action   = ["scheduler:CreateSchedule", "scheduler:UpdateSchedule", "scheduler:DeleteSchedule", "scheduler:GetSchedule"]
+        Action   = ["scheduler:CreateSchedule", "scheduler:UpdateSchedule", "scheduler:DeleteSchedule"]
+        Resource = local.arn.session_rule
+      },
+      {
+        Sid      = "ReadReaperSchedules"
+        Effect   = "Allow"
+        Action   = "scheduler:GetSchedule"
         Resource = local.arn.schedules
       },
       {
@@ -153,7 +160,7 @@ resource "aws_iam_role" "operator" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Sid       = "IdentityCenterOperator"
+      Sid       = "AdminSessionOperator"
       Effect    = "Allow"
       Principal = { AWS = local.arn.account }
       Action    = ["sts:AssumeRole", "sts:SetSourceIdentity", "sts:TagSession"]

@@ -4,9 +4,13 @@ Owner: sf-cloud. Every AWS action below happens only after the user approves it 
 Constants (names, paths, regions, the Pod Identity table) live in [`infra/cloud-contract.json`](../../infra/cloud-contract.json),
 read by OpenTofu and by the scripts; this page explains them, it does not redefine them.
 
+The account is an AWS-managed **project account** (new AWS experience, Paid plan): Region `ap-southeast-2`,
+no spot, no GitHub OIDC, no IAM Identity Center. Its SCPs and what they mean for each resource are in
+[SCP check](#scp-check); the decision is ADR 0513.
+
 | Layer | Directory | Lifetime | Applied by |
 |---|---|---|---|
-| 0 bootstrap | `infra/tofu/bootstrap` | whole project | Identity Center **admin** profile (it creates IAM) |
+| 0 bootstrap | `infra/tofu/bootstrap` | whole project | **admin** `aws login` session, profile `shopflow-admin` (it creates IAM) |
 | 1 network | `infra/tofu/network` | whole project (free) | `shopflow` operator profile |
 | 2 cluster | `infra/tofu/cluster` | one session | `make cloud-up` / `make cloud-down` |
 
@@ -16,20 +20,26 @@ Each **approval** below is the user's, relayed by the orchestrator. Costs are es
 
 | # | Step | Who | Time | Cost | Details |
 |---|---|---|---|---|---|
-| 1 | Note the account creation date; **upgrade to the Paid plan**; root MFA; Identity Center user, permission sets, SSO profiles, `aws sso login` | user | ~45 min | $0 | [One-time account setup](#one-time-account-setup-user) |
-| 2 | GitHub: OIDC `sub` customization, variable `AWS_ACCOUNT_ID`, secret `ALERT_EMAIL` | user (repo admin) | 5 min | $0 | [GitHub settings](#github-settings-user-repository-admin) |
-| 3 | **Approval 1.** Layer 0 with the admin profile: local state → apply → migrate the state to S3. Confirm the SNS email. If the anomaly monitor already exists, reuse it | sf-cloud + user | ~15 min | ≈ $0.5/month from now on | [Bootstrap layer 0](#bootstrap-layer-0-first-time) |
-| 4 | **Approval 2.** Layer 1 with the operator profile | sf-cloud | ~3 min | $0 | same section |
-| 5 | Seed the secrets through pipes, never a file: `scripts/platform-secrets.sh --aws-json \| make cloud-seed-params` and `scripts/data-secrets.sh --aws-json \| make cloud-seed-params`; values only you know (the Discord webhook, the Grafana login you choose) with the silent prompt | user | 10 min | $0 | [Bootstrap layer 0](#bootstrap-layer-0-first-time), end of section |
-| 6 | Arm the guards: uncomment the reaper cron (PR), run it once with `dry_run: true`, set `INFRA_PLAN_ENABLED=true` | sf-cloud + orchestrator | 10 min | $0 | [Kill switches](#kill-switches) |
-| 7 | `make cloud-up CLOUD_ARGS="--dry-run --profiles core,obs-lite"`: reads AWS, prints the plan, changes nothing | sf-cloud | 5 min | $0 | [Session lifecycle](#session-lifecycle) |
-| 8 | **Approval 3.** `make cloud-up CLOUD_ARGS="--profiles core,obs-lite"` (on AWS, `core` also runs External Secrets and the LB controller; `obs-lite` adds OpenCost), then the first-session checks | sf-cloud | 30–45 min to RTO | ≈ $0.30/h | [First-session checks](#first-session-checks) |
-| 9 | `make cloud-down` (same day); the orphan check must be clean | sf-cloud | ~20 min | — | |
-| 10 | Next day: Cost Explorer with the Credit charge type excluded → measured $/hour in `docs/cost.md`; then activate the cost allocation tags | sf-cloud | 15 min | $0 | [`docs/cost.md`](../cost.md) |
+| 1 | MFA in AWS Settings; CLI profiles `shopflow-admin` (`aws login`) and `shopflow` (operator); `aws login` | user | ~15 min | $0 | [One-time account setup](#one-time-account-setup-user) |
+| 2 | **Approval 1.** Layer 0 with the admin session: local state → apply → migrate the state to S3. Confirm the SNS email. If the anomaly monitor already exists, reuse it. Run the "verify at Approval 1" checks | sf-cloud + user | ~15 min | ≈ $0.5/month from now on | [Bootstrap layer 0](#bootstrap-layer-0-first-time) |
+| 3 | **Approval 2.** Layer 1 with the operator profile | sf-cloud | ~3 min | $0 | same section |
+| 4 | Seed the secrets through pipes, never a file: `scripts/platform-secrets.sh --aws-json \| make cloud-seed-params` and `scripts/data-secrets.sh --aws-json \| make cloud-seed-params`; values only you know (the Discord webhook, the Grafana login you choose) with the silent prompt | user | 10 min | $0 | [Bootstrap layer 0](#bootstrap-layer-0-first-time), end of section |
+| 5 | Check the guards: the hourly sweep is `ENABLED` (`aws scheduler get-schedule --group-name shopflow --name shopflow-reaper-sweep`), the Budget Action is in standby | sf-cloud | 5 min | $0 | [Kill switches](#kill-switches) |
+| 6 | `make cloud-up CLOUD_ARGS="--dry-run --profiles core,obs-lite"`: reads AWS, prints the plan, changes nothing | sf-cloud | 5 min | $0 | [Session lifecycle](#session-lifecycle) |
+| 7 | **Approval 3.** `make cloud-up CLOUD_ARGS="--profiles core,obs-lite"` (on AWS, `core` also runs External Secrets and the LB controller; `obs-lite` adds OpenCost), then the first-session checks | sf-cloud | 30–45 min to RTO | ≈ $0.45–0.51/h | [First-session checks](#first-session-checks) |
+| 8 | `make cloud-down` (same day); the orphan check must be clean | sf-cloud | ~20 min | — | |
+| 9 | Next day: Cost Explorer with the Credit charge type excluded → measured $/hour in `docs/cost.md` | sf-cloud | 15 min | $0 | [`docs/cost.md`](../cost.md) |
 
-Expected spend for the first session: about **$1.2 for 4 hours** (`core,obs-lite`), plus layer 0 at ≈ $0.5/month.
-Guardrails live from step 3: emails at $10 and $20 actual and $25 forecast; the Budget Action at $25 blocks new
-capacity; the lease (4 h by default) with the GitHub and Lambda reapers is the real stop.
+Expected spend for the first session: about **$2 for 4 hours** (`core,obs-lite`, on-demand), plus layer 0 at
+≈ $0.5/month.
+
+Guardrails live from step 2:
+- emails at $10 and $20 actual and $25 forecast (cumulative);
+- the Budget Action at $25 blocks new capacity;
+- the lease (4 h by default), with the hourly sweep and the per-session reaper, is the real stop;
+- above them sits the user's **$20/month spend limit**: see
+  [When the spend limit is near](#when-the-spend-limit-is-near), and the monthly thresholds proposed in
+  `docs/cost.md`.
 
 Prerequisites from other lanes, all in place: the root-app hook with the session parameters (ADR 0206), the
 `profiles-aws` trees (`core`, `obs`, `obs-lite`), the `aws` overlays of their components (the Envoy Gateway Service
@@ -38,69 +48,47 @@ variant (ADR 0208).
 
 ## One-time account setup (user)
 
-- [ ] Note the account creation date in [`docs/cost.md`](../cost.md).
-- [ ] **Upgrade to the Paid plan** (Billing console → Plan). Credits then last until 12 months after account
-      creation; anything beyond is charged to the card. Do this before creating layer 0.
-- [ ] Root user: enable **MFA**; never use root again except for account-level tasks.
-- [ ] Enable **IAM Identity Center** in `ap-southeast-1`; create your user (MFA required at sign-in).
-- [ ] Permission set `ShopflowAdmin` = `AdministratorAccess`, session 1 h. Used only for layer 0.
-- [ ] Permission set `ShopflowOperator` with only this inline policy (the operator role trusts exactly this
-      permission set):
+Already done: Paid plan, card, the $20/month spend limit, the credits.
 
-      ```json
-      {"Version": "2012-10-17", "Statement": [{"Effect": "Allow",
-        "Action": ["sts:AssumeRole", "sts:TagSession", "sts:SetSourceIdentity"],
-        "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/shopflow-operator"}]}
-      ```
+- [ ] **MFA** for your sign-in, in AWS Settings (Security). There is no root user on this account type.
+- [ ] AWS CLI v2 recent enough for `aws login`, and two profiles in `~/.aws/config`:
+  - `shopflow-admin`: the `aws login` session. It signs in to the account's admin role
+    `role/managed/AccountFullAccessRole` and is used only for layer 0;
+  - `shopflow`: the operator, assumed from it.
 
-- [ ] Assign both permission sets to your user for this account.
-- [ ] AWS CLI v2 profiles in `~/.aws/config`:
+  `aws login --profile shopflow-admin` writes its own session settings into that profile. Add only the region,
+  then the operator profile:
 
       ```ini
-      [sso-session shopflow]
-      sso_start_url = https://<your-portal>.awsapps.com/start
-      sso_region = ap-southeast-1
-      sso_registration_scopes = sso:account:access
-
       [profile shopflow-admin]
-      sso_session = shopflow
-      sso_account_id = <ACCOUNT_ID>
-      sso_role_name = ShopflowAdmin
-      region = ap-southeast-1
-
-      [profile shopflow-sso]
-      sso_session = shopflow
-      sso_account_id = <ACCOUNT_ID>
-      sso_role_name = ShopflowOperator
-      region = ap-southeast-1
+      # written by: aws login --profile shopflow-admin
+      region = ap-southeast-2
 
       [profile shopflow]
       role_arn = arn:aws:iam::<ACCOUNT_ID>:role/shopflow-operator
-      source_profile = shopflow-sso
-      region = ap-southeast-1
+      source_profile = shopflow-admin
+      region = ap-southeast-2
       ```
 
-- [ ] `aws sso login --sso-session shopflow`, then `aws sts get-caller-identity --profile shopflow` once layer 0
-      exists. Role chaining caps operator sessions at 1 h; the CLI refreshes them on its own.
+- [ ] `aws login --profile shopflow-admin`; once layer 0 exists, `aws sts get-caller-identity --profile shopflow`.
+      Role chaining caps operator sessions at 1 h; the CLI refreshes them while the admin session is valid.
+      Whether the CLI refreshes a role chained from an `aws login` session: verify at Approval 1.
 
-## GitHub settings (user; repository admin)
+There is no IAM Identity Center (the SCPs deny `sso:CreateInstance`), no permission set and no IAM user. The
+operator role trusts the admin role (`operator_principal_arns`, layer 0).
 
-- [ ] OIDC `sub` claim with the workflow file, so each AWS role trusts one workflow (ADR 0509):
+## GitHub settings
 
-      ```sh
-      gh api -X PUT repos/winthebest/shopflow/actions/oidc/customization/sub \
-        -F use_default=false -f 'include_claim_keys[]=repo' -f 'include_claim_keys[]=context' \
-        -f 'include_claim_keys[]=job_workflow_ref'
-      ```
-
-- [ ] Repository variable `AWS_ACCOUNT_ID`; secret `ALERT_EMAIL` (used by the plan job).
-- [ ] Variable `INFRA_PLAN_ENABLED=true` only after layer 0 exists (turns on `tofu plan` in infra-ci).
+None for AWS. No workflow reaches AWS: the account denies OIDC identity providers, so there is no OIDC `sub`
+customization, no `AWS_ACCOUNT_ID` variable, no `ALERT_EMAIL` secret and no `INFRA_PLAN_ENABLED`. `tofu plan` runs
+from the laptop (`AWS_PROFILE=shopflow tofu -chdir=infra/tofu/<layer> plan`).
 
 ## Bootstrap layer 0 (first time)
 
 The state bucket is created by this layer, so the first apply runs on local state and then migrates.
 
 ```sh
+aws login --profile shopflow-admin
 export AWS_PROFILE=shopflow-admin TF_VAR_aws_account_id=<ACCOUNT_ID> TF_VAR_alert_email=<you@example.com>
 cd infra/tofu/bootstrap
 printf 'terraform {\n  backend "local" {}\n}\n' > local_override.tf      # gitignored
@@ -113,7 +101,9 @@ rm -f terraform.tfstate terraform.tfstate.backup                         # now i
 - [ ] Confirm the SNS subscription email ("AWS Notification - Subscription Confirmation").
 - [ ] If `apply` fails on the anomaly monitor ("limit exceeded"), the account already has AWS's default services
       monitor: `aws ce get-anomaly-monitors`, then re-apply with `TF_VAR_anomaly_monitor_arn=<arn>`.
-- [ ] After the first session has run for ~24 h: `TF_VAR_activate_cost_allocation_tags=true`, apply again.
+- [ ] Cost allocation tags: in an organization only the management account can activate them, and this account
+      is a member of an AWS-managed organization. Leave `activate_cost_allocation_tags = false`; check in Billing
+      whether AWS Settings offers it (verify at Approval 1).
 
 Layer 1, with the operator profile:
 
@@ -150,14 +140,15 @@ together.
 
 | Command | What it does |
 |---|---|
-| `make cloud-up` | preflight (operator role, Budget Action not fired, EKS version in standard support, no active lease, backup chain) → provisional lease → apply layer 2 → kubeconfig → Argo CD (chart + values from `deploy/argocd/bootstrap/`; admin password from SSM, see below) → root apps through `scripts/platform-root-apps.sh --overlay aws` → wait Synced/Healthy → Postgres chain (after a recovery: the order/payment id sequences move past the restored ids, + 100000, or past the highest acked id + 1000 with `CLOUD_ARGS="--ack-log <k6 acks.jsonl>"`, see [restore.md](restore.md)) → CDC epoch → smoke (a checkout through the NLB is in `lake_ro` `bronze.orders` with this session's `_cdc_epoch` within 2 min, queried as the read-only `exporter` user; the password goes through stdin) → network policy probe (a pod in `shop` that no allow rule selects resolves shop-db but times out on Postgres and the internet; result in `out/cloud/<session>/netpol-probe.json`) → prints RTO-infra and RTO-service → final lease + Lambda schedule → re-enables the GitHub reaper |
+| `make cloud-up` | preflight (operator role, Budget Action not fired, EKS version in standard support, no active lease, backup chain) → provisional lease → apply layer 2 → kubeconfig → Argo CD (chart + values from `deploy/argocd/bootstrap/`; admin password from SSM, see below) → root apps through `scripts/platform-root-apps.sh --overlay aws` → wait Synced/Healthy → Postgres chain (after a recovery: the order/payment id sequences move past the restored ids, + 100000, or past the highest acked id + 1000 with `CLOUD_ARGS="--ack-log <k6 acks.jsonl>"`, see [restore.md](restore.md)) → CDC epoch → smoke (a checkout through the NLB is in `lake_ro` `bronze.orders` with this session's `_cdc_epoch` within 2 min, queried as the read-only `exporter` user; the password goes through stdin) → network policy probe (a pod in `shop` that no allow rule selects resolves shop-db but times out on Postgres and the internet; result in `out/cloud/<session>/netpol-probe.json`) → prints RTO-infra and RTO-service → final lease + per-session reaper schedule. Preflight also refuses to start unless the hourly reaper sweep is `ENABLED` |
 | `make cloud-up CLOUD_ARGS=--dry-run` | reads AWS, runs `tofu plan`, prints every change instead of making it |
 | `make cloud-up CLOUD_ARGS=--resume` | continues a cloud-up that stopped (reuses the recorded session plan) |
 | `make cloud-up CLOUD_ARGS="--pitr 2026-11-02T10:15:00Z"` | restores Postgres to that time |
 | `make cloud-extend HOURS=2` | lease + 2 h (max 8 h from now) and moves the Lambda schedule; nothing else |
 | `make cloud-pause` / `make cloud-resume` | node group to 0 and back (< 4 h breaks; control plane, NLB and volumes still bill ~$0.16/h) |
-| `make cloud-down` | auto-sync off → final backup + pointer → evidence to S3 → Gateway/LB deleted, wait for ELBv2 → stateful CRs + PVCs deleted, wait for EBS → uninstall Argo CD → `tofu destroy` layer 2 (3 tries) → orphan check in every region → drop lease, session, schedule. Re-run it after any interruption |
+| `make cloud-down` | auto-sync off → final backup + pointer → evidence to S3 → Gateway/LB deleted, wait for ELBv2 → stateful CRs + PVCs deleted, wait for EBS → uninstall Argo CD → `tofu destroy` layer 2 (3 tries) → orphan check in the account's regions (`scan_regions`) → drop lease, session, schedule. Re-run it after any interruption |
 | `make cloud-down CLOUD_ARGS=--force-api` | paused or unreachable cluster: AWS API teardown like the reapers, no final backup |
+| `make cloud-reap` | an expired session, from the laptop: takes the layer-2 state lock, re-reads the lease, API teardown, `tofu destroy` under the lock, orphan check |
 
 ### Argo CD admin on AWS
 
@@ -250,24 +241,110 @@ and write the pointer by hand (`aws ssm put-parameter --overwrite --type String 
 after you have decided, in writing in the PR or session notes, that the old data may be lost.
 
 RPO: graceful `cloud-down` archives the last WAL segment before its final backup (RPO ≈ 0). The reaper paths
-have no final backup: RPO is the WAL `archive_timeout` (default 5 minutes).
+have no final backup: RPO is bounded by the WAL `archive_timeout` (60 s; 28–56 s measured locally, see
+[restore.md](restore.md)).
 
 ## Kill switches
 
 | Switch | Where | When | How |
 |---|---|---|---|
-| GitHub reaper | `.github/workflows/cloud-reaper.yml` → `scripts/cloud-reap.sh` | hourly at :17 (once armed) and on dispatch | takes the layer-2 state lock, re-reads the lease, deletes NLBs → node groups → available EBS through AWS APIs, `tofu destroy -lock=false` under its lock, orphan check. Role `shopflow-reaper` can delete only `project=shopflow` resources |
-| Lambda reaper | layer 0 (`shopflow-reaper`) + EventBridge Scheduler `shopflow/shopflow-reaper` | every 15 min from lease + 1 h | same API teardown, then deletes the cluster and its own schedule. Independent of GitHub (which disables cron after 60 days of repo inactivity) |
+| Hourly sweep | layer 0: EventBridge Scheduler `shopflow/shopflow-reaper-sweep` → Lambda `shopflow-reaper` | every hour, always | re-reads the lease; while it is valid, nothing. Once it has expired or is missing: deletes NLBs → node groups → available EBS → the cluster through AWS APIs (only `project=shopflow` resources). With no session it is a silent no-op. cloud-up refuses to start when it is missing or disabled |
+| Per-session reaper | Scheduler `shopflow/shopflow-reaper`, created by cloud-up | every 15 min from lease + 1 h | same Lambda; deletes its own schedule once nothing is left (never the sweep) |
+| Laptop reaper | `make cloud-reap` (`scripts/cloud-reap.sh`, operator role) | by hand | takes the layer-2 state lock, re-reads the lease, API teardown, `tofu destroy -lock=false` under its lock, orphan check |
 
-A missing or unreadable lease counts as expired. Failures alert: a failed workflow run (GitHub email), the
-Lambda error alarm (SNS email). The GitHub reaper also fails, and so alerts, when the state lock is older than
-3 h or when the cluster is more than 1 h past its lease while the state is locked.
+A missing or unreadable lease counts as expired. The Lambda runs one invocation at a time (reserved concurrency
+1), so the two schedules never tear down concurrently. Failures alert by SNS email in two ways:
+- the Lambda error alarm;
+- the `shopflow-reaper-undelivered` alarm. Both schedules send an invocation they could not deliver to the SQS
+  dead-letter queue `shopflow-reaper-dlq`: the spend-limit SCP denying `lambda:InvokeFunction`, or a broken
+  scheduler role. Neither is a Lambda error.
 
-**Arming the GitHub reaper** (first approved session): uncomment the `schedule` block in
-`cloud-reaper.yml` in a PR, and run the workflow once by hand with `dry_run: true`.
+The operator role may create, update or delete only the per-session schedule. The permissions boundary denies every
+role any change to the sweep: only the layer-0 admin can touch it.
+There is no GitHub reaper: the project account denies OIDC identity providers (ADR 0513).
 
-Tests to run in the first sessions (Phase 6 step 8): a 10-minute lease → the GitHub reaper destroys the
-cluster; reaper workflow disabled → the Lambda destroys it; a paused cluster → still destroyed.
+Tests to run in the first sessions:
+- a 10-minute lease → the sweep destroys the cluster within the hour;
+- the per-session schedule deleted by hand → the sweep still destroys it;
+- a paused cluster → still destroyed.
+
+### When the spend limit is near
+
+The user's spend limit ($20/month, gross before credits) is AWS's last stop, and it acts on the whole project
+([create a spend limit](https://docs.aws.amazon.com/accounts/latest/reference/create-spend-limit.html),
+[SCPs for spend limits](https://docs.aws.amazon.com/accounts/latest/reference/scps-and-rcps-for-projects.html#scps-for-spend-limits)):
+
+- **Days before the forecast reaches the limit** (with the early cost controls the user enabled), AWS-managed SCPs
+  deny new resources: `lambda:InvokeFunction`, `scheduler:CreateSchedule`, `eks:CreateCluster/CreateNodegroup`,
+  `ec2:RunInstances/CreateVolume`, `elasticloadbalancing:CreateLoadBalancer`. Idle or top-cost EC2 and Lambda may
+  be paused.
+  - **The in-AWS reapers stop working then:** Scheduler cannot invoke the Lambda.
+  - cloud-up cannot create a cluster or its schedule.
+- **At the limit**, AWS pauses the project and stops all resources; the data is kept. **After 90 days unresolved,
+  AWS permanently deletes the project data:** the state bucket, the Postgres backups and the evidence.
+
+What to do:
+
+1. **`make cloud-down` from the laptop is the guaranteed path.** None of those SCPs deny `Delete*`, `ssm:PutParameter`
+   or `s3:PutObject`, so the final backup, the evidence export and the destroy still work. Run it at the first
+   spend-limit email (50%), not at the limit.
+2. The lease sweep should have acted long before: the lease is 4 h, so a forgotten session costs ~$2, not $20.
+   If a session is still running near the limit, the sweep has failed. Check the Lambda error alarm and the
+   `shopflow-reaper-undelivered` alarm (an invocation denied by the spend-limit SCP lands in the dead-letter queue).
+3. **What a pause does to billing** for the EKS control plane, EBS volumes and the NLB: the docs do not say.
+   Assume EBS keeps billing (the data is kept). That is one more reason to have run `cloud-down` before.
+4. **If the project is paused:** within 90 days, raise the spend limit in AWS Settings → Billing to reactivate it,
+   then:
+   - run `make cloud-down` (or `CLOUD_ARGS=--force-api`) and the orphan check;
+   - copy anything that must survive out of AWS: `make cloud-evidence` output (already local under `out/`), and,
+     if the project will be dropped, the layer-0 state and the last Postgres backup, with
+     `aws s3 sync s3://shopflow-tfstate-<account>/ …` and `s3://shopflow-data-<account>/pg-backup/<serverName>/ …`.
+
+## SCP check
+
+Every resource layers 0–2 and a session create, against the AWS-managed SCPs
+([managed policies for projects](https://docs.aws.amazon.com/accounts/latest/reference/scps-and-rcps-for-projects.html)).
+
+- **Allow-list:** the "Paid Plan for projects" SCP is a `Deny` with `NotAction` (an allow-list). Every service
+  below is in it.
+- **Probe:** a read-only probe on 2026-10-16 with the admin role.
+- **Verify at Approval 1:** what only a real apply can show.
+
+| Resource / action | Layer | Verdict | Source |
+|---|---|---|---|
+| S3 buckets (state, data): versioning, lifecycle, encryption, conditional writes | 0 | allowed | allow-list `s3:*`; RegionFloor allows Sydney |
+| IAM roles (operator, EKS cluster/node, pod, ESO, Lambda, Scheduler, budget action), policies, permissions boundary | 0 | allowed | allow-list `iam:*`; DenyIAMRestrictedActions covers only providers, login profiles, aliases, groups and certificates; ProtectManagedRoles covers only `role/managed/*` |
+| IAM OIDC provider for GitHub | 0 | **denied**, removed | DenyIAMRestrictedActions `iam:*Provider*`; probe: explicit deny |
+| Operator trust on `role/managed/AccountFullAccessRole` | 0 | allowed (the trust policy lives on our role; the managed role is not modified) | ProtectManagedRoles only blocks changes to `role/managed/*`; probe: role path `/managed/` |
+| `iam:CreateServiceLinkedRole` (EKS, node group, Auto Scaling, ELB) | 0/2 | allowed | allow-list `iam:*` |
+| Budget + Budget Action (attaches the deny policy) | 0 | allowed | allow-list `budgets:*`; global endpoint in `us-east-1`, allowed by RegionFloor |
+| Cost Anomaly Detection monitor + subscription | 0 | API allowed; whether a member account may own a monitor: **verify at Approval 1** | allow-list `ce:*` |
+| Cost allocation tag activation | 0 | **likely fails** (management account only in an organization); not applied by default | AWS Billing docs; verify at Approval 1 |
+| SNS topic + email subscription | 0 | allowed | allow-list `sns:*` |
+| Lambda (python3.13, arm64), reserved concurrency 1 | 0 | allowed (concurrency quota 400: probe) | allow-list `lambda:*`; **near the spend limit `lambda:InvokeFunction` is denied** |
+| Scheduler group, hourly sweep, per-session schedule | 0/session | allowed; near the spend limit `scheduler:CreateSchedule` is denied | allow-list `scheduler:*` |
+| SQS dead-letter queue for both schedules (SSE-SQS) + its alarm | 0 | allowed; near the spend limit only `sqs:CreateQueue` is denied, so delivery to the existing queue still works | allow-list `sqs:*`, `cloudwatch:*` |
+| CloudWatch alarm, log groups (EKS audit, Lambda) | 0/2 | allowed | allow-list `cloudwatch:*`, `logs:*` |
+| SSM parameters (String, SecureString with `aws/ssm`) | 0/session | allowed | allow-list `ssm:*`, `kms:*` |
+| Glue databases | 0 | allowed | allow-list `glue:*` |
+| VPC, public subnets, route table, internet gateway, default SG (no NAT) | 1 | allowed | allow-list `ec2:*` |
+| EKS cluster, access entries, add-ons (vpc-cni, kube-proxy, pod-identity-agent, coredns, EBS CSI, metrics-server), Pod Identity associations | 2 | allowed; near the spend limit `eks:CreateCluster/CreateNodegroup` are denied | allow-list `eks:*`, `eks-auth:*`; probe: EKS reads in Sydney |
+| Managed node group, launch template, **on-demand** Graviton | 2 | allowed (probe: an on-demand dry-run would succeed). Auto Scaling launches with its service-linked role, which SCPs do not affect | allow-list `ec2:*`, `autoscaling:*` |
+| Spot instances / spot node group | — | **denied**, not used | DenyRequestSpotInstances, DenySpotMarketType; probe: explicit deny |
+| EC2 Fleet | — | **denied**, not used directly | DenyEC2Fleet |
+| EBS gp3 volumes (root, EBS CSI through Pod Identity) | 2/session | allowed; near the spend limit `ec2:CreateVolume` is denied | allow-list `ec2:*`; DenyEC2InstanceStoreRootDevice does not apply (EBS root) |
+| NLB, target groups, security groups (LB controller through Pod Identity) | session | allowed; near the spend limit `CreateLoadBalancer` is denied | allow-list `elasticloadbalancing:*` |
+| Public IPv4 on nodes and the NLB | session | allowed | allow-list `ec2:*` |
+| ECR pulls (add-on and controller images) | session | allowed | allow-list `ecr:*`, `ecr-public:*` |
+| Price List API | ops | allowed (probe) | allow-list `pricing:*`; endpoint in `us-east-1` |
+| Anything in another region (e.g. `ap-southeast-1`) | — | **denied** | RegionFloor; probe: explicit deny |
+| IAM Identity Center | — | **denied**, not used | DenySSOCreateInstance |
+
+Verify at Approval 1 (needs a valid `aws login` session; the probe session has expired):
+- the operator role assumed from the admin session;
+- the Cost Anomaly monitor in a member account;
+- cost allocation tags;
+- the `metrics-server` add-on offered in Sydney (`aws eks describe-addon-versions --addon-name metrics-server`).
 
 ## First-session checks
 
@@ -275,7 +352,8 @@ cluster; reaper workflow disabled → the Lambda destroys it; a paused cluster �
       standard-support version.
 - [ ] `aws eks describe-addon-configuration --addon-name vpc-cni` / `aws-ebs-csi-driver`: confirm
       `enableNetworkPolicy`, `env.ADDITIONAL_ENI_TAGS` and `controller.extraVolumeTags` are in the schema.
-- [ ] Spot capacity in AZ-a for the instance types; add types if the node group stays `CREATE_FAILED`/pending.
+- [ ] On-demand capacity in `ap-southeast-2a` for the node types (all three AZs offer them); if the node group stays
+      `CREATE_FAILED`/pending, check the 16-vCPU on-demand quota and the order of `node_instance_types`.
 - [ ] The Envoy Gateway Service (sf-platform aws overlay) sets `loadBalancerClass: service.k8s.aws/nlb` itself.
       Otherwise, if it is created before the LB controller's webhook is up, EKS's legacy cloud provider builds a
       Classic ELB without the `project` tag, which the reapers cannot delete.
@@ -298,8 +376,12 @@ cluster; reaper workflow disabled → the Lambda destroys it; a paused cluster �
          **only**. Delete the namespace.
       3. Send the result (which address connected) to sf-platform, who own the component. If both connect, the
          agent matches after the Service DNAT, and the VPC CIDR alone is enough.
-- [ ] OpenCost (`kubectl -n opencost port-forward svc/opencost 9090`) shows cost per namespace. It prices spot
-      nodes at on-demand rates, so compare its split with Cost Explorer's total the next day.
+- [ ] OpenCost (`kubectl -n opencost port-forward svc/opencost 9090`) shows cost per namespace (on-demand prices,
+      which now match the nodes); compare its total with Cost Explorer's the next day.
+- [ ] Node sizing (2 × r6g.large = 4 vCPU / 32 GiB, ADR 0513): `kubectl top nodes` and the pending pods under
+      `core,obs-lite` at rest and during the smoke. Write the CPU and memory headroom in `docs/cost.md`. Before any
+      session with `data`, `rt` or `batch`, decide between a third node (`node_desired_size`, 16-vCPU quota) and
+      xlarge types from those numbers.
 - [ ] `out/cloud/<session>/timings.json`: RTO-infra and RTO-service of the first session, for `docs/cost.md` and
       the Phase 6 report.
 - [ ] Measure $/hour (full stack and paused) and fill [`docs/cost.md`](../cost.md).
@@ -311,8 +393,10 @@ cluster; reaper workflow disabled → the Lambda destroys it; a paused cluster �
 | cloud-down step 4/5 over 10 minutes (finalizers, LB) | re-run `make cloud-down`; still stuck → `CLOUD_ARGS=--force-api`; write a postmortem |
 | `tofu destroy` keeps failing | `make cloud-down` again (it resumes); check `aws eks list-nodegroups`, ENIs in use, then the orphan check |
 | Orphan check exit 2 | an untagged resource exists somewhere: identify it by hand; the scripts never delete it |
-| Orphan check: `UNTAGGED … load-balancer` | a load balancer in the shopflow VPC without `project=shopflow`, typically a Classic ELB made by EKS's legacy cloud provider for a Service without the NLB class. Reapers cannot delete it (their IAM needs the tag). Check its tags and listeners, delete it (`aws elb delete-load-balancer` / `aws elbv2 delete-load-balancer`), and fix the Service that caused it. cloud-down stays failed and the hourly reaper keeps alerting until it is gone |
+| Orphan check: `UNTAGGED … load-balancer` | a load balancer in the shopflow VPC without `project=shopflow`, typically a Classic ELB made by EKS's legacy cloud provider for a Service without the NLB class. Reapers cannot delete it (their IAM needs the tag). Check its tags and listeners, delete it (`aws elb delete-load-balancer` / `aws elbv2 delete-load-balancer`), and fix the Service that caused it. cloud-down stays failed until it is gone |
 | Orphan check exit 3 | shopflow-tagged leftovers outside the home region or an EKS cluster: `cloud-down --force-api`, or delete by hand |
-| Reaper: "state lock is old" | a run died holding `cluster/terraform.tfstate.tflock`; confirm nothing runs, delete the object |
+| `make cloud-reap`: "state lock is old" | a run died holding `cluster/terraform.tfstate.tflock`; confirm nothing runs, delete the object |
+| cloud-up: "hourly reaper sweep is missing" / "is DISABLED" | layer 0 not applied, or the schedule was disabled: apply layer 0 or re-enable `shopflow/shopflow-reaper-sweep` before any session |
+| Spend-limit email (50%/75%/90%) or an access denied on `lambda:InvokeFunction` / `eks:Create*` | the spend limit is near: `make cloud-down` now, see [When the spend limit is near](#when-the-spend-limit-is-near) |
 | cloud-up: "Budget Action has fired" | spend passed $25: review `docs/cost.md`, raise `action_threshold_usd` in layer 0, then reset the action in the Budgets console |
 | cloud-up: EKS version not in standard support | bump `kubernetes_version` in `infra/cloud-contract.json` |

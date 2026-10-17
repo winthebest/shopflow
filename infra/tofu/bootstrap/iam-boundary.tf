@@ -85,6 +85,12 @@ resource "aws_iam_policy" "boundary" {
         Resource = local.arn.reaper_fn
       },
       {
+        Sid      = "ProtectReaperSweep"
+        Effect   = "Deny"
+        Action   = ["scheduler:CreateSchedule", "scheduler:UpdateSchedule", "scheduler:DeleteSchedule", "scheduler:TagResource", "scheduler:UntagResource"]
+        Resource = local.arn.sweep_rule
+      },
+      {
         Sid      = "ProtectReaperScheduleGroup"
         Effect   = "Deny"
         Action   = "scheduler:DeleteScheduleGroup"

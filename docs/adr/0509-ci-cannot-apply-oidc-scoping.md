@@ -1,6 +1,6 @@
 # 0509. CI cannot apply infrastructure; OIDC roles are scoped to one workflow
 
-- Status: Accepted
+- Status: Superseded by 0513 (2026-10-18): the AWS-managed project account denies spot and OIDC identity providers
 - Date: 2026-10-09
 - Lane: sf-cloud
 

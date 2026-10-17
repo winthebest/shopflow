@@ -18,11 +18,9 @@ SCRIPT_NAME="$(basename "${0:-cloud}" .sh)"
 DRY_RUN="${DRY_RUN:-0}"
 POLL_SECONDS="${CLOUD_POLL_SECONDS:-15}"
 
-# Operator laptops use the Identity Center -> shopflow-operator profile; CI gets credentials from
-# OIDC through the environment.
-if [ -z "${GITHUB_ACTIONS:-}" ]; then
-  export AWS_PROFILE="${AWS_PROFILE:-shopflow}"
-fi
+# Operator laptops use the `aws login` admin session -> shopflow-operator profile (docs/runbooks/cloud-session.md).
+# No CI job reaches AWS: the project account denies OIDC identity providers.
+export AWS_PROFILE="${AWS_PROFILE:-shopflow}"
 export AWS_PAGER=""
 
 # ---- output ------------------------------------------------------------------------------------
@@ -77,6 +75,7 @@ PG_BACKUP_PREFIX="$(contract .data_prefixes.pg_backup)"
 EVIDENCE_PREFIX="$(contract .data_prefixes.evidence)"
 SCHEDULE_GROUP="$(contract .reaper.schedule_group)"
 SCHEDULE_NAME="$(contract .reaper.schedule_name)"
+SWEEP_SCHEDULE_NAME="$(contract .reaper.sweep_schedule_name)"
 OPERATOR_ROLE="$(contract .roles.operator)"
 
 # ---- time (UTC; GNU and BSD date) --------------------------------------------------------------
@@ -103,7 +102,7 @@ aws_() { aws --region "$REGION" --output json "$@"; }
 ACCOUNT_ID="${ACCOUNT_ID:-}"
 account_id() {
   if [ -z "$ACCOUNT_ID" ]; then
-    ACCOUNT_ID="$(aws_ sts get-caller-identity --query Account --output text)" || die "no AWS credentials (run: aws sso login --profile ${AWS_PROFILE:-shopflow})"
+    ACCOUNT_ID="$(aws_ sts get-caller-identity --query Account --output text)" || die "no AWS credentials (run: aws login --profile shopflow-admin; the ${AWS_PROFILE:-shopflow} profile assumes the operator role from it)"
   fi
   printf '%s' "$ACCOUNT_ID"
 }
@@ -111,7 +110,7 @@ account_id() {
 # Fail unless the caller is the expected role (protects against running with an admin profile).
 require_role() {
   local arn
-  arn="$(aws_ sts get-caller-identity --query Arn --output text)" || die "no AWS credentials (run: aws sso login)"
+  arn="$(aws_ sts get-caller-identity --query Arn --output text)" || die "no AWS credentials (run: aws login --profile shopflow-admin)"
   case "$arn" in
     *":assumed-role/$1/"*) ;;
     *) die "expected role $1, got $arn (set AWS_PROFILE to the $1 profile)" ;;
@@ -193,7 +192,7 @@ schedule_upsert() {
     --group-name "$SCHEDULE_GROUP" --name "$SCHEDULE_NAME"
     --schedule-expression "$(contract .reaper.schedule_rate)" --start-date "$start"
     --flexible-time-window Mode=OFF --state ENABLED
-    --target "{\"Arn\":\"$target\",\"RoleArn\":\"$role\",\"Input\":\"{}\"}"
+    --target "{\"Arn\":\"$target\",\"RoleArn\":\"$role\",\"Input\":\"{}\",\"DeadLetterConfig\":{\"Arn\":\"arn:aws:sqs:$REGION:$account:$(contract .reaper.dead_letter_queue)\"}}"
   )
   if aws_ scheduler get-schedule --group-name "$SCHEDULE_GROUP" --name "$SCHEDULE_NAME" >/dev/null 2>&1; then
     run aws_ scheduler update-schedule "${args[@]}" >/dev/null

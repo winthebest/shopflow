@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# The GitHub reaper (.github/workflows/cloud-reaper.yml): destroy an expired session without the
-# operator, using AWS APIs only, so it works while the node group is paused or the EKS API is closed.
+# Reap an expired session from the operator's laptop (`make cloud-reap`), with the full layer-2 destroy the
+# in-AWS Lambda reaper cannot run. Unattended reaping is the Lambda's job (the hourly sweep and the per-session
+# schedule, layer 0); there is no GitHub reaper, because project accounts deny OIDC providers (ADR 0513).
+# AWS APIs only, so it works while the node group is paused or the EKS API is closed.
 #   1 take the layer-2 state lock (same S3 lockfile OpenTofu uses) -> nobody applies meanwhile
 #   2 re-read the lease *after* holding the lock; a missing lease counts as expired
 #   3 delete NLBs by tag -> node groups -> available EBS (reaper CLI, same code as the Lambda)
 #   4 tofu destroy layer 2 under our lock (-lock=false) -> orphan check -> release the lock
 # There is no final backup on this path: RPO is the WAL archive_timeout (default 5 minutes).
-# Exit non-zero (= alert through the failed workflow) when it fails, when the lock is stale, or
-# when the cluster outlives its lease by more than the grace period.
+# Exit non-zero when it fails, when the lock is stale, or when the cluster outlives its lease by more than the
+# grace period.
 set -euo pipefail
 # shellcheck source=scripts/cloud-lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/cloud-lib.sh"
@@ -39,8 +41,8 @@ acquire_lock() {
   local info out
   info="$OUT_DIR/reaper-lock.json"
   mkdir -p "$OUT_DIR"
-  jq -n --arg id "reaper-${GITHUB_RUN_ID:-local}-$$" --arg created "$(iso_from_epoch "$(now_epoch)")" --arg path "$(contract .state_keys.cluster)" \
-    '{ID: $id, Operation: "OperationTypeApply", Info: "cloud-reaper", Who: "github-actions", Version: "", Created: $created, Path: $path}' >"$info"
+  jq -n --arg id "reaper-$(hostname -s 2>/dev/null || echo laptop)-$$" --arg created "$(iso_from_epoch "$(now_epoch)")" --arg path "$(contract .state_keys.cluster)" \
+    '{ID: $id, Operation: "OperationTypeApply", Info: "cloud-reap", Who: "cloud-reap", Version: "", Created: $created, Path: $path}' >"$info"
   if dry_run; then
     run aws_ s3api put-object --bucket "$(state_bucket)" --key "$LOCK_KEY" --body "$info" --if-none-match '*'
     return 0
@@ -74,15 +76,14 @@ main() {
   parse_common_args "$@"
   [ ${#ARGS[@]} -eq 0 ] || { usage >&2; die "unknown argument: ${ARGS[0]}"; }
   require_cmds aws jq tofu uv
-  require_role "$(contract .roles.reaper)"
+  require_role "$OPERATOR_ROLE"
   trap release_lock EXIT
 
   local status grace overdue
   status="$(cluster_status)"
   grace=$(($(contract .reaper.grace_hours) * 3600))
   if [ "$status" = ABSENT ] && [ -z "$(cluster_load_balancers)" ]; then
-    # Still look for leftovers every hour (e.g. an untagged load balancer cloud-down could not remove): a
-    # failing run is the alert.
+    # Still look for leftovers (e.g. an untagged load balancer cloud-down could not remove).
     log "no session cluster and no load balancers: nothing to reap; checking for orphans"
     "$REPO_ROOT/scripts/aws-orphan-check.sh"
     return 0
@@ -94,7 +95,7 @@ main() {
     overdue="$(overdue_seconds)"
     [ "$age" -lt "$LOCK_STALE_SECONDS" ] || die "the layer-2 state lock is ${age}s old: a run died holding it; check and remove s3://$(state_bucket)/$LOCK_KEY"
     [ "$overdue" -le "$grace" ] || die "cluster $status is ${overdue}s past its lease and the state is locked (${age}s): investigate now"
-    log "state is locked by another run (${age}s); trying again next hour"
+    log "state is locked by another run (${age}s); try again later"
     return 0
   fi
 

@@ -3,6 +3,9 @@
 - Status: Accepted
 - Date: 2026-10-09
 - Lane: sf-cloud
+- Amended by 0513 (2026-10-18): the GitHub reaper is gone (the project account denies OIDC providers). The two
+  reapers are now both in AWS: an hourly EventBridge sweep (always on) and the per-session schedule, running the same
+  lease-aware Lambda; `scripts/cloud-reap.sh` stays as the laptop tool with the state lock
 
 ## Context
 
