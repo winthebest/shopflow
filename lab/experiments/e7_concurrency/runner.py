@@ -38,12 +38,10 @@ def lab_connector(arm: Arm) -> Connection:
     """A `harness` connection to the lab stack, after the lab guard, with the arm's client settings."""
     from lab.guard import guarded_connect  # the lab package, imported only where a real run needs it
 
-    conn = guarded_connect("harness")
-    # lab.trino_client.connect takes no client options; the connection reads both per request.
+    options: dict[str, object] = {"request_timeout": arm.request_timeout_seconds}
     if arm.client_max_attempts is not None:
-        conn.max_attempts = arm.client_max_attempts
-    conn.request_timeout = arm.request_timeout_seconds
-    return conn
+        options["max_attempts"] = arm.client_max_attempts
+    return guarded_connect("harness", **options)
 
 
 def lab_check_table(conn: Connection, table: str) -> None:
