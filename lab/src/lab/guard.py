@@ -1,17 +1,18 @@
 """The harness refuses the platform's lakehouse, and records results only on the lab stack.
 
 The platform's Trino (deploy/platform/trino) serves catalogs `lake` and `lake_ro` on Polaris warehouse `lake`, bucket
-`lake`. The lab has its own Polaris, SeaweedFS and warehouses on buckets `lab-*` (lab/polaris.json). Before a session
-is handed out, and for every table the harness touches:
+`lake`, and `pg` on the shop database. The lab has its own Polaris, SeaweedFS and warehouses on buckets `lab-*`
+(lab/polaris.json). Before a session is handed out, and for every table the harness touches:
 
-- the lab's catalog files ($LAB_RUN_DIR/trino/catalog, rendered by lab/stack.sh): every Iceberg catalog uses this
-  stack's Polaris and SeaweedFS, and none is named `lake*` or uses warehouse `lake`;
+- the lab's catalog files ($LAB_RUN_DIR/trino/catalog, rendered by lab/stack.sh), default deny: no file has a
+  platform catalog's name (`lake`, `lake_*`, `pg`); a catalog is either Iceberg on this stack's Polaris and SeaweedFS,
+  never warehouse `lake`, or uses a connector listed in LAB_CONNECTORS; any other connector is refused;
 - the Polaris specs (lab/polaris.json and overlays): no warehouse `lake`, every location under s3://lab-*/;
-- the server: an identity that sees a `lake*` catalog is on the platform's Trino. Results (dev, baseline, held-out,
+- the server: an identity that sees a platform catalog is on the platform's Trino. Results (dev, baseline, held-out,
   eval) also need the lab's node environment, `lab` (lab/trino/etc/node.properties): LAB_TRINO_URL may point at k3d
   for exploring (`require_lab=False`), never for numbers;
 - targets: the harness writes only to lab catalogs (`lab_exp`, `lab_ops`, `lab_ro`, `lab_sbx`, `lab_base_<run>`), and
-  every table it touches is stored under s3://lab-*/.
+  every table it touches (named `catalog.schema.table`) is stored under s3://lab-*/.
 """
 
 import json
@@ -27,10 +28,15 @@ LAB_ENVIRONMENT = "lab"
 LAB_POLARIS_URI = "http://polaris:8181/api/catalog"
 LAB_S3_ENDPOINT = "http://seaweedfs:8333"
 PLATFORM = "lake"
+# Connectors besides Iceberg that a lab catalog may use, each with its reason; every other connector is refused.
+LAB_CONNECTORS = {
+    "tpch": "generated benchmark data, computed in memory: no storage, no credentials",
+}
 
 LAB_CATALOG = re.compile(r"lab_(exp|ops|ro|sbx|base_[a-z0-9_]+)")
 LAB_LOCATION = re.compile(r"s3://lab-[a-z0-9-]+/.*")
 _SHOWN_LOCATION = re.compile(r"\blocation = '([^']*)'")
+_IDENTIFIER = re.compile(r"[a-z0-9_]+")
 
 
 class LakeGuardError(RuntimeError):
@@ -38,7 +44,7 @@ class LakeGuardError(RuntimeError):
 
 
 def _platform_name(name: str) -> bool:
-    return name == PLATFORM or name.startswith(PLATFORM + "_")
+    return name in (PLATFORM, "pg") or name.startswith(PLATFORM + "_")
 
 
 def read_properties(path: Path) -> dict[str, str]:
@@ -52,22 +58,24 @@ def read_properties(path: Path) -> dict[str, str]:
 
 
 def check_catalog_files(directory: Path) -> list[str]:
-    """Names of the Iceberg catalogs in `directory`; refuses any that could reach the platform's lakehouse."""
+    """Names of the catalogs in `directory`, after refusing any that is not provably the lab's (default deny)."""
     names = []
     for path in sorted(directory.glob("*.properties")):
         properties = read_properties(path)
-        if properties.get("connector.name") != "iceberg":
-            continue
+        connector = properties.get("connector.name")
         problems = []
         if _platform_name(path.stem):
             problems.append("its name is the platform's")
-        if properties.get("iceberg.rest-catalog.warehouse") == PLATFORM:
-            problems.append(f"warehouse {PLATFORM}")
-        rest_uri = properties.get("iceberg.rest-catalog.uri")
-        if properties.get("iceberg.catalog.type") != "rest" or rest_uri != LAB_POLARIS_URI:
-            problems.append(f"catalog is not this stack's Polaris ({LAB_POLARIS_URI})")
-        if properties.get("s3.endpoint") != LAB_S3_ENDPOINT:
-            problems.append(f"S3 is not this stack's SeaweedFS ({LAB_S3_ENDPOINT})")
+        if connector == "iceberg":
+            if properties.get("iceberg.rest-catalog.warehouse") == PLATFORM:
+                problems.append(f"warehouse {PLATFORM}")
+            rest_uri = properties.get("iceberg.rest-catalog.uri")
+            if properties.get("iceberg.catalog.type") != "rest" or rest_uri != LAB_POLARIS_URI:
+                problems.append(f"catalog is not this stack's Polaris ({LAB_POLARIS_URI})")
+            if properties.get("s3.endpoint") != LAB_S3_ENDPOINT:
+                problems.append(f"S3 is not this stack's SeaweedFS ({LAB_S3_ENDPOINT})")
+        elif connector not in LAB_CONNECTORS:
+            problems.append(f"connector {connector}: the lab allows iceberg and {', '.join(sorted(LAB_CONNECTORS))}")
         if problems:
             raise LakeGuardError(f"catalog file {path}: {'; '.join(problems)}")
         names.append(path.stem)
@@ -133,9 +141,19 @@ def guarded_connect(user: str, *, require_lab: bool = True, settings: Settings |
     return conn
 
 
+def table_parts(table: str) -> tuple[str, str, str]:
+    """`catalog.schema.table` (unquoted, as Trino lowercases them) as its three parts; anything else is refused."""
+    parts = table.split(".")
+    if len(parts) != 3 or not all(_IDENTIFIER.fullmatch(part) for part in parts):
+        raise LakeGuardError(f"table {table!r}: name tables as catalog.schema.table ([a-z0-9_] each)")
+    return parts[0], parts[1], parts[2]
+
+
 def check_table(conn: trino.dbapi.Connection, table: str) -> str:
     """Refuses a table outside the lab catalogs or stored outside the lab buckets; returns its location."""
-    check_target_catalog(table.split(".", 1)[0])
-    location = shown_location(query(conn, f"SHOW CREATE TABLE {table}")[0][0])
+    parts = table_parts(table)
+    check_target_catalog(parts[0])
+    quoted = ".".join(f'"{part}"' for part in parts)
+    location = shown_location(query(conn, f"SHOW CREATE TABLE {quoted}")[0][0])
     check_location(location)
     return location

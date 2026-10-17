@@ -32,12 +32,14 @@ or `make lab-up` and outside k3d.
    24317 and 24318.
 5. **The harness refuses `lake`** (`lab/src/lab/guard.py`). Before it hands out a session (`guarded_connect`), and
    for every table it touches (`check_table`):
-   - every Iceberg catalog file in the run directory uses this stack's Polaris (`http://polaris:8181`) and
-     SeaweedFS (`http://seaweedfs:8333`), and none is named `lake*` or uses warehouse `lake`;
+   - the catalog files in the run directory, default deny: none has a platform catalog's name (`lake`,
+     `lake_*`, `pg`), and each is either Iceberg on this stack's Polaris (`http://polaris:8181`) and SeaweedFS
+     (`http://seaweedfs:8333`), never warehouse `lake`, or uses a connector the guard lists with a reason (`tpch`:
+     generated data, no storage); every other connector (Hive, Delta Lake, Hudi, PostgreSQL, …) is refused;
    - every Polaris spec has lab warehouses only, located under `s3://lab-*/`;
-   - an identity that sees a `lake*` catalog is on the platform's Trino;
-   - targets are `lab_exp`, `lab_ops`, `lab_ro`, `lab_sbx` and `lab_base_<run>` only, and every table is stored
-     under `s3://lab-*/` (its `SHOW CREATE TABLE` location).
+   - an identity that sees a platform catalog is on the platform's Trino;
+   - targets are `lab_exp`, `lab_ops`, `lab_ro`, `lab_sbx` and `lab_base_<run>` only, named `catalog.schema.table`,
+     and every table is stored under `s3://lab-*/` (its `SHOW CREATE TABLE` location).
 6. **Results only from the lab.** Dev, baseline, held-out and eval runs need Trino's node environment `lab`
    (`/v1/info`; `lab/trino/etc/node.properties`). The platform's Trino runs the chart's default, `production`.
    `LAB_TRINO_URL` may point the harness at the k3d Trino for exploring (`require_lab=False`), never for numbers.

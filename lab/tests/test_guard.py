@@ -13,6 +13,7 @@ from lab.guard import (
     check_target_catalog,
     check_visible_catalogs,
     shown_location,
+    table_parts,
 )
 from lab.trino_client import REPO
 
@@ -38,6 +39,7 @@ def test_the_lab_polaris_specs_pass():
         ("lab_exp", "iceberg.catalog.type=rest", "iceberg.catalog.type=glue"),
         ("lake", "", ""),
         ("lake_ro", "", ""),
+        ("pg", "", ""),
     ],
 )
 def test_a_catalog_that_could_reach_the_platform_is_refused(tmp_path: Path, name: str, old: str, new: str):
@@ -46,9 +48,23 @@ def test_a_catalog_that_could_reach_the_platform_is_refused(tmp_path: Path, name
         check_catalog_files(tmp_path)
 
 
-def test_a_non_iceberg_catalog_is_not_a_lakehouse(tmp_path: Path):
+def test_an_allowed_connector_passes(tmp_path: Path):
     (tmp_path / "tpch.properties").write_text("connector.name=tpch\n")
-    assert check_catalog_files(tmp_path) == []
+    assert check_catalog_files(tmp_path) == ["tpch"]
+
+
+@pytest.mark.parametrize("connector", ["hive", "delta_lake", "hudi", "postgresql", "memory", None])
+def test_any_other_connector_is_refused(tmp_path: Path, connector: str | None):
+    (tmp_path / "lab_other.properties").write_text(f"connector.name={connector}\n" if connector else "# empty\n")
+    with pytest.raises(LakeGuardError, match=f"connector {connector}"):
+        check_catalog_files(tmp_path)
+
+
+@pytest.mark.parametrize("name", ["lake", "lake_ro", "pg"])
+def test_a_platform_name_is_refused_whatever_the_connector(tmp_path: Path, name: str):
+    (tmp_path / f"{name}.properties").write_text("connector.name=tpch\n")
+    with pytest.raises(LakeGuardError, match="its name is the platform's"):
+        check_catalog_files(tmp_path)
 
 
 @pytest.mark.parametrize(
@@ -67,7 +83,7 @@ def test_a_polaris_spec_with_the_platform_warehouse_is_refused(tmp_path: Path, c
 
 def test_an_identity_that_sees_a_platform_catalog_is_not_on_the_lab():
     check_visible_catalogs(["lab_exp", "system", "tpch"])
-    for catalogs in (["lake", "system"], ["lake_ro"]):
+    for catalogs in (["lake", "system"], ["lake_ro"], ["pg", "lab_exp"]):
         with pytest.raises(LakeGuardError, match="platform"):
             check_visible_catalogs(catalogs)
 
@@ -95,6 +111,13 @@ def test_locations_must_be_in_a_lab_bucket():
     for location in ("s3://lake/warehouse/bronze/orders", "s3://lab-exp", "s3a://lab-exp/x", "file:///tmp/t"):
         with pytest.raises(LakeGuardError):
             check_location(location)
+
+
+def test_tables_are_named_catalog_schema_table():
+    assert table_parts("lab_exp.probe.t_1") == ("lab_exp", "probe", "t_1")
+    for table in ("probe.t", "lab_exp.probe.t.x", 'lab_exp."probe".t', "lab_exp..t", "lab_exp.probe.t; DROP"):
+        with pytest.raises(LakeGuardError, match=r"catalog\.schema\.table"):
+            table_parts(table)
 
 
 def test_the_location_is_read_from_show_create():
