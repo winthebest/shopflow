@@ -5,8 +5,13 @@ It streams scripted replies as server-sent events, the way `client.beta.messages
 thinking other than adaptive (`disabled`, `budget_tokens`), sampling parameters, an unknown effort, forced
 `tool_choice`, a strict tool whose schema is not closed, a `fallbacks` form without its own beta header, assistant
 prefill, tool results that do not answer the previous turn's tool calls, more than four cache breakpoints, and an
-edited history: a request that carries a thinking block this server issued must repeat the system prompt, the tools
-and every earlier message exactly as they were when the block was produced.
+edited history: a request that carries a thinking block this server issued must repeat the prefix that produced it
+(system prompt, tools, every earlier message, and the earlier blocks of the same turn) as the API compares it. It
+ignores `cache_control` markers, string content versus a single text block, whitespace around text, whitespace-only
+text blocks, key order, the order of tools, other request parameters and thinking blocks (skill
+`shared/preserved-thinking-migration.md`), and `fallback` markers, which may be kept or dropped
+(`shared/model-migration.md` § refusal); everything else counts. Not modelled: the chain between thinking blocks,
+which makes removing a thinking block other than a leading one an edit.
 
 The checks are written here independently of `agent.llm`, so a mistake in the adapter cannot hide in a shared helper.
 Error messages quote the docs where the docs give the text; elsewhere they only name the field.
@@ -23,11 +28,6 @@ import httpx2
 MODEL = "claude-opus-5-5"
 EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 FALLBACK_BETAS = {"default": "server-side-fallback-2026-07-01", "list": "server-side-fallback-2026-06-01"}
-API_BLOCK_FIELDS = {
-    "text": ("text",),
-    "thinking": ("thinking", "signature"),
-    "tool_use": ("id", "name", "input"),
-}
 
 
 @dataclass
@@ -80,28 +80,49 @@ def canonical(value: Any) -> str:
 
 
 def echo_form(content: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """A turn as the client must send it back: after a mid-output fallback, only text blocks from before the last
-    `fallback` block (the declined attempt's thinking and tool calls are omitted); the marker itself may be dropped."""
-    content = [api_block(b) for b in content]
+    """A turn as the client must send it back: after a mid-output fallback, the declined attempt's thinking and tool
+    calls before the last `fallback` block are omitted. The markers are ignored audit blocks: kept or dropped."""
     last = max((i for i, b in enumerate(content) if b["type"] == "fallback"), default=None)
     if last is None:
-        return content
-    return [b for b in content[:last] if b["type"] == "text"] + [
-        b for b in content[last + 1 :] if b["type"] != "fallback"
-    ]
+        return list(content)
+    return [b for b in content[:last] if b["type"] in ("text", "fallback")] + content[last:]
 
 
-def api_block(block: dict[str, Any]) -> dict[str, Any]:
-    """The fields the API defines for a block type; anything else a client sends along is not compared."""
-    keys = API_BLOCK_FIELDS.get(block["type"])
-    return block if keys is None else {"type": block["type"], **{k: block.get(k) for k in keys}}
+def comparable(value: Any) -> Any:
+    """Without `cache_control` markers and null fields, which do not change what a block says."""
+    if isinstance(value, dict):
+        return {k: comparable(v) for k, v in value.items() if k != "cache_control" and v is not None}
+    if isinstance(value, list):
+        return [comparable(v) for v in value]
+    return value
+
+
+def compared_blocks(content: str | list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    blocks_ = [{"type": "text", "text": content}] if isinstance(content, str) else content or []
+    kept = []
+    for block in comparable(blocks_):
+        if block["type"] in ("thinking", "redacted_thinking", "fallback"):
+            continue
+        if block["type"] == "text":
+            block = {**block, "text": block["text"].strip()}
+            if not block["text"]:
+                continue
+        kept.append(block)
+    return kept
+
+
+def prefix_form(body: dict[str, Any], messages: list[dict[str, Any]]) -> str:
+    """The prefix as the API compares it for a thinking block (see the module docstring)."""
+    tools = sorted(comparable(body.get("tools") or []), key=lambda tool: tool["name"])
+    turns = [{"role": m["role"], "content": compared_blocks(m["content"])} for m in messages]
+    return canonical({"system": compared_blocks(body.get("system")), "tools": tools, "messages": turns})
 
 
 class FakeMessagesAPI:
     def __init__(self, *replies: Reply) -> None:
         self.replies = deque(replies)
         self.requests: list[Recorded] = []
-        self._issued: dict[str, tuple[str, str]] = {}  # signature -> (prefix, the assistant turn) as issued
+        self._issued: dict[str, tuple[str, str]] = {}  # signature -> (prefix, thinking text) as issued
         self._ids = itertools.count(1)
 
     @property
@@ -121,11 +142,11 @@ class FakeMessagesAPI:
         if reply.status != 200:
             return error(reply.status, reply.error_type, "scripted error")
         assert body.get("stream") is True, "this fake only streams"
-        prefix = canonical({"system": body.get("system"), "tools": body.get("tools"), "messages": body["messages"]})
-        turn = canonical(echo_form(reply.content))
-        for block in reply.content:
+        echoed = echo_form(reply.content)
+        for j, block in enumerate(echoed):
             if block["type"] == "thinking":
-                self._issued[block["signature"]] = (prefix, turn)
+                turn = {"role": "assistant", "content": echoed[:j]}
+                self._issued[block["signature"]] = (prefix_form(body, [*body["messages"], turn]), block["thinking"])
         return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=sse(reply, next(self._ids)))
 
 
@@ -216,12 +237,13 @@ def check_history(body: dict[str, Any], issued: dict[str, tuple[str, str]]) -> N
     for i, message in enumerate(messages):
         if message["role"] != "assistant":
             continue
-        for block in blocks(message):
+        content = blocks(message)
+        for j, block in enumerate(content):
             if block["type"] != "thinking" or block.get("signature") not in issued:
                 continue
-            prefix, turn = issued[block["signature"]]
-            now = canonical({"system": body.get("system"), "tools": body.get("tools"), "messages": messages[:i]})
-            if now != prefix or canonical(echo_form(blocks(message))) != turn:
+            prefix, thinking_text = issued[block["signature"]]
+            turn = {"role": "assistant", "content": content[:j]}
+            if prefix_form(body, [*messages[:i], turn]) != prefix or block.get("thinking") != thinking_text:
                 raise Rejected(f"messages.{i}: thinking block from an edited conversation")
 
 
