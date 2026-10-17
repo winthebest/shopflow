@@ -22,7 +22,7 @@ variables {
   action_target_role_names = ["shopflow-operator", "shopflow-pod-aws-lb-controller"]
 }
 
-run "budget_excludes_credits_and_refunds" {
+run "budgets_exclude_credits_and_refunds" {
   command = apply
 
   assert {
@@ -31,7 +31,9 @@ run "budget_excludes_credits_and_refunds" {
   }
 
   assert {
-    condition     = one(aws_budgets_budget.total.cost_types).include_credit == false && one(aws_budgets_budget.total.cost_types).include_refund == false
+    condition = alltrue([
+      for b in [aws_budgets_budget.total, aws_budgets_budget.monthly] : one(b.cost_types).include_credit == false && one(b.cost_types).include_refund == false
+    ])
     error_message = "Credits are applied before Budgets evaluates spend; a budget that counts them never alerts."
   }
 
@@ -39,21 +41,46 @@ run "budget_excludes_credits_and_refunds" {
     condition = toset([for n in aws_budgets_budget.total.notification : "${n.notification_type}:${n.threshold}"]) == toset([
       "ACTUAL:10", "ACTUAL:20", "FORECASTED:25",
     ])
-    error_message = "Emails at 10/20 USD actual and 25 USD forecast."
+    error_message = "The cumulative budget emails at 10/20 USD actual and 25 USD forecast."
   }
 
   assert {
     condition     = alltrue([for n in aws_budgets_budget.total.notification : n.threshold_type == "ABSOLUTE_VALUE"])
-    error_message = "Thresholds are in USD, not percent of the limit."
+    error_message = "Cumulative thresholds are in USD, not percent of the limit."
   }
 }
 
-run "budget_action_attaches_deny_policy_at_25_usd" {
+run "monthly_budget_alerts_below_the_spend_limit" {
   command = apply
 
   assert {
-    condition     = one(aws_budgets_budget_action.deny_create.action_threshold).action_threshold_value == 25
-    error_message = "The Budget Action fires at 25 USD actual spend."
+    condition     = aws_budgets_budget.monthly.time_unit == "MONTHLY" && aws_budgets_budget.monthly.limit_amount == "20.00" && aws_budgets_budget.monthly.limit_unit == "USD"
+    error_message = "The monthly budget mirrors the 20 USD monthly spend limit and resets with it."
+  }
+
+  assert {
+    condition = toset([for n in aws_budgets_budget.monthly.notification : "${n.notification_type}:${n.threshold_type}:${n.threshold}"]) == toset([
+      "ACTUAL:PERCENTAGE:40", "FORECASTED:PERCENTAGE:75",
+    ])
+    error_message = "Monthly emails at 40% actual (8 USD) and 75% forecast (15 USD)."
+  }
+}
+
+run "budget_action_attaches_deny_policy_at_60_percent_of_the_month" {
+  command = apply
+
+  assert {
+    condition     = aws_budgets_budget_action.deny_create.budget_name == aws_budgets_budget.monthly.name
+    error_message = "The Budget Action sits on the monthly budget, not on the cumulative one."
+  }
+
+  assert {
+    condition = (
+      one(aws_budgets_budget_action.deny_create.action_threshold).action_threshold_type == "PERCENTAGE"
+      && one(aws_budgets_budget_action.deny_create.action_threshold).action_threshold_value == 60
+      && aws_budgets_budget_action.deny_create.notification_type == "ACTUAL"
+    )
+    error_message = "The Budget Action fires at 60% of the month's actual spend (12 USD): with 8-12 h of Budgets lag it still lands under the limit."
   }
 
   assert {
@@ -125,4 +152,14 @@ run "reuses_existing_anomaly_monitor" {
     condition     = toset(keys(aws_ce_cost_allocation_tag.this)) == toset(["project", "env"])
     error_message = "project and env are activated as cost allocation tags."
   }
+}
+
+run "an_action_at_or_above_the_limit_is_rejected" {
+  command = plan
+
+  variables {
+    action_threshold_percent = 100
+  }
+
+  expect_failures = [var.action_threshold_percent]
 }

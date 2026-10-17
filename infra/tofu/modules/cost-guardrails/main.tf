@@ -1,7 +1,9 @@
 # Cost guardrails that keep working while the account spends credits.
 # AWS applies credits before Budgets evaluates spend, so a budget that includes credits stays at
-# $0 and never alerts: every budget here excludes credits and refunds. The budget covers one
-# custom window (the project) so the USD thresholds are cumulative and never reset mid-project.
+# $0 and never alerts: every budget here excludes credits and refunds. Two budgets:
+# - total: one custom window (the project), so its USD email thresholds are cumulative;
+# - monthly: mirrors the account's monthly spend limit (an AWS setting outside this repo), so its
+#   emails and the Budget Action fire before the limit pauses the project.
 
 # Not KMS-encrypted on purpose: Cost Anomaly Detection and CloudWatch cannot publish to a topic
 # encrypted with the AWS-managed SNS key, and a customer key costs $1/month. Alerts carry no secrets.
@@ -83,10 +85,42 @@ resource "aws_budgets_budget" "total" {
   }
 }
 
+# Resets every calendar month, like the spend limit. Percent thresholds follow monthly_limit_usd.
+resource "aws_budgets_budget" "monthly" {
+  name              = "${var.name_prefix}-monthly"
+  budget_type       = "COST"
+  limit_amount      = format("%.2f", var.monthly_limit_usd)
+  limit_unit        = "USD"
+  time_unit         = "MONTHLY"
+  time_period_start = var.budget_start
+  time_period_end   = var.budget_end
+
+  cost_types {
+    include_credit = false
+    include_refund = false
+  }
+
+  notification {
+    comparison_operator        = "GREATER_THAN"
+    threshold                  = var.monthly_actual_alert_percent
+    threshold_type             = "PERCENTAGE"
+    notification_type          = "ACTUAL"
+    subscriber_email_addresses = [var.alert_email]
+  }
+
+  notification {
+    comparison_operator        = "GREATER_THAN"
+    threshold                  = var.monthly_forecast_alert_percent
+    threshold_type             = "PERCENTAGE"
+    notification_type          = "FORECASTED"
+    subscriber_email_addresses = [var.alert_email]
+  }
+}
+
 # Policy the Budget Action attaches; it only blocks creating billable capacity.
 resource "aws_iam_policy" "deny_create" {
   name        = "${var.name_prefix}-budget-deny"
-  description = "Attached by the Budget Action at ${var.action_threshold_usd} USD: blocks new billable capacity, keeps teardown working."
+  description = "Attached by the Budget Action at ${var.action_threshold_percent}% of the monthly budget: blocks new billable capacity, keeps teardown working."
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -129,16 +163,18 @@ resource "aws_iam_role_policy" "budget_action" {
   })
 }
 
+# On the monthly budget: actual spend reaches the threshold well before the spend limit, even with
+# Budgets' 8-12 h refresh lag.
 resource "aws_budgets_budget_action" "deny_create" {
-  budget_name        = aws_budgets_budget.total.name
+  budget_name        = aws_budgets_budget.monthly.name
   action_type        = "APPLY_IAM_POLICY"
   approval_model     = "AUTOMATIC"
   notification_type  = "ACTUAL"
   execution_role_arn = aws_iam_role.budget_action.arn
 
   action_threshold {
-    action_threshold_type  = "ABSOLUTE_VALUE"
-    action_threshold_value = var.action_threshold_usd
+    action_threshold_type  = "PERCENTAGE"
+    action_threshold_value = var.action_threshold_percent
   }
 
   definition {

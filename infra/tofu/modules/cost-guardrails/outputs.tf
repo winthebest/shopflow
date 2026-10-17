@@ -4,7 +4,12 @@ output "alert_topic_arn" {
 }
 
 output "budget_name" {
-  description = "Name of the cost budget (used by cloud-up to check the Budget Action status)."
+  description = "Name of the monthly budget that carries the Budget Action (cloud-up checks its status)."
+  value       = aws_budgets_budget.monthly.name
+}
+
+output "cumulative_budget_name" {
+  description = "Name of the cumulative budget (email alerts only)."
   value       = aws_budgets_budget.total.name
 }
 

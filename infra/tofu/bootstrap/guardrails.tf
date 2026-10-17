@@ -9,7 +9,8 @@ module "cost_guardrails" {
   budget_limit_usd              = var.budget_limit_usd
   budget_start                  = var.budget_start
   budget_end                    = var.budget_end
-  action_threshold_usd          = var.action_threshold_usd
+  monthly_limit_usd             = var.monthly_limit_usd
+  action_threshold_percent      = var.action_threshold_percent
   anomaly_monitor_arn           = var.anomaly_monitor_arn
   activate_cost_allocation_tags = var.activate_cost_allocation_tags
 

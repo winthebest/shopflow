@@ -71,7 +71,7 @@ parse_args() {
 
 check_budget_action() {
   local statuses attached
-  statuses="$(aws_ budgets describe-budget-actions-for-budget --account-id "$(account_id)" --budget-name "$PROJECT-total" \
+  statuses="$(aws_ budgets describe-budget-actions-for-budget --account-id "$(account_id)" --budget-name "$PROJECT-monthly" \
     --query 'Actions[].Status' --output text)" || die "cannot read the Budget Action (is layer 0 applied?)"
   case "$statuses" in
     *EXECUTION_SUCCESS* | *EXECUTION_IN_PROGRESS* | *PENDING*)

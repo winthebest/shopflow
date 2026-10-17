@@ -3,6 +3,9 @@
 - Status: Accepted
 - Date: 2026-10-09
 - Lane: sf-cloud
+- Amended by 0513 (Approval 1): the Budget Action moves to a MONTHLY budget `shopflow-monthly` ($20, mirroring the
+  account's monthly spend limit) at 60% actual, with emails at 40% actual and 75% forecast. `shopflow-total` keeps
+  its cumulative emails and no longer has an action. Both still exclude credits and refunds.
 
 ## Context
 

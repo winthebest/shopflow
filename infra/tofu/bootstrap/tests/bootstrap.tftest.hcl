@@ -51,7 +51,7 @@ run "every_role_carries_the_boundary" {
   }
 
   assert {
-    # operator, eks cluster/node, ci-plan, reaper, budget action, 7 pod roles, 6 ESO namespace roles, Lambda + scheduler
+    # operator, eks cluster/node, budget action, 7 pod roles, 6 ESO namespace roles, Lambda + scheduler
     condition     = length(output.role_boundaries) == 19
     error_message = "A role was added without being listed in role_boundaries."
   }
@@ -218,6 +218,11 @@ run "pod_roles_are_scoped_by_prefix" {
   assert {
     condition     = toset(module.cost_guardrails.budget_action_target_roles) == toset(["shopflow-operator", "shopflow-pod-aws-lb-controller"])
     error_message = "The Budget Action fences the operator and the load balancer controller."
+  }
+
+  assert {
+    condition     = output.budget_name == "shopflow-monthly" && module.cost_guardrails.cumulative_budget_name == "shopflow-total"
+    error_message = "cloud-up checks the Budget Action on the monthly budget; the cumulative budget keeps its emails."
   }
 }
 

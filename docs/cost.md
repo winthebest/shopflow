@@ -25,9 +25,9 @@ every budget here excludes credits.
 
 | Guardrail | Setting |
 |---|---|
-| Budget `shopflow-total` | cost budget, **custom window 2026-10-01 → 2027-10-01** (one cumulative period: thresholds never reset at a month or year boundary), `include_credit = false`, `include_refund = false`, limit $100 |
-| Emails | actual > $10, actual > $20, forecast > $25 (cumulative) |
-| Budget Action | actual > $25 (cumulative) → attaches `shopflow-budget-deny` (no new EKS cluster/node group, EC2, EBS, ELB, NAT, EIP) to `shopflow-operator` and the LB controller role. Teardown, scale-down and reads keep working. Deliberate checkpoint: review this file, then raise the threshold (`action_threshold_usd`) and reset the action. cloud-up refuses to start while the action has fired or the policy is still attached to the operator |
+| Budget `shopflow-total` | cost budget, **custom window 2026-10-01 → 2027-10-01** (one cumulative period: thresholds never reset at a month or year boundary), `include_credit = false`, `include_refund = false`, limit $100 (the project cap). Emails only: actual > $10, actual > $20, forecast > $25 |
+| Budget `shopflow-monthly` | MONTHLY cost budget, `include_credit = false`, `include_refund = false`, limit $20 (`monthly_limit_usd`, mirrors the spend limit). Emails: actual > 40% ($8), forecast > 75% ($15) |
+| Budget Action | on `shopflow-monthly`: actual > 60% of the month ($12, `action_threshold_percent`) → attaches `shopflow-budget-deny` (no new EKS cluster/node group, EC2, EBS, ELB, NAT, EIP) to `shopflow-operator` and the LB controller role. Teardown, scale-down and reads keep working. Deliberate checkpoint: review this file, then reverse the action in the Budgets console. cloud-up refuses to start while the action has fired or the policy is still attached |
 | Cost Anomaly Detection | services monitor (AWS's default one is reused when present), each anomaly ≥ $1 sent immediately to SNS `shopflow-alerts` |
 | Cost allocation tags | `project`, `env`. In an organization only the management account can activate them, and this account is a member of an AWS-managed organization: expect `activate_cost_allocation_tags` to fail; verify at Approval 1 |
 | Lease + kill switches | the real stop: Budgets refresh only every 8–12 h. Lease default 4 h (max 8 h). Two in-AWS reapers run the same Lambda: the **hourly sweep** (always on, layer 0; only the layer-0 admin can change it) and the **per-session schedule** from lease + 1 h (cloud-up). An invocation neither can deliver lands in an SQS dead-letter queue that alarms. There is no GitHub reaper (ADR 0513) |
@@ -70,23 +70,29 @@ What it means for this project (failure mode in
   `s3:PutObject`.
 - **At $0.45–0.51/h**, $20 is about 40 cluster-hours in a month, minus layer 0 and paused hours. The lease (4 h)
   and the sweep keep a forgotten session well below that.
-- **The cumulative thresholds sit above the monthly limit.** The emails at $10/$20 and the action at $25 fire after
-  the monthly limit in the first month, and the cumulative $25 action then fires only $5 into the second month.
+- **Cumulative thresholds alone would sit above the monthly limit.** A $25 cumulative action would fire after the
+  monthly limit in the first month, and only $5 into the second. Hence the monthly budget below.
 
-### Proposal: monthly thresholds under the $20 spend limit
+### Monthly thresholds under the $20 spend limit
 
-The user decides; layer 0 would change only after that. The spend limit itself stays the user's setting.
+The user's decision at Approval 1 (ADR 0513). The spend limit itself stays the user's setting; `monthly_limit_usd`
+only mirrors it.
 
-Every alarm and deny should fire before the monthly limit, allowing for Budgets' 8–12 h refresh. At $0.5/h, that
-lag is $4–6 of spend.
+Every alarm and deny fires before the monthly limit, allowing for Budgets' 8–12 h refresh. At $0.5/h, that lag is
+$4–6 of spend.
 
-| Guardrail | Proposed setting | Why |
+| Guardrail | Setting | Why |
 |---|---|---|
-| New budget `shopflow-monthly` | MONTHLY cost budget, `include_credit = false`, limit $20 (mirrors the spend limit) | thresholds that reset with the spend limit |
-| Email | actual ≥ 40% ($8) | early warning, a day's work left |
-| Email | forecast ≥ 75% ($15) | the month is heading for the limit |
-| Budget Action (moved here from the cumulative budget) | actual ≥ 60% ($12) → `shopflow-budget-deny` | $12 plus up to $6 of Budgets lag stays under $20; a deliberate checkpoint as today |
-| `shopflow-total` (cumulative $100) | keep the emails at $10/$20/forecast $25; drop its action (the monthly one replaces it) | keeps the project cap; avoids the cumulative action firing early in month two |
+| Budget `shopflow-monthly` | MONTHLY cost budget, `include_credit = false`, limit $20 | thresholds that reset with the spend limit |
+| Email | actual > 40% ($8) | early warning, a day's work left; before AWS's own 50% email |
+| Email | forecast > 75% ($15) | the month is heading for the limit |
+| Budget Action | actual > 60% ($12) → `shopflow-budget-deny` | $12 plus up to $6 of Budgets lag stays under $20; a deliberate checkpoint |
+| `shopflow-total` (cumulative $100) | emails at $10/$20/forecast $25, no action | keeps the project cap visible without firing early in month two |
+
+After the action fires, AWS documents that a **reversed** action is not evaluated again for the rest of the
+period, but not whether a new month detaches a policy the action applied
+([reviewing budget actions](https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-action-review.html)).
+So cloud-up checks both the action status and whether `shopflow-budget-deny` is attached to the operator role.
 
 ## SSM parameter types
 
