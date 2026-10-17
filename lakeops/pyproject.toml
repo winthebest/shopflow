@@ -1,6 +1,6 @@
-# Standalone uv project (not a member of the shop services workspace): lakehouse operations shared by the lab and,
-# later, production (snapshots, fingerprints, features). For now it holds the safety-boundary tests that run against
-# the lab stack (lab/stack.sh up).
+# Standalone uv project (not a member of the shop services workspace): lakehouse operations shared by the lab (lab/,
+# which depends on this package) and, later, production. Package lakeops in src/lakeops/, one subpackage per concern;
+# tests/ holds the safety-boundary tests that run against the lab stack (lab/stack.sh up).
 [project]
 name = "lakeops"
 version = "0.1.0"
@@ -9,6 +9,10 @@ requires-python = ">=3.12"
 dependencies = [
     "trino==0.340.0",
 ]
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"
 
 [dependency-groups]
 dev = [

@@ -16,9 +16,8 @@ import json
 import os
 import time
 
-from pyiceberg.catalog.rest import RestCatalog
-
 import trino
+from pyiceberg.catalog.rest import RestCatalog
 
 RUN = "/run/lab"
 

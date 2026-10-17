@@ -1,5 +1,6 @@
 # sf-data checks that need no cluster: GitOps components (render + kubeconform), Metabase provisioning tests,
-# freshness-exporter tests, dbt (parse + sqlfluff), and the image builds (each only when its sources change: Kafka
+# freshness-exporter tests, the lab harness and lakeops (lint + tests that need no lab stack), dbt (parse + sqlfluff),
+# and the image builds (each only when its sources change: Kafka
 # Connect cached, freshness-exporter + Trivy, Airflow + DAG import check + Trivy, Flink + SQL plan check + Trivy).
 # Nothing here publishes, so builds may use the Actions cache; publishing is data-images.yml.
 # Actions are pinned by commit SHA (tag in the comment). Read-only token, no id-token.
@@ -35,6 +36,8 @@ on:
       - mk/data.mk
       - lab/**
       - lakeops/**
+      - mk/lab.mk
+      - deploy/platform/otel-collector/**  # the lab pins the platform's collector digest (lab/tests/test_stack_pins.py)
       - .github/workflows/data-ci.yml
   push:
     branches: [main]
@@ -99,6 +102,24 @@ jobs:
 
       - name: Lint and unit tests
         run: make data-exporter-test
+
+  lab:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.12"
+          enable-cache: false
+
+      - name: Lint and tests without the lab stack (lab, lakeops)
+        run: make lab-check
 
   dbt:
     runs-on: ubuntu-24.04

@@ -1,6 +1,11 @@
 # Lab tooling: the repository's rules (pyproject.toml), plus one exception for the spike probes, which build SQL from
 # constants and the table names they created, and run docker compose with fixed arguments.
 extend = "../pyproject.toml"
+# Only src/ holds packages: lab/trino/ is Trino's configuration, not the `trino` client.
+src = ["src"]
 
-[lint.per-file-ignores]
+[lint.extend-per-file-ignores]
 "spike/**" = ["S603", "S608"]
+
+[lint.isort]
+known-first-party = ["lab", "lakeops"]
