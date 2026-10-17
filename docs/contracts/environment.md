@@ -32,7 +32,8 @@ All bind `127.0.0.1`. The registry is created with the cluster and removed by `k
 | 25432 | `docker-compose.yml` Postgres (15432 belongs to incident-lab) | sf-app |
 | 8000 | `docker-compose.yml` gateway | sf-app |
 | 18090 | `make cloud-argocd-ui`: port-forward to the EKS Argo CD (distinct from sf-main's 18080) | sf-cloud |
-| 28443 | `lab/compose.yml` Trino HTTPS (the lab's only published port; deny-matrix tests run from the host) | sf-data |
+| 28443 | `lab/compose.yml` Trino HTTPS (deny-matrix tests run from the host) | sf-data |
+| 24317, 24318 | `lab/compose.yml` OTel collector, OTLP gRPC and HTTP (agent and eval traces from host processes) | sf-data |
 | 5060–5063 | shared pull-through image caches `shopflow-cache-{docker,quay,ghcr,k8s}` (one per upstream; data in named volumes that survive `make down`; `make platform-cache-down` removes them) | sf-platform |
 - Cluster creation scripts take the cluster name and ports as parameters (default `sf-main`).
 
@@ -121,4 +122,6 @@ are a hand-set constant of `7d`, never derived from policy files and never `0s`.
   `dev`, `dev-down`, `dev-reset`, `dev-logs` (sf-app); `up`, `down`, `status` (sf-platform);
   `cloud-up`, `cloud-down`, `cloud-pause`, `cloud-resume`, `cloud-extend` (sf-cloud); `duckdb` (sf-data).
 - Every other target is prefixed with the lane: `app-*`, `platform-*`, `sre-*`, `data-*`, `cloud-*`.
+- Two files are named after their area instead of a lane: `mk/lab.mk` (sf-data, targets `lab-*`) and
+  `mk/eval.mk` (sf-app, targets `eval-*`).
 - Each target has a `## description` comment so `make help` lists it.
