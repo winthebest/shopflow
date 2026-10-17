@@ -11,9 +11,9 @@ in the order they were recorded.
 The key is a SHA-256 of the method, the path, the allowed headers and the JSON body after `scrub`: volatile values the
 harness generates (a per-run namespace, say) replaced by stable placeholders. Before anything is stored or hashed,
 `redact` removes what must not reach git: every header outside `KEPT_REQUEST_HEADERS`/`KEPT_RESPONSE_HEADERS` (so no
-API key or Authorization), user info and query strings in the URL, and in bodies: credentials in URLs, Basic
-authorization values, `X-Trino-*` header lines, Discord webhook URLs, Anthropic keys, AWS key ids and secret keys, and
-PEM private keys.
+API key or Authorization), user info and query strings in the URL, and in bodies: credentials in URLs, Basic and
+Bearer values of an Authorization header, bare Bearer tokens, `X-Trino-*` header lines, Discord webhook URLs, Anthropic
+keys, AWS key ids and secret keys, and PEM private keys.
 
 Only LLM calls are recorded; Trino and the executor are never replayed. Held-out cassettes go under
 evals/cassettes/holdout/, which git ignores.
@@ -42,7 +42,10 @@ REDACTIONS = (
     ),
     (re.compile(r"https://(?:(?:ptb|canary)\.)?discord(?:app)?\.com/api/webhooks/[^\s\"'\\]+"), "<discord-webhook>"),
     (re.compile(r"(https?://)[^/\s:@\"'\\]+:[^/\s@\"'\\]+@"), r"\1<credentials>@"),
-    (re.compile(r"(Basic|Bearer)\s+[A-Za-z0-9+/=._~-]{8,}"), r"\1 <credentials>"),
+    # Basic and Bearer only in their header form, or a bare Bearer value that looks like a token (20+ characters,
+    # a digit among them): the words alone are ordinary prose ("a Basic understanding"), and responses replay as stored.
+    (re.compile(r"(?i)(authorization\s*:\s*(?:Basic|Bearer)\s+)[A-Za-z0-9+/=._~-]{8,}"), r"\1<credentials>"),
+    (re.compile(r"(Bearer\s+)(?=[A-Za-z0-9+/=._~-]*[0-9])[A-Za-z0-9+/=._~-]{20,}"), r"\1<credentials>"),
     (re.compile(r"(?i)(X-Trino-[A-Za-z-]+)\s*:\s*[^\r\n\"\\]+"), r"\1: <redacted>"),
 )
 

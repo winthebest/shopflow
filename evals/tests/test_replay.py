@@ -142,6 +142,7 @@ CREDENTIALS = {
     "aws-secret-key": ('aws_secret_access_key = "' + "wJalrXUtnFEMI/K7MDENG/" + "bPxRfiCYq8Zx3Lm9" + '"', "<redacted>"),
     "trino-header-on-its-own-line": ("X-Trino-User: agent_planner", "X-Trino-User: <redacted>"),
     "basic-auth-on-its-own-line": ("Authorization: Basic " + "YWdlbnRfcGxhbm5lcjpwdw==", "Basic <credentials>"),
+    "bare-bearer-token": ("Bearer " + "eyJ0eXAiOiJKV1Qi" + "LCJhbGciOiJIUzI1NiJ9", "Bearer <credentials>"),
 }
 
 
@@ -160,8 +161,15 @@ def test_credentials_in_a_prompt_never_reach_the_cassette(kind, tmp_path):
     assert ollama(Cassette(path, "replay")).start("s", []).send_user(prompt).text == "ok"
 
 
-def test_redact_leaves_ordinary_text_alone():
-    text = "SELECT count(*) FROM lab_ro.shop.orders -- see https://trino.io/docs/current/"
+@pytest.mark.parametrize(
+    "text",
+    [
+        "SELECT count(*) FROM lab_ro.shop.orders -- see https://trino.io/docs/current/",
+        "Basic understanding of the table is enough here.",
+        "A Bearer instrument here, and a Bearer bond there.",
+    ],
+)
+def test_redact_leaves_ordinary_text_alone(text):
     assert redact(text) == text
 
 
