@@ -2,10 +2,14 @@
 
 The boundary is the catalog (docs/adr/0417-catalog-scoped-safety-boundary.md):
 - an identity reaches only its catalogs; every other catalog is `allow: none`, so even table procedures fail there;
+- a baseline run's catalog lab_base_<run> (lab/stack.sh base <run>; the active run is in $LAB_RUN_DIR/base/active) is
+  baseline_writer's alone and holds only that run's warehouse;
+- Polaris refuses a table located outside the catalog's own warehouse, so no writer reaches another zone's or run's
+  files by naming a location;
 - agent_planner's lab_ro is read only in the engine (iceberg.security=READ_ONLY), the one Trino layer that also
   refuses table procedures (ALTER TABLE ... EXECUTE); file-based rules alone do not;
-- no identity may set the *_min_retention session properties, and the 7d floors of lab_ops, lab_sbx and lab_ro
-  reject shorter procedure thresholds;
+- no identity may set the *_min_retention session properties, and the floors of lab_ops, lab_sbx, lab_ro and the
+  baseline run (7 simulated days, 7m at the published time scale) reject shorter procedure thresholds;
 - CALL procedures are refused for everyone (no `procedures` rule), and Polaris refuses Trino's DROP TABLE (a purge)
   on the evaluation warehouse, where drop-with-purge stays off;
 - an identity sees and cancels only its own queries (`queries` rule): without it, any identity could read another's
@@ -18,18 +22,22 @@ import uuid
 
 import pytest
 import trino
-from lab_trino import connect, query, rest
+from lab_trino import RUN, connect, query, rest
 
 pytestmark = pytest.mark.lab
 
-IDENTITIES = ["harness", "agent_planner", "executor"]
-CATALOGS = ["lab_exp", "lab_ro", "lab_ops", "lab_sbx"]
+ACTIVE_RUN = (RUN / "base/active").read_text().strip() if (RUN / "base/active").is_file() else None
+BASE = f"lab_base_{ACTIVE_RUN}" if ACTIVE_RUN else None
+
+IDENTITIES = ["harness", "agent_planner", "executor", "baseline_writer"]
+CATALOGS = ["lab_exp", "lab_ro", "lab_ops", "lab_sbx", *([BASE] if BASE else [])]
 # (identity, catalog) -> access; any pair not listed has none.
 ACCESS = {
     ("harness", "lab_exp"): "write",
     ("agent_planner", "lab_ro"): "read",
     ("executor", "lab_ops"): "write",
     ("executor", "lab_sbx"): "write",
+    ("baseline_writer", BASE): "write",
 }
 # catalog -> (identity, catalog) that creates its probe tables; lab_ro reads the evaluation warehouse of lab_ops.
 WRITER = {
@@ -37,10 +45,14 @@ WRITER = {
     "lab_ro": ("executor", "lab_ops"),
     "lab_ops": ("executor", "lab_ops"),
     "lab_sbx": ("executor", "lab_sbx"),
+    BASE: ("baseline_writer", BASE),
 }
-FLOOR = {"lab_exp": "0s", "lab_ro": "7d", "lab_ops": "7d", "lab_sbx": "7d"}
-DROP_WITH_PURGE = {"lab_exp": True, "lab_ro": False, "lab_ops": False, "lab_sbx": True}
+FLOOR = {"lab_exp": "0s", "lab_ro": "7m", "lab_ops": "7m", "lab_sbx": "7m", BASE: "7m"}
+DROP_WITH_PURGE = {"lab_exp": True, "lab_ro": False, "lab_ops": False, "lab_sbx": True, BASE: True}
 READ_ONLY = {"lab_ro"}  # iceberg.security=READ_ONLY
+# Outside every catalog's warehouse (each is s3://<bucket>/warehouse or s3://lab-base/<run>/warehouse), shaped like
+# another baseline run's warehouse: the bucket key reaches it, only Polaris's location check stands in the way.
+ELSEWHERE = "s3://lab-base/another_run/warehouse"
 
 OPERATIONS = {
     "select": "SELECT count(*) FROM {t}",
@@ -48,6 +60,9 @@ OPERATIONS = {
     "delete": "DELETE FROM {t} WHERE id = 1",
     "set_properties": "ALTER TABLE {t} SET PROPERTIES format = 'ORC'",
     "create_table": "CREATE TABLE {c}.deny_matrix.{name}_new (id bigint) WITH (format_version = 2)",
+    "create_table_elsewhere": (
+        "CREATE TABLE {c}.deny_matrix.{name}_far (id bigint) WITH (format_version = 2, location = '{elsewhere}/{name}')"
+    ),
     "drop_table": "DROP TABLE {t}",
     "optimize": "ALTER TABLE {t} EXECUTE optimize",
     "expire_snapshots": "ALTER TABLE {t} EXECUTE expire_snapshots(retention_threshold => '{floor}')",
@@ -76,6 +91,8 @@ def expected(identity: str, catalog: str, op: str) -> str:
         return "floor"
     if op == "drop_table" and not DROP_WITH_PURGE[catalog]:
         return "no purge"
+    if op == "create_table_elsewhere":
+        return "outside"
     return "ok"
 
 
@@ -88,6 +105,10 @@ def outcome(error: trino.exceptions.TrinoQueryError | None) -> str:
         return "floor"
     if error.error_name == "ICEBERG_CATALOG_ERROR" and error.message.startswith("Failed to drop table"):
         return "no purge"
+    # Polaris refuses a table location outside the catalog's warehouse with 403 "... is not in the list of allowed
+    # locations" (seen through the REST API on the lab, 2026-10-18); Trino reports only this.
+    if error.error_name == "ICEBERG_CATALOG_ERROR" and error.message == "Failed to create transaction":
+        return "outside"
     return f"unexpected {error.error_name}: {error.message}"
 
 
@@ -120,7 +141,12 @@ def test_deny_matrix(namespaces, identity: str, catalog: str, op: str) -> None:
     # Always an existing table: for a missing one Trino reports "does not exist" before it checks catalog access.
     name, first_insert = probe_table(catalog) if op in NEEDS_TABLE else ("unused", 0)
     sql = OPERATIONS[op].format(
-        t=f"{catalog}.deny_matrix.{name}", c=catalog, name=name, floor=FLOOR[catalog], first_insert=first_insert
+        t=f"{catalog}.deny_matrix.{name}",
+        c=catalog,
+        name=name,
+        floor=FLOOR[catalog],
+        first_insert=first_insert,
+        elsewhere=ELSEWHERE,
     )
     try:
         query(connect(identity), sql)
@@ -130,12 +156,18 @@ def test_deny_matrix(namespaces, identity: str, catalog: str, op: str) -> None:
     assert outcome(error) == want, sql
 
 
+def test_a_baseline_run_is_active(lab) -> None:
+    """`make lab-test` activates run `matrix` first; without an active run the matrix has no lab_base_<run> cases."""
+    assert BASE, f"no active baseline run in {RUN}/base/active: lab/stack.sh base matrix"
+
+
 def test_each_identity_sees_only_its_catalogs(lab) -> None:
     seen = {identity: {row[0] for row in query(connect(identity), "SHOW CATALOGS")} for identity in IDENTITIES}
     assert seen == {
         "harness": {"lab_exp", "system"},
         "agent_planner": {"lab_ro", "system"},
         "executor": {"lab_ops", "lab_sbx", "system"},
+        "baseline_writer": {BASE, "system"} if BASE else {"system"},
     }
 
 

@@ -41,7 +41,7 @@ or the comparison measures the clock instead of the method.
 | Commit index instead of time | Fine for counting coverage, but Trino's procedures and floors take durations, so the windows would still need time |
 | A fake clock for the engines (libfaketime) | Every service would need the same fake clock: S3 request signatures and Polaris's OAuth tokens carry times that the receiving service checks against its own |
 | Back-dated snapshots written straight into metadata | Not what any engine does; it would bypass the catalog's commit checks the experiments are meant to exercise |
-| Each arm scales its own SQL | One arm forgetting it changes the result; the session makes it impossible to skip |
+| Each arm scales its own SQL | One arm forgetting it changes the result; the session applies the rewrite to every statement an arm sends |
 
 ## Consequences
 

@@ -132,3 +132,8 @@ def test_an_arm_session_runs_the_rewritten_sql_and_keeps_both():
     run = "ALTER TABLE lab_exp.s.t EXECUTE expire_snapshots(retention_threshold => '7m')"
     assert conn.received == [run]
     assert session.statements == [(written, run)]
+
+
+def test_the_baseline_template_has_the_same_floors():
+    properties = read_properties(REPO / "lab/trino/base/catalog.properties")
+    assert [properties[p] for p in FLOOR_PROPERTIES] == [format_duration(PUBLISHED.real(timedelta(days=7)))] * 2

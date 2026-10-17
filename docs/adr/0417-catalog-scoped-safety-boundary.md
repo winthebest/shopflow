@@ -117,3 +117,16 @@ before the `queries` rule. The `lab_base_<run>` catalogs come with the harness.
 
 Reproduce: `lab/spike/run.sh` (fresh stack, about 3 minutes; evidence in `out/lab-spike/`), and
 `lab/stack.sh up && (cd lakeops && uv run pytest -m lab)`.
+
+## Update 2026-10-18: baseline runs, compressed floors
+
+- **Baseline runs.** A baseline arm (the agent with broad SQL) works in a catalog of its own run, `lab_base_<run>`, for
+  identity `baseline_writer` only (`lab/stack.sh base <run>`, one active run at a time).
+  - The catalog is the run's own Polaris warehouse on `s3://lab-base/<run>/warehouse`, with drop-with-purge, and its own
+    principal.
+  - The S3 key covers the `lab-base` bucket, so between runs the barrier is Polaris's location check. Polaris refuses a
+    table outside the catalog's warehouse with 403 "… is not in the list of allowed locations"; Trino reports it as
+    "Failed to create transaction". Checked on the REST API on 2026-10-18; the deny matrix's `create_table_elsewhere`
+    covers it for every writer.
+- **Floors** are 7 simulated days, `7m` at the published time scale (ADR 0420), on `lab_ops`, `lab_sbx`, `lab_ro` and
+  `lab_base_<run>`.

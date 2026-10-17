@@ -137,3 +137,14 @@ def test_client_options_reach_the_connection(tmp_path: Path):
     conn = connect("harness", settings, max_attempts=1, request_timeout=5)
     assert (conn.max_attempts, conn.request_timeout) == (1, 5)
     assert connect("harness", settings).max_attempts == 3  # the client's default resubmits a statement
+
+
+def test_a_rendered_baseline_catalog_passes(tmp_path: Path):
+    """lab/stack.sh base <run> renders this template (sed of @RUN@ and @RUN_UPPER@) next to the zone catalogs."""
+    template = (REPO / "lab/trino/base/catalog.properties").read_text()
+    rendered = template.replace("@RUN_UPPER@", "R20261018_1").replace("@RUN@", "r20261018_1")
+    (tmp_path / "lab_base_r20261018_1.properties").write_text(rendered)
+    assert check_catalog_files(tmp_path) == ["lab_base_r20261018_1"]
+    assert "warehouse=lab_base_r20261018_1\n" in rendered
+    assert "${ENV:POLARIS_LAB_BASE_R20261018_1_CREDENTIAL}" in rendered
+    check_target_catalog("lab_base_r20261018_1")
