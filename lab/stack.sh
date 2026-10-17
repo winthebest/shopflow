@@ -20,12 +20,17 @@
 # Nobody may set the *_min_retention session properties. Every other catalog is `allow: none` for every identity.
 # Each identity sees and cancels only its own queries (rules.json `queries`; without that section Trino lets every
 # user view and kill every query).
+# The OTel collector takes OTLP on 127.0.0.1:24317 (gRPC) and 24318 (HTTP) and writes $LAB_RUN_DIR/otel/*.jsonl.
+# The harness (lab/src/lab/guard.py) refuses the platform's lakehouse: catalogs, warehouse and bucket `lake`.
 # Needs docker compose, openssl, htpasswd, jq.
 set -euo pipefail
 
 LAB="$(cd "$(dirname "$0")" && pwd -P)"
 REPO="$(cd "$LAB/.." && pwd -P)"
 RUN="${LAB_RUN_DIR:-$REPO/out/lab}"
+# The OTel collector runs as the host user: its output files in $RUN/otel belong to whoever started the stack.
+LAB_UID="$(id -u)" LAB_GID="$(id -g)"
+export LAB_UID LAB_GID
 USERS="harness agent_planner executor"
 BUCKETS="lab-exp,lab-evalprod,lab-sandbox"
 # S3 identities: name, env prefix in trino.env (empty: not a Trino key), actions.
@@ -40,6 +45,11 @@ SPIKE_S3_IDENTITIES="spike|SPIKE|Read:lab-spike,List:lab-spike,Write:lab-spike
 spike-ro|SPIKE_RO|Read:lab-spike,List:lab-spike"
 
 die() { echo "lab/stack.sh: $*" >&2; exit 1; }
+
+# Compose mounts $RUN into containers and `reset` deletes it: an absolute path without `.`/`..` components only.
+[[ "$RUN" == /* ]] || die "LAB_RUN_DIR must be an absolute path: $RUN"
+case "$RUN/" in */./* | */../*) die "LAB_RUN_DIR must not contain . or .. components: $RUN" ;; esac
+
 secret() { openssl rand -hex 16; }
 
 mode_of_run() { sed -n 's/^LAB_MODE=//p' "$RUN/.env" 2> /dev/null; }
@@ -121,6 +131,7 @@ SQL
 # Trino's rules and catalogs: the base files, plus the overlay's (its rules go first: the first matching rule wins).
 render() {
   local mode="$1"
+  mkdir -p "$RUN/otel"
   rm -f "$RUN/trino/catalog/"*.properties
   cp "$LAB/trino/etc/catalog/"*.properties "$RUN/trino/catalog/"
   if [[ "$mode" == spike ]]; then
@@ -144,12 +155,13 @@ up() {
   render "$mode"
   if [[ "$mode" == spike ]]; then specs+=(/lab/spike/polaris.json); fi
 
-  compose up -d --wait catalog-db seaweedfs polaris
+  compose up -d --wait catalog-db seaweedfs polaris otel
   compose run --rm -T setup python -I /lab/polaris-setup.py "${specs[@]}"
   compose up -d --wait trino
   local users="$USERS"
   if [[ "$mode" == spike ]]; then users="$users $SPIKE_USERS"; fi
-  echo "lab up ($mode): https://127.0.0.1:28443, users $users (passwords in $RUN/passwords)"
+  echo "lab up ($mode): https://127.0.0.1:28443, users $users (passwords in $RUN/passwords);" \
+    "OTLP on 127.0.0.1:24317 (gRPC) and 24318 (HTTP), written to $RUN/otel"
 }
 
 case "${1:-}" in
@@ -157,11 +169,14 @@ case "${1:-}" in
   down) if [[ -f "$RUN/.env" ]]; then compose --profile '*' down --remove-orphans; fi ;;
   reset)
     if [[ -f "$RUN/.env" ]]; then compose --profile '*' down -v --remove-orphans; fi
-    # Deletes only a run directory this script made, or one under out/: a mistyped LAB_RUN_DIR stays untouched.
+    # Deletes only a run directory this script made, or one under out/, judged by the resolved path (symlinks
+    # followed): a mistyped LAB_RUN_DIR stays untouched.
     if [[ -e "$RUN" ]]; then
-      [[ "$RUN" == "$REPO/out/"?* ]] || grep -q '^LAB_MODE=' "$RUN/.env" 2> /dev/null \
-        || die "refusing to delete $RUN: not under $REPO/out and not a lab run directory"
-      rm -rf "$RUN"
+      real="$(cd "$RUN" && pwd -P)"
+      case "$real" in / | "$HOME" | "$REPO" | "$REPO/out") die "refusing to delete $RUN: it is $real" ;; esac
+      [[ "$real" == "$REPO/out/"?* ]] || grep -q '^LAB_MODE=' "$real/.env" 2> /dev/null \
+        || die "refusing to delete $RUN ($real): not under $REPO/out and not a lab run directory"
+      rm -rf "$real"
     fi
     ;;
   mem)

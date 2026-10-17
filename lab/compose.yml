@@ -2,9 +2,9 @@
 #   Trino 483 (same digest as deploy/platform/trino) ─ Polaris 1.8.0 (same as deploy/platform/iceberg-catalog,
 #   metadata in Postgres) ─ SeaweedFS 4.48 (same as deploy/platform/seaweedfs, buckets lab-*, never `lake`).
 # Run it through lab/stack.sh: it generates the credentials into $LAB_RUN_DIR (out/lab, gitignored, mode 0700),
-# renders the Trino rules and catalogs there, and starts the services in order. Only Trino HTTPS is published,
-# on 127.0.0.1:28443 (docs/contracts/environment.md). Memory limits of the long-running services add up to 4.8 GiB
-# (4.9 GiB with the spike overlay's OPA).
+# renders the Trino rules and catalogs there, and starts the services in order. Published on 127.0.0.1 only
+# (docs/contracts/environment.md): Trino HTTPS on 28443, the OTel collector's OTLP gRPC and HTTP on 24317 and 24318.
+# Memory limits of the long-running services add up to 4.9 GiB (5.0 GiB with the spike overlay's OPA).
 name: shopflow-lab
 
 services:
@@ -107,6 +107,21 @@ services:
     # Pinned like the platform's coordinator: 1536M heap (jvm.config) under a 3 GiB limit, 2 CPUs.
     mem_limit: 3g
     cpus: 2
+
+  # OTLP in from host processes (the eval harness, the agent's GenAI traces); one JSON-lines file per signal out, in
+  # $LAB_RUN_DIR/otel, so lab traces need no k3d. Same image as deploy/platform/otel-collector.
+  otel:
+    image: otel/opentelemetry-collector-k8s:0.161.0@sha256:2fed8ff024bdb42473890724fa0833bd31e16197aa4790d8e0be3829f87f0de1
+    command: ["--config=/etc/otelcol/config.yaml"]
+    # The host user (exported by stack.sh), so the files in the bind-mounted directory are the user's.
+    user: "${LAB_UID:?run via lab/stack.sh}:${LAB_GID:?run via lab/stack.sh}"
+    environment:
+      GOMEMLIMIT: 100MiB
+    volumes:
+      - ./otel/config.yaml:/etc/otelcol/config.yaml:ro
+      - ${LAB_RUN_DIR}/otel:/otel
+    ports: ["127.0.0.1:24317:4317", "127.0.0.1:24318:4318"]
+    mem_limit: 128m
 
   # One-off helper (docker compose run --rm setup ...): Polaris catalogs, principals and grants.
   setup:

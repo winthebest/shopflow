@@ -1,0 +1,32 @@
+# Lab OTel collector (lab/compose.yml `otel`): OTLP in, one JSON-lines file per signal out, in $LAB_RUN_DIR/otel
+# (traces.jsonl, metrics.jsonl, logs.jsonl; rotated at 64 MB, 4 old files kept). Nothing is forwarded anywhere.
+receivers:
+  otlp:
+    protocols:
+      grpc: {endpoint: 0.0.0.0:4317}
+      http: {endpoint: 0.0.0.0:4318}
+
+processors:
+  # Under the container's 128m limit (GOMEMLIMIT 100MiB): refuse data before the kernel kills the collector.
+  memory_limiter: {check_interval: 1s, limit_mib: 96, spike_limit_mib: 24}
+  batch: {}
+
+exporters:
+  file/traces: &file
+    path: /otel/traces.jsonl
+    flush_interval: 1s
+    rotation: {max_megabytes: 64, max_backups: 4}
+  file/metrics:
+    <<: *file
+    path: /otel/metrics.jsonl
+  file/logs:
+    <<: *file
+    path: /otel/logs.jsonl
+
+service:
+  telemetry:
+    metrics: {level: none}
+  pipelines:
+    traces: {receivers: [otlp], processors: [memory_limiter, batch], exporters: [file/traces]}
+    metrics: {receivers: [otlp], processors: [memory_limiter, batch], exporters: [file/metrics]}
+    logs: {receivers: [otlp], processors: [memory_limiter, batch], exporters: [file/logs]}
