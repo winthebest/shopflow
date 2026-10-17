@@ -37,7 +37,10 @@ class Settings:
         return (self.password_dir / user).read_text()
 
 
-def connect(user: str, settings: Settings) -> trino.dbapi.Connection:
+def connect(user: str, settings: Settings, **client_options: object) -> trino.dbapi.Connection:
+    """`client_options` go to trino.dbapi.connect. A writer that must not commit twice passes max_attempts=1: by
+    default the client resubmits a statement (POST /v1/statement) up to 3 times after a connection error or timeout,
+    and a write that reached Trino the first time then runs again."""
     return trino.dbapi.connect(
         host=settings.url.hostname,
         port=settings.url.port,
@@ -45,6 +48,7 @@ def connect(user: str, settings: Settings) -> trino.dbapi.Connection:
         user=user,
         auth=trino.auth.BasicAuthentication(user, settings.password(user)),
         verify=str(settings.ca),
+        **client_options,
     )
 
 

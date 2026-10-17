@@ -1,6 +1,7 @@
 """lab.guard without a stack: the repository's lab config passes, anything that could reach `lake` is refused."""
 
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -15,7 +16,7 @@ from lab.guard import (
     shown_location,
     table_parts,
 )
-from lab.trino_client import REPO
+from lab.trino_client import REPO, Settings, connect
 
 LAB_CATALOG = (REPO / "lab/trino/etc/catalog/lab_exp.properties").read_text()
 
@@ -128,3 +129,11 @@ def test_the_location_is_read_from_show_create():
     assert shown_location(shown) == "s3://lab-exp/warehouse/probe/t-1a2b"
     with pytest.raises(LakeGuardError):
         shown_location("CREATE TABLE x (id bigint)")
+
+
+def test_client_options_reach_the_connection(tmp_path: Path):
+    (tmp_path / "harness").write_text("not-a-real-password")
+    settings = Settings(urlsplit("https://127.0.0.1:28443"), tmp_path, tmp_path / "ca.pem", tmp_path)
+    conn = connect("harness", settings, max_attempts=1, request_timeout=5)
+    assert (conn.max_attempts, conn.request_timeout) == (1, 5)
+    assert connect("harness", settings).max_attempts == 3  # the client's default resubmits a statement
