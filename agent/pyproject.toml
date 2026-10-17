@@ -1,0 +1,39 @@
+# Standalone uv project (not a member of the shop services workspace): the operator agent's LLM layer and the eval
+# harness that drives it. Its own lockfile keeps the LLM SDKs out of the service images.
+[project]
+name = "shopflow-agent"
+version = "0.1.0"
+description = "LLM providers for the lakehouse operator agent, checked by one contract against fakes and live backends"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic==1.15.0",
+    "jsonschema==4.26.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.17.1",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `..` makes this directory importable as the package `agent`; `tests` holds the fakes.
+pythonpath = ["..", "tests"]
+addopts = ["--import-mode=importlib", "-ra", "--strict-markers"]
+markers = [
+  "ollama: needs local Ollama with the pinned model; skipped, with the reason, when it is not there",
+]
