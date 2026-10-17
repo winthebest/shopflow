@@ -3,6 +3,8 @@
 - Status: Accepted
 - Date: 2026-10-09
 - Lane: sf-cloud
+- Amended by 0513 (2026-10-18): nodes are on-demand (no spot on the project account), in `ap-southeast-2a`. "Spot
+  interruption" below now reads "node terminated abruptly"
 
 ## Context
 

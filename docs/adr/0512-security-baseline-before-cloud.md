@@ -32,7 +32,8 @@ controllerManager logs, Lambda X-Ray.
 
 ## Consequences
 
-- Positive: security tests in Phase 6 (other IP cannot reach NLB/API, ci-plan cannot read SSM) have something to test.
+- Positive: security tests in Phase 6 (other IP cannot reach NLB/API, the operator cannot change IAM) have something
+  to test. (The ci-plan role is gone since ADR 0513: no CI job reaches AWS.)
 - Negative: IMDS hop limit 1 requires explicit region/VPC configuration for controllers; more NetworkPolicy work.
 - When to revisit: if a compliance-style demo needs flow logs or customer-managed keys.
 
