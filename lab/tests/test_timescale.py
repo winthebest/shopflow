@@ -3,6 +3,7 @@
 from datetime import timedelta
 
 import pytest
+import trino
 
 from lab.guard import LakeGuardError, read_properties
 from lab.session import ArmSession
@@ -109,29 +110,56 @@ def test_the_lab_floors_are_seven_simulated_days(catalog: str):
 
 
 class Recorder:
-    """A DB-API connection that records the SQL it receives (what Trino would run)."""
+    """A DB-API connection that records the SQL it receives (what Trino would run), and fails on request."""
 
-    def __init__(self) -> None:
+    user, catalog, query_id, rowcount = "harness", None, "20261018_000000_00001_abcde", 3
+
+    def __init__(self, fail: Exception | None = None) -> None:
         self.received: list[str] = []
+        self.fail = fail
 
     def cursor(self) -> "Recorder":
         return self
 
     def execute(self, sql: str) -> None:
         self.received.append(sql)
+        if self.fail:
+            raise self.fail
 
     def fetchall(self) -> list:
         return []
 
 
-def test_an_arm_session_runs_the_rewritten_sql_and_keeps_both():
-    conn = Recorder()
-    session = ArmSession(conn)
+def test_an_arm_session_runs_the_rewritten_sql_and_logs_it():
+    conn, logged = Recorder(), []
+    session = ArmSession(conn, on_statement=logged.append)
     written = "ALTER TABLE lab_exp.s.t EXECUTE expire_snapshots(retention_threshold => '7d')"
     session.execute(written)
     run = "ALTER TABLE lab_exp.s.t EXECUTE expire_snapshots(retention_threshold => '7m')"
     assert conn.received == [run]
-    assert session.statements == [(written, run)]
+    [record] = session.statements
+    assert logged == [record]
+    assert (record.identity, record.sql_written, record.sql_run, record.state, record.rows) == (
+        "harness",
+        written,
+        run,
+        "FINISHED",
+        3,
+    )
+    assert record.query_id == Recorder.query_id and record.error_name is None and record.elapsed_s >= 0
+
+
+def test_a_failed_statement_is_logged_and_raised():
+    error = trino.exceptions.TrinoQueryError({"errorName": "PERMISSION_DENIED", "message": "Access Denied: no"})
+    session = ArmSession(Recorder(fail=error))
+    with pytest.raises(trino.exceptions.TrinoQueryError):
+        session.execute("DROP TABLE lab_ops.s.t")
+    [record] = session.statements
+    assert (record.state, record.error_name, record.error_message) == (
+        "FAILED",
+        "PERMISSION_DENIED",
+        "Access Denied: no",
+    )
 
 
 def test_the_baseline_template_has_the_same_floors():
