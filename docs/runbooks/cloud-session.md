@@ -160,7 +160,8 @@ cd -
       --query 'EvaluationResults[].EvalDecision'` gives a deny for both: `explicitDeny` from the boundary, or
       `implicitDeny` if the simulator leaves the boundary out. Never `allowed`.
 - [ ] Kill switch on: `aws scheduler get-schedule --group-name shopflow --name shopflow-reaper-sweep --query State`
-      is `ENABLED`. Within the hour, the Lambda log (`/aws/lambda/shopflow-reaper`) shows a run with "no lease",
+      is `ENABLED`. Within the hour, the Lambda log (`/aws/lambda/shopflow-reaper`) shows one result line with
+      `"status": "done"`, `"reason": "no lease"` and `"deleted": []` (no session, so nothing to delete and no email);
       `aws sqs get-queue-attributes --queue-url <shopflow-reaper-dlq url> --attribute-names
       ApproximateNumberOfMessages` is 0, and the alarms `shopflow-reaper-errors` and `shopflow-reaper-undelivered`
       are `OK`.
