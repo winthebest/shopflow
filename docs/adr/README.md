@@ -23,6 +23,7 @@ orchestrator adds rows when merging a PR that contains ADRs.
 | [0100](0100-app-language-python-fastapi.md) | Shop services in Python 3.12 + FastAPI (uv workspace) | Accepted |
 | [0101](0101-data-contracts-in-ci.md) | Data contracts for CDC source tables, checked in CI against the migrated schema | Accepted |
 | [0102](0102-resilience-patterns-checkout.md) | Checkout resilience: idempotent payments, retry inside the deadline, circuit breaker | Accepted |
+| [0103](0103-llm-provider-choice.md) | LLM providers: Claude Opus 5.5 through the Anthropic SDK, Qwen3 8B through Ollama, one contract | Accepted |
 | [0200](0200-k3d-over-kind.md) | Local Kubernetes on k3d (not kind or minikube) | Accepted |
 | [0201](0201-argocd-over-flux.md) | GitOps with Argo CD app-of-apps (not Flux) | Accepted |
 | [0202](0202-gateway-api-envoy-gateway.md) | Edge: Gateway API with Envoy Gateway, TLS from cert-manager | Accepted |
@@ -56,16 +57,18 @@ orchestrator adds rows when merging a PR that contains ADRs.
 | [0416](0416-metabase-bi-dashboards-from-git.md) | Metabase for BI on gold, with its dashboard provisioned from git through the API | Accepted |
 | [0417](0417-catalog-scoped-safety-boundary.md) | Lab safety boundary: one Trino catalog per zone, read-only in the engine, own warehouse, principal and key | Accepted |
 | [0418](0418-iceberg-tags-short-lived-pins.md) | Iceberg tags are short-lived pins; their max age counts from the snapshot, and no guarantee rests on them | Accepted |
+| [0419](0419-lab-stack-separate-from-platform.md) | The lab is its own compose stack, on the platform's images and protections, and the harness refuses `lake` | Accepted |
 | [0500](0500-opentofu-over-terraform.md) | OpenTofu instead of Terraform for the AWS layers | Accepted |
 | [0501](0501-ephemeral-env-with-lease.md) | Ephemeral AWS sessions bounded by a lease and two reapers | Accepted |
 | [0502](0502-layer2-state-aws-only.md) | Layer 2 state holds only AWS resources | Accepted |
 | [0503](0503-no-nat-public-subnets.md) | Public subnets, no NAT gateway | Accepted |
 | [0504](0504-single-az-node-group.md) | Node group in a single AZ | Accepted |
-| [0505](0505-graviton-spot-nodes.md) | Graviton spot instances for nodes | Accepted |
+| [0505](0505-graviton-spot-nodes.md) | Graviton spot instances for nodes | Superseded by [0513](0513-aws-project-account-constraints.md) |
 | [0506](0506-glue-catalog-on-aws.md) | AWS Glue as the Iceberg catalog on AWS | Accepted |
 | [0507](0507-ghcr-over-ecr.md) | Images stay in GHCR; no ECR | Accepted |
 | [0508](0508-ssm-over-secrets-manager.md) | SSM Parameter Store (via External Secrets) instead of Secrets Manager | Accepted |
-| [0509](0509-ci-cannot-apply-oidc-scoping.md) | CI cannot apply infrastructure; OIDC roles are scoped to one workflow | Accepted |
+| [0509](0509-ci-cannot-apply-oidc-scoping.md) | CI cannot apply infrastructure; OIDC roles are scoped to one workflow | Superseded by [0513](0513-aws-project-account-constraints.md) |
 | [0510](0510-cost-guardrails-exclude-credits.md) | Cost guardrails that exclude credits | Accepted |
 | [0511](0511-cnpg-backup-chain-fail-closed.md) | Postgres backup chain with a pointer, failing closed | Accepted |
 | [0512](0512-security-baseline-before-cloud.md) | Security baseline from the first cloud session | Accepted |
+| [0513](0513-aws-project-account-constraints.md) | Phase 6 on an AWS-managed project account: Sydney, on-demand, no GitHub OIDC | Accepted |
