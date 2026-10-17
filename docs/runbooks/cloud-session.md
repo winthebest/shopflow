@@ -467,5 +467,5 @@ Verify at Approval 1 (needs a valid `aws login` session; the probe session has e
 | `make cloud-reap`: "state lock is old" | a run died holding `cluster/terraform.tfstate.tflock`; confirm nothing runs, delete the object |
 | cloud-up: "hourly reaper sweep is missing" / "is DISABLED" | layer 0 not applied, or the schedule was disabled: apply layer 0 or re-enable `shopflow/shopflow-reaper-sweep` before any session |
 | Spend-limit email (50%/75%/90%) or an access denied on `lambda:InvokeFunction` / `eks:Create*` | the spend limit is near: `make cloud-down` now, see [When the spend limit is near](#when-the-spend-limit-is-near) |
-| cloud-up: "Budget Action has fired" | spend passed $25: review `docs/cost.md`, raise `action_threshold_usd` in layer 0, then reset the action in the Budgets console |
+| cloud-up: "Budget Action has fired" or "shopflow-budget-deny is attached" | spend passed $25: review `docs/cost.md`, raise `action_threshold_usd` in layer 0, then reverse the action in the Budgets console (Action history → Reverse), which detaches the policy, and reset it |
 | cloud-up: EKS version not in standard support | bump `kubernetes_version` in `infra/cloud-contract.json` |

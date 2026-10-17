@@ -70,7 +70,7 @@ parse_args() {
 # ---- step 1: preflight ---------------------------------------------------------------------------
 
 check_budget_action() {
-  local statuses
+  local statuses attached
   statuses="$(aws_ budgets describe-budget-actions-for-budget --account-id "$(account_id)" --budget-name "$PROJECT-total" \
     --query 'Actions[].Status' --output text)" || die "cannot read the Budget Action (is layer 0 applied?)"
   case "$statuses" in
@@ -78,6 +78,13 @@ check_budget_action() {
       die "the Budget Action has fired ($statuses): new capacity is denied. Review docs/cost.md, then reset the action deliberately."
       ;;
   esac
+  # The status describes the action, not the role: AWS does not document whether a new budget period
+  # detaches a policy the action applied, and the policy can be attached by hand. Look at the role.
+  attached="$(aws_ iam list-attached-role-policies --role-name "$OPERATOR_ROLE" \
+    --query "AttachedPolicies[?PolicyName=='$PROJECT-budget-deny'].PolicyName" --output text)" ||
+    die "cannot list the policies attached to $OPERATOR_ROLE"
+  [ -z "$attached" ] || [ "$attached" = None ] ||
+    die "$PROJECT-budget-deny is attached to $OPERATOR_ROLE: new capacity is denied. Review docs/cost.md, then reverse the Budget Action deliberately."
   log "budget action status: ${statuses:-none}"
 }
 
