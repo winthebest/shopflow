@@ -114,7 +114,7 @@ def test_an_ambiguous_attempt_that_failed_is_retried_after_it_ended():
 def test_an_attempt_that_never_settles_ends_the_write_unknown_without_a_second_attempt():
     conn = FakeConnection([("q1", TIMEOUT), ("q2", None)], states=[])
     result, _ = run(conn)
-    assert (result.state, result.attempts, result.settled) == ("unknown", 1, ("unsettled",))
+    assert (result.state, result.attempts, result.settled) == ("unknown", 1, ("unsettled:not-found",))
     assert len(conn.sent) == 1
     assert conn.polls == 5  # at 0, 0.5, 1.0, 1.5 and 2.0 s, the settle deadline
 

@@ -26,7 +26,9 @@ def by_key(_index: int, key: int, writers: int) -> int:
 
 
 def attempted(result: WriteResult) -> Attempted:
-    return Attempted(_OUTCOME[result.state], result.attempts, result.error, result.detail, result.query_ids)
+    return Attempted(
+        _OUTCOME[result.state], result.attempts, result.error, result.detail, result.query_ids, result.settled
+    )
 
 
 def method_writes(conn: Connection, scenario: Scenario, arm: Arm, writer: str) -> Apply:

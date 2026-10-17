@@ -244,6 +244,8 @@ def collect(conn: Connection, scenario: Scenario, arm: Arm, run_dir: Path, launc
         "abort_rate": round(sum(op.outcome is Outcome.FAILED for op in ops) / len(ops), 4) if ops else None,
         "unknown_rate": round(sum(op.outcome is Outcome.UNKNOWN for op in ops) / len(ops), 4) if ops else None,
         "error_classes": json.dumps(dict(Counter(op.error for op in ops if op.error)), sort_keys=True),
+        # How ambiguous attempts settled (method arm): unsettled:not-found means the query left system.runtime.queries.
+        "settles": json.dumps(dict(Counter(s for op in ops for s in op.settled)), sort_keys=True),
         "max_ledger": max_ledger,
         **snapshot_stats(query(conn, sql.snapshots(table)), ops),
         **maintenance_stats(run_dir / "maintenance.jsonl"),

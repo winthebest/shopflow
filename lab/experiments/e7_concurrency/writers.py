@@ -29,6 +29,7 @@ class Attempted:
     error: str | None = None
     detail: str | None = None
     query_ids: tuple[str, ...] = ()
+    settled: tuple[str, ...] = ()  # what each ambiguous attempt settled to (lakeops.writes.WriteResult.settled)
 
 
 Apply = Callable[[str, OpSpec, date], Attempted]  # (op id, op, event day) -> what the client saw
@@ -92,6 +93,7 @@ def run_ops(
             detail=result.detail,
             latency_ms=round((clock() - sent_at) * 1000, 3),
             query_ids=result.query_ids,
+            settled=result.settled,
         )
         sent += 1
     return sent

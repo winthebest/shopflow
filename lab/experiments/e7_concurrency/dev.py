@@ -1,6 +1,6 @@
 """The dev split: N ∈ {2, 4} x {low, medium}, both workloads, plus the counters without the ledger (its cost).
 
-    cd lab/experiments && uv run --project .. python -m e7_concurrency.dev --arms baseline [--runs 7] [--seconds 45]
+    cd lab/experiments && uv run --project .. python -m e7_concurrency.dev --arms baseline method [--runs 7]
 
 One warm-up run first (recorded with `warmup: true`, never analysed). Then every scenario runs `--runs` times, the
 arms in ABBA order; repetition r of a scenario uses seed base + r for every arm, so the arms of one repetition write
@@ -15,11 +15,12 @@ import os
 import time
 from pathlib import Path
 
+from .method import METHOD
 from .runner import run
 from .scenario import BASELINE, Arm, Scenario
 
 REPO = Path(__file__).resolve().parents[3]
-ARMS: dict[str, Arm] = {"baseline": BASELINE}
+ARMS: dict[str, Arm] = {"baseline": BASELINE, "method": METHOD}
 
 
 def dev_scenarios() -> list[Scenario]:
