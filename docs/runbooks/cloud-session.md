@@ -85,25 +85,94 @@ from the laptop (`AWS_PROFILE=shopflow tofu -chdir=infra/tofu/<layer> plan`).
 
 ## Bootstrap layer 0 (first time)
 
-The state bucket is created by this layer, so the first apply runs on local state and then migrates.
+Approval 1. The state bucket is created by this layer, so the first apply runs on local state, and the state
+migrates to S3 afterwards. **[user]** marks the interactive steps; sf-cloud runs the rest. Nothing writes to AWS
+before step 4, and step 4 waits for the user's go on the plan.
+
+**1. [user] Sign in** (browser): `aws login --profile shopflow-admin`. Then make sure `~/.aws/config` has
+`region = ap-southeast-2` under `[profile shopflow-admin]`.
+
+**2. Identity and read-only pre-checks** (sf-cloud; reads only):
 
 ```sh
-aws login --profile shopflow-admin
-export AWS_PROFILE=shopflow-admin TF_VAR_aws_account_id=<ACCOUNT_ID> TF_VAR_alert_email=<you@example.com>
-cd infra/tofu/bootstrap
-printf 'terraform {\n  backend "local" {}\n}\n' > local_override.tf      # gitignored
-tofu init && tofu plan -out=l0.plan && tofu apply l0.plan
-rm local_override.tf l0.plan
-tofu init -migrate-state -backend-config="bucket=shopflow-tfstate-<ACCOUNT_ID>"
-rm -f terraform.tfstate terraform.tfstate.backup                         # now in S3
+export AWS_PROFILE=shopflow-admin AWS_PAGER=""
+aws sts get-caller-identity --query Arn --output text      # .../assumed-role/AccountFullAccessRole/...
+export ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+aws s3api head-bucket --bucket "shopflow-tfstate-$ACCOUNT_ID" 2>&1 | grep -q 404 && echo "state bucket: free"
+aws budgets describe-budgets --account-id "$ACCOUNT_ID" --query 'Budgets[].BudgetName' --output text  # no shopflow-total
+aws ce get-anomaly-monitors --query 'AnomalyMonitors[].[MonitorArn,MonitorType,MonitorDimension]' --output text
+aws eks describe-cluster-versions --region ap-southeast-2 --cluster-versions 1.35 --query 'clusterVersions[0].versionStatus' --output text  # STANDARD_SUPPORT
+aws eks describe-addon-versions --region ap-southeast-2 --addon-name metrics-server --kubernetes-version 1.35 \
+  --query 'addons[0].addonVersions[0].addonVersion' --output text
 ```
 
-- [ ] Confirm the SNS subscription email ("AWS Notification - Subscription Confirmation").
-- [ ] If `apply` fails on the anomaly monitor ("limit exceeded"), the account already has AWS's default services
-      monitor: `aws ce get-anomaly-monitors`, then re-apply with `TF_VAR_anomaly_monitor_arn=<arn>`.
-- [ ] Cost allocation tags: in an organization only the management account can activate them, and this account
-      is a member of an AWS-managed organization. Leave `activate_cost_allocation_tags = false`; check in Billing
-      whether AWS Settings offers it (verify at Approval 1).
+- An existing `SERVICE`/`SERVICE` anomaly monitor (AWS's default one) is reused:
+  `export TF_VAR_anomaly_monitor_arn=<its arn>`. A second one fails with "limit exceeded".
+- If `metrics-server` has no version for 1.35 in Sydney, stop and tell the orchestrator before the apply.
+
+**3. Plan on local state** (sf-cloud). The alert email is the one the user gave:
+
+```sh
+export TF_VAR_aws_account_id="$ACCOUNT_ID" TF_VAR_alert_email="<alert email>"
+cd infra/tofu/bootstrap
+printf 'terraform {\n  backend "local" {}\n}\n' > local_override.tf      # gitignored (*_override.tf)
+tofu init -input=false
+tofu plan -input=false -out=l0.plan
+```
+
+Expected: only additions, 0 to change, 0 to destroy. The plan should contain:
+- the state and data buckets;
+- the boundary and the IAM roles (operator, EKS cluster/node, pod, ESO, reaper Lambda/scheduler, budget action);
+- the Budget with its action, the anomaly monitor or subscription, the SNS topic and its email subscription;
+- the Glue databases;
+- the reaper Lambda with its error alarm, the schedule group, the hourly sweep, the dead-letter queue and its alarm.
+
+sf-cloud posts the summary (`tofu show -no-color l0.plan | grep -E '^  # '`) for the user's go.
+
+**4. Apply** (sf-cloud, after the go): `tofu apply -input=false l0.plan`.
+
+If it fails half-way, keep `terraform.tfstate` (it records what exists), fix the cause, and run `tofu plan
+-out=l0.plan` + `apply` again. The buckets have `prevent_destroy`, so never "start over".
+
+**5. [user] Confirm the SNS email** ("AWS Notification - Subscription Confirmation") sent to the alert email.
+
+**6. Migrate the state to S3** (sf-cloud):
+
+```sh
+rm local_override.tf l0.plan
+tofu init -input=false -migrate-state -force-copy -backend-config="bucket=shopflow-tfstate-$ACCOUNT_ID"
+aws s3 ls "s3://shopflow-tfstate-$ACCOUNT_ID/bootstrap/"        # terraform.tfstate is there
+tofu plan -input=false                                           # "No changes."
+rm -f terraform.tfstate terraform.tfstate.backup                 # only after the two checks above
+cd -
+```
+
+**7. Verify at Approval 1** (sf-cloud, read-only; record the results in the session notes):
+
+- [ ] Operator role, assumed from the admin session. **[user]** adds `[profile shopflow]` (`role_arn =
+      arn:aws:iam::<ACCOUNT_ID>:role/shopflow-operator`, `source_profile = shopflow-admin`, `region =
+      ap-southeast-2`); then `aws sts get-caller-identity --profile shopflow` shows
+      `assumed-role/shopflow-operator/...`.
+- [ ] The sweep cannot be changed by the operator (IAM simulation, no write):
+      `aws iam simulate-principal-policy --policy-source-arn arn:aws:iam::$ACCOUNT_ID:role/shopflow-operator
+      --action-names scheduler:UpdateSchedule scheduler:DeleteSchedule --resource-arns
+      arn:aws:scheduler:ap-southeast-2:$ACCOUNT_ID:schedule/shopflow/shopflow-reaper-sweep
+      --query 'EvaluationResults[].EvalDecision'` gives a deny for both: `explicitDeny` from the boundary, or
+      `implicitDeny` if the simulator leaves the boundary out. Never `allowed`.
+- [ ] Kill switch on: `aws scheduler get-schedule --group-name shopflow --name shopflow-reaper-sweep --query State`
+      is `ENABLED`. Within the hour, the Lambda log (`/aws/lambda/shopflow-reaper`) shows one result line with
+      `"status": "done"`, `"reason": "no lease"` and `"deleted": []` (no session, so nothing to delete and no email);
+      `aws sqs get-queue-attributes --queue-url <shopflow-reaper-dlq url> --attribute-names
+      ApproximateNumberOfMessages` is 0, and the alarms `shopflow-reaper-errors` and `shopflow-reaper-undelivered`
+      are `OK`.
+- [ ] Budget Action in standby: `aws budgets describe-budget-actions-for-budget --account-id $ACCOUNT_ID
+      --budget-name shopflow-total --query 'Actions[].Status'`.
+- [ ] Cost Anomaly Detection in a member account: the monitor and the subscription exist (`aws ce
+      get-anomaly-monitors`, `aws ce get-anomaly-subscriptions`).
+- [ ] Cost allocation tags: `aws ce list-cost-allocation-tags --tag-keys project env`. Leave
+      `activate_cost_allocation_tags = false`; note whether the call works from this member account.
+- [ ] Cost of layer 0 at rest: about $0.5/month (S3, 2 CloudWatch alarms, Lambda/Scheduler/SQS within the free
+      tier). Check it in Cost Explorer after a day.
 
 Layer 1, with the operator profile:
 
