@@ -1,0 +1,18 @@
+{
+  "catalogs": [
+    {"user": "spike", "catalog": "spike_hidden", "allow": "none"},
+    {"user": "spike", "catalog": "spike_acl_ro", "allow": "read-only"},
+    {"user": "spike", "catalog": "spike_.*", "allow": "all"},
+    {"user": "spike", "catalog": "system", "allow": "read-only"}
+  ],
+  "schemas": [
+    {"user": "spike", "catalog": "spike_acl_noprivs", "schema": ".*", "owner": false},
+    {"user": "spike", "catalog": "spike_.*", "schema": ".*", "owner": true}
+  ],
+  "tables": [
+    {"user": "spike", "catalog": "spike_acl_noprivs", "privileges": []},
+    {"user": "spike", "catalog": "spike_.*", "privileges": ["SELECT", "INSERT", "DELETE", "UPDATE", "OWNERSHIP"]},
+    {"user": "spike", "catalog": "system", "privileges": ["SELECT"]}
+  ],
+  "catalog_session_properties": []
+}

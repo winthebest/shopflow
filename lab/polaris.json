@@ -1,0 +1,20 @@
+{
+  "catalogs": [
+    {"name": "lab_exp", "location": "s3://lab-exp/warehouse",
+     "properties": {"polaris.config.drop-with-purge.enabled": "true"}},
+    {"name": "lab_evalprod", "location": "s3://lab-evalprod/warehouse"},
+    {"name": "lab_sandbox", "location": "s3://lab-sandbox/warehouse",
+     "properties": {"polaris.config.drop-with-purge.enabled": "true"}}
+  ],
+  "principals": [
+    {"name": "lab_exp", "catalog": "lab_exp",
+     "grants": [{"on": {"type": "catalog"}, "privileges": ["CATALOG_MANAGE_CONTENT"]}]},
+    {"name": "lab_ops", "catalog": "lab_evalprod",
+     "grants": [{"on": {"type": "catalog"}, "privileges": ["CATALOG_MANAGE_CONTENT"]}]},
+    {"name": "lab_ro", "catalog": "lab_evalprod",
+     "grants": [{"on": {"type": "catalog"}, "privileges": ["NAMESPACE_LIST", "NAMESPACE_READ_PROPERTIES", "TABLE_LIST",
+                                                         "TABLE_READ_PROPERTIES", "TABLE_READ_DATA"]}]},
+    {"name": "lab_sbx", "catalog": "lab_sandbox",
+     "grants": [{"on": {"type": "catalog"}, "privileges": ["CATALOG_MANAGE_CONTENT"]}]}
+  ]
+}
