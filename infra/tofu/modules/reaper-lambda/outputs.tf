@@ -18,6 +18,11 @@ output "schedule_group_name" {
   value       = aws_scheduler_schedule_group.this.name
 }
 
+output "sweep_schedule_name" {
+  description = "The hourly schedule cloud-up checks before a session starts."
+  value       = aws_scheduler_schedule.sweep.name
+}
+
 output "role_boundaries" {
   description = "Permissions boundary of each role created by the module."
   value = {

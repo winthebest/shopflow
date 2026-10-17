@@ -34,16 +34,19 @@ resource "aws_launch_template" "node" {
   }
 }
 
-resource "aws_eks_node_group" "spot" {
+# On-demand: AWS-managed project accounts deny spot (ec2:RequestSpotInstances, RunInstances with
+# InstanceMarketType=spot) and EC2 Fleet in their SCPs. With several types the group launches the first one
+# that has capacity, in the contract's order (cheapest first, ADR 0513).
+resource "aws_eks_node_group" "nodes" {
   cluster_name           = aws_eks_cluster.this.name
-  node_group_name_prefix = "${local.cluster}-spot-"
+  node_group_name_prefix = "${local.cluster}-nodes-"
   node_role_arn          = data.aws_iam_role.node.arn
   # One AZ on purpose: EBS volumes are zonal, and multi-AZ HA is a non-goal (ADR 0504).
   subnet_ids     = [data.aws_subnet.node.id]
-  capacity_type  = "SPOT"
+  capacity_type  = "ON_DEMAND"
   ami_type       = "AL2023_ARM_64_STANDARD"
   instance_types = local.node_instance_types
-  labels         = { "shopflow.io/capacity" = "spot" }
+  labels         = { "shopflow.io/capacity" = "on-demand" }
 
   scaling_config {
     min_size     = 0

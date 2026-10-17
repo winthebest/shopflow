@@ -30,7 +30,7 @@ variable "kubernetes_version" {
 }
 
 variable "node_instance_types" {
-  description = "Graviton spot instance types override; null uses node_instance_types from cloud-contract.json (ADR 0505)."
+  description = "Graviton on-demand instance types override, in priority order; null uses node_instance_types from cloud-contract.json (ADR 0513)."
   type        = list(string)
   default     = null
 

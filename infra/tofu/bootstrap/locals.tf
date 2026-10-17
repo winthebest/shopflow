@@ -12,12 +12,6 @@ locals {
   state_bucket = "${local.contract.state_bucket_prefix}${local.account_id}"
   data_bucket  = "${local.contract.data_bucket_prefix}${local.account_id}"
 
-  github_repository = local.contract.github_repository
-  workflows = {
-    ci_plan = ".github/workflows/infra-ci.yml"
-    reaper  = ".github/workflows/cloud-reaper.yml"
-  }
-
   arn = {
     account      = "arn:aws:iam::${local.account_id}:root"
     role         = "arn:aws:iam::${local.account_id}:role"
@@ -34,8 +28,10 @@ locals {
   boundary_name    = "${local.project}-boundary"
   deny_policy_name = "${local.project}-budget-deny"
 
+  # The account's admin is the role `aws login` signs in to on an AWS-managed project account (no Identity Center:
+  # its SCPs deny sso:CreateInstance). AWS manages that role under the path /managed/.
   operator_principal_arns = coalesce(var.operator_principal_arns, [
-    "arn:aws:iam::${local.account_id}:role/aws-reserved/sso.amazonaws.com/*AWSReservedSSO_ShopflowOperator_*",
+    "arn:aws:iam::${local.account_id}:role/managed/AccountFullAccessRole",
   ])
 
   # Pod roles reached through Pod Identity, keyed like contract.pod_identities.

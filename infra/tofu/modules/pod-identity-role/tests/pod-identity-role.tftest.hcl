@@ -4,7 +4,7 @@ variables {
   name                     = "shopflow-pod-cnpg"
   namespace                = "shop"
   service_account          = "shop-db"
-  cluster_arn              = "arn:aws:eks:ap-southeast-1:123456789012:cluster/shopflow"
+  cluster_arn              = "arn:aws:eks:ap-southeast-2:123456789012:cluster/shopflow"
   account_id               = "123456789012"
   permissions_boundary_arn = "arn:aws:iam::123456789012:policy/shopflow-boundary"
   policy_json              = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"

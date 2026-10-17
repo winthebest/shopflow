@@ -15,7 +15,7 @@ output "kubernetes_version" {
 
 output "node_group_name" {
   description = "Spot node group scaled by cloud-pause/resume."
-  value       = aws_eks_node_group.spot.node_group_name
+  value       = aws_eks_node_group.nodes.node_group_name
 }
 
 output "vpc_id" {

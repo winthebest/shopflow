@@ -1,4 +1,4 @@
-"""CLI for the same teardown logic, used by the GitHub reaper workflow and ``cloud-down --force-api``.
+"""CLI for the same teardown logic, used by ``scripts/cloud-reap.sh`` and ``cloud-down --force-api``.
 
 python -m reaper lease --parameter /shopflow/aws/control/lease-expires-at
     exit 0 when the lease is expired (or missing), 10 when it is still valid

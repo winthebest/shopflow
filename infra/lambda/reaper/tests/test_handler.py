@@ -34,7 +34,7 @@ def wired(world):
         ScheduleExpression="rate(15 minutes)",
         FlexibleTimeWindow={"Mode": "OFF"},
         Target={
-            "Arn": "arn:aws:lambda:ap-southeast-1:123456789012:function:shopflow-reaper",
+            "Arn": "arn:aws:lambda:ap-southeast-2:123456789012:function:shopflow-reaper",
             "RoleArn": "arn:aws:iam::123456789012:role/x",
         },
     )
@@ -94,6 +94,29 @@ def test_nothing_left_removes_schedule_without_alert(wired):
 
     assert result["status"] == "done" and result["deleted"] == []
     assert not schedule_exists() and messages() == []
+
+
+def test_the_hourly_sweep_survives_a_teardown(wired):
+    """The sweep (layer 0) shares the group; the function only ever deletes the per-session schedule."""
+    world, settings, _, schedule_exists = wired
+    scheduler = world.client("scheduler")
+    scheduler.create_schedule(
+        GroupName="shopflow",
+        Name="shopflow-reaper-sweep",
+        ScheduleExpression="rate(1 hour)",
+        FlexibleTimeWindow={"Mode": "OFF"},
+        Target={
+            "Arn": "arn:aws:lambda:ap-southeast-2:123456789012:function:shopflow-reaper",
+            "RoleArn": "arn:aws:iam::123456789012:role/x",
+        },
+    )
+    world.create_cluster()
+    set_lease(world, "2026-10-09T11:00:00Z")
+
+    assert reap(settings, world.session, now=NOW, time_left=lambda: 600, sleep=lambda _: None)["status"] == "done"
+
+    names = {s["Name"] for s in scheduler.list_schedules(GroupName="shopflow")["Schedules"]}
+    assert names == {"shopflow-reaper-sweep"} and not schedule_exists()
 
 
 def test_errors_alert_and_fail_the_invocation(wired, monkeypatch):

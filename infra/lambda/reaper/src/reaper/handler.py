@@ -1,8 +1,9 @@
-"""Lambda entry point: the backup kill switch that does not depend on GitHub.
+"""Lambda entry point: the in-AWS kill switch.
 
-EventBridge Scheduler invokes it every few minutes from lease + grace. It re-reads the lease (the
-operator may have extended it without moving the schedule), tears the session down, and removes
-its own schedule once nothing is left. Any failure raises, which trips the CloudWatch alarm.
+EventBridge Scheduler invokes it every hour (the sweep, always on) and every few minutes from lease + grace
+(the per-session schedule cloud-up creates). It re-reads the lease (the operator may have extended it without
+moving the schedule), does nothing while it is valid, tears the session down once it is not, and removes the
+per-session schedule once nothing is left; the sweep stays. Any failure raises, which trips the CloudWatch alarm.
 """
 
 from __future__ import annotations

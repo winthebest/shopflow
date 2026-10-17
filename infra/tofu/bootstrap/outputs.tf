@@ -18,14 +18,6 @@ output "operator_role_arn" {
   value       = aws_iam_role.operator.arn
 }
 
-output "github_role_arns" {
-  description = "Roles assumed by GitHub Actions through OIDC."
-  value = {
-    ci_plan = module.ci_plan_role.role_arn
-    reaper  = module.reaper_role.role_arn
-  }
-}
-
 output "pod_role_arns" {
   description = "Pod Identity role per contract key (used by the cluster layer)."
   value       = { for key, role in module.pod_role : key => role.role_arn }
@@ -47,6 +39,7 @@ output "reaper" {
     function_arn       = module.reaper_lambda.function_arn
     scheduler_role_arn = module.reaper_lambda.scheduler_role_arn
     schedule_group     = module.reaper_lambda.schedule_group_name
+    sweep_schedule     = module.reaper_lambda.sweep_schedule_name
   }
 }
 
@@ -57,8 +50,6 @@ output "role_boundaries" {
       (aws_iam_role.operator.name)    = aws_iam_role.operator.permissions_boundary
       (aws_iam_role.eks_cluster.name) = aws_iam_role.eks_cluster.permissions_boundary
       (aws_iam_role.eks_node.name)    = aws_iam_role.eks_node.permissions_boundary
-      (module.ci_plan_role.role_name) = module.ci_plan_role.permissions_boundary
-      (module.reaper_role.role_name)  = module.reaper_role.permissions_boundary
       (local.roles.budget_action)     = module.cost_guardrails.budget_action_role_boundary
     },
     { for key, role in module.pod_role : role.role_name => role.permissions_boundary },

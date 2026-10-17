@@ -28,6 +28,8 @@ module "reaper_lambda" {
   lease_parameter_name     = local.contract.ssm.lease
   schedule_group_name      = local.contract.reaper.schedule_group
   schedule_name            = local.contract.reaper.schedule_name
+  sweep_schedule_name      = local.contract.reaper.sweep_schedule_name
+  sweep_rate               = local.contract.reaper.sweep_rate
   alert_topic_arn          = module.cost_guardrails.alert_topic_arn
   permissions_boundary_arn = aws_iam_policy.boundary.arn
   source_dir               = "${path.module}/../../lambda/reaper/src"

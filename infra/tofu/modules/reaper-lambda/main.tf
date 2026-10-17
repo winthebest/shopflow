@@ -1,5 +1,8 @@
-# Backup kill switch that does not depend on GitHub: EventBridge Scheduler invokes this function
-# from lease + grace until the session's billable resources are gone. AWS APIs only, so it works
+# The two in-AWS kill switches, one function: EventBridge Scheduler invokes it
+#   - every hour, always (the sweep schedule, created here): it tears down any session whose lease has expired, so
+#     a session is reaped even if cloud-up never armed its own schedule;
+#   - from lease + grace until nothing is left (the per-session schedule cloud-up creates; the function deletes it).
+# The function re-reads the lease on every call and does nothing while it is valid. AWS APIs only, so it works
 # when the node group is scaled to zero or the cluster endpoint is unreachable.
 
 locals {
@@ -97,7 +100,7 @@ resource "aws_iam_role_policy" "lambda" {
 #trivy:ignore:AWS-0066 X-Ray tracing adds cost and permissions for a function that runs a few times per month.
 resource "aws_lambda_function" "this" {
   function_name    = var.function_name
-  description      = "Backup kill switch: tears down the ${var.cluster_name} EKS session once its lease has expired."
+  description      = "Kill switch: tears down the ${var.cluster_name} EKS session once its lease has expired."
   role             = aws_iam_role.lambda.arn
   runtime          = "python3.13"
   architectures    = ["arm64"]
@@ -106,6 +109,8 @@ resource "aws_lambda_function" "this" {
   source_code_hash = data.archive_file.package.output_base64sha256
   timeout          = 900
   memory_size      = 256
+  # The sweep and the per-session schedule may fire together: one teardown at a time.
+  reserved_concurrent_executions = 1
 
   environment {
     variables = {
@@ -139,6 +144,25 @@ resource "aws_cloudwatch_metric_alarm" "errors" {
 
 resource "aws_scheduler_schedule_group" "this" {
   name = var.schedule_group_name
+}
+
+# The hourly sweep: independent of cloud-up, so a session it never armed (a crash between apply and arming, a
+# deleted schedule) is still reaped. With no lease and no cluster it is a no-op that sends nothing.
+resource "aws_scheduler_schedule" "sweep" {
+  name                = var.sweep_schedule_name
+  group_name          = aws_scheduler_schedule_group.this.name
+  schedule_expression = var.sweep_rate
+  state               = "ENABLED"
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  target {
+    arn      = aws_lambda_function.this.arn
+    role_arn = aws_iam_role.scheduler.arn
+    input    = jsonencode({ trigger = "sweep" })
+  }
 }
 
 resource "aws_iam_role" "scheduler" {

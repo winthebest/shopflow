@@ -4,27 +4,28 @@ mock_provider "aws" {
     defaults = { arn = "arn:aws:iam::123456789012:role/shopflow-reaper-lambda" }
   }
   mock_resource "aws_cloudwatch_log_group" {
-    defaults = { arn = "arn:aws:logs:ap-southeast-1:123456789012:log-group:/aws/lambda/shopflow-reaper" }
+    defaults = { arn = "arn:aws:logs:ap-southeast-2:123456789012:log-group:/aws/lambda/shopflow-reaper" }
   }
   mock_resource "aws_lambda_function" {
-    defaults = { arn = "arn:aws:lambda:ap-southeast-1:123456789012:function:shopflow-reaper" }
+    defaults = { arn = "arn:aws:lambda:ap-southeast-2:123456789012:function:shopflow-reaper" }
   }
 }
 
 variables {
   function_name            = "shopflow-reaper"
-  region                   = "ap-southeast-1"
+  region                   = "ap-southeast-2"
   account_id               = "123456789012"
   project                  = "shopflow"
   cluster_name             = "shopflow"
   lease_parameter_name     = "/shopflow/aws/control/lease-expires-at"
   schedule_group_name      = "shopflow"
   schedule_name            = "shopflow-reaper"
-  alert_topic_arn          = "arn:aws:sns:ap-southeast-1:123456789012:shopflow-alerts"
+  alert_topic_arn          = "arn:aws:sns:ap-southeast-2:123456789012:shopflow-alerts"
   permissions_boundary_arn = "arn:aws:iam::123456789012:policy/shopflow-boundary"
   source_dir               = "../../../lambda/reaper/src"
   role_name                = "shopflow-reaper-lambda"
   scheduler_role_name      = "shopflow-reaper-scheduler"
+  sweep_schedule_name      = "shopflow-reaper-sweep"
 }
 
 run "function_is_configured_for_the_session_cluster" {
@@ -42,7 +43,7 @@ run "function_is_configured_for_the_session_cluster" {
       REAPER_LEASE_PARAMETER = "/shopflow/aws/control/lease-expires-at"
       REAPER_SCHEDULE_GROUP  = "shopflow"
       REAPER_SCHEDULE_NAME   = "shopflow-reaper"
-      REAPER_ALERT_TOPIC_ARN = "arn:aws:sns:ap-southeast-1:123456789012:shopflow-alerts"
+      REAPER_ALERT_TOPIC_ARN = "arn:aws:sns:ap-southeast-2:123456789012:shopflow-alerts"
     })
     error_message = "The function receives its target and lease through the environment."
   }
@@ -55,6 +56,33 @@ run "function_is_configured_for_the_session_cluster" {
   assert {
     condition     = alltrue([for b in values(output.role_boundaries) : b == var.permissions_boundary_arn])
     error_message = "Every role carries the permissions boundary."
+  }
+}
+
+run "an_hourly_sweep_always_runs_the_reaper" {
+  command = apply
+
+  assert {
+    condition = (
+      aws_scheduler_schedule.sweep.schedule_expression == "rate(1 hour)" && aws_scheduler_schedule.sweep.state == "ENABLED"
+      && aws_scheduler_schedule.sweep.group_name == "shopflow" && aws_scheduler_schedule.sweep.name == "shopflow-reaper-sweep"
+    )
+    error_message = "The sweep runs every hour in the reaper's schedule group."
+  }
+
+  assert {
+    condition     = one(aws_scheduler_schedule.sweep.target).arn == aws_lambda_function.this.arn
+    error_message = "The sweep invokes the reaper function."
+  }
+
+  assert {
+    condition     = aws_scheduler_schedule.sweep.name != var.schedule_name
+    error_message = "The function deletes the per-session schedule when done; the sweep must not be that schedule."
+  }
+
+  assert {
+    condition     = aws_lambda_function.this.reserved_concurrent_executions == 1
+    error_message = "One teardown at a time when the sweep and the per-session schedule fire together."
   }
 }
 

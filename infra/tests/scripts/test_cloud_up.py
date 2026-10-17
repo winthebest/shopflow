@@ -20,13 +20,14 @@ TRINO_PASSWORD = "trino-smoke-password-value"
 ARGOCD_PASSWORD = "argocd-admin-password-value"
 PROBE_BLOCKED = '{"dns": "ok", "postgres": "timeout", "internet": "timeout"}\n'
 ARGOCD_HASH = "$2y$10$abcdefghijklmnopqrstuvFakeBcryptHashForTheTestsOnly0123"
-GATEWAY_SVC = {"items": [{"status": {"loadBalancer": {"ingress": [{"hostname": "k8s-shop-abc.elb.ap-southeast-1.amazonaws.com"}]}}}]}
+GATEWAY_SVC = {"items": [{"status": {"loadBalancer": {"ingress": [{"hostname": "k8s-shop-abc.elb.ap-southeast-2.amazonaws.com"}]}}}]}
 
 
 def preflight(h: Harness, *, lease=None, pointer=None, marker=None, epoch=None, cluster="ABSENT") -> Harness:
     operator(h)
     h.on("aws", r"budgets describe-budget-actions-for-budget", "STANDBY\n")
     h.on("aws", r"eks describe-cluster-versions", "STANDARD_SUPPORT\n")
+    h.on("aws", r"scheduler get-schedule --group-name shopflow --name shopflow-reaper-sweep", "ENABLED\n")
     for name, value in (("lease-expires-at", lease), ("pg-backup-pointer", pointer), ("pg-initialized", marker)):
         if value is not None:
             h.on("aws", rf"ssm get-parameter --name /shopflow/aws/control/{name} ", value)
@@ -200,7 +201,6 @@ def test_first_session_initdb_end_to_end(fake, hooks):
         r"curl .*-X POST",
         r"kubectl .*-n shop logs netpol-probe-",
         r"scheduler create-schedule",
-        r"gh workflow enable cloud-reaper.yml",
     ]
     positions = [fake.index_of(s) for s in steps]
     assert positions == sorted(positions), list(zip(steps, positions, strict=True))
@@ -336,6 +336,32 @@ def test_an_unreadable_ack_log_stops_before_anything_bills(fake, hooks, tmp_path
 
     assert result.returncode != 0 and "is not readable" in result.stderr
     assert not fake.mutations()
+
+
+@pytest.mark.parametrize(("answer", "message"), [(None, "is missing: apply layer 0"), ("DISABLED", "sweep is DISABLED")])
+def test_no_hourly_reaper_sweep_no_session(fake, hooks, answer, message):
+    env, _ = hooks
+    preflight(fake)
+    if answer is None:
+        fake.rules.insert(
+            0,
+            {
+                "tool": "aws",
+                "match": r"scheduler get-schedule .*shopflow-reaper-sweep",
+                "stdout": "",
+                "exit": 254,
+                "stderr": "(ResourceNotFoundException)",
+            },
+        )
+    else:
+        fake.rules.insert(
+            0, {"tool": "aws", "match": r"scheduler get-schedule .*shopflow-reaper-sweep", "stdout": f"{answer}\n", "exit": 0}
+        )
+
+    result = fake.run("cloud-up.sh", env=env)
+
+    assert result.returncode != 0 and message in result.stderr
+    assert not fake.mutations(), "nothing bills without the second kill switch"
 
 
 def test_missing_root_app_hook_fails_before_anything_bills(fake, hooks):

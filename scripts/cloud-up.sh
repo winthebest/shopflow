@@ -81,6 +81,16 @@ check_budget_action() {
   log "budget action status: ${statuses:-none}"
 }
 
+# The hourly reaper sweep (layer 0) must be on before anything bills: it is the kill switch that does not depend
+# on this run reaching its last step.
+check_reaper_sweep() {
+  local state
+  state="$(aws_ scheduler get-schedule --group-name "$SCHEDULE_GROUP" --name "$SWEEP_SCHEDULE_NAME" --query State --output text 2>/dev/null)" ||
+    die "the hourly reaper sweep $SCHEDULE_GROUP/$SWEEP_SCHEDULE_NAME is missing: apply layer 0"
+  [ "$state" = ENABLED ] || die "the hourly reaper sweep is $state: re-enable it before starting a session"
+  log "reaper sweep: $state"
+}
+
 check_kubernetes_version() {
   local version status
   version="$(contract .kubernetes_version)"
@@ -436,10 +446,7 @@ arm_kill_switches() {
   lease="$(epoch_from_iso "$LEASE_ISO")"
   grace="$(contract .reaper.grace_hours)"
   schedule_upsert "$(iso_from_epoch $((lease + grace * 3600)))"
-  log "backup reaper (Lambda) scheduled from lease + ${grace}h"
-  # GitHub disables cron workflows after 60 days without activity; re-enable on every session.
-  run gh workflow enable cloud-reaper.yml --repo "$(contract .github_repository)" ||
-    warn "could not enable the GitHub reaper; the Lambda reaper still covers this session"
+  log "per-session reaper scheduled from lease + ${grace}h; the hourly sweep reaps at the first hour past the lease"
 }
 
 on_exit() {
@@ -451,13 +458,14 @@ on_exit() {
 
 main() {
   parse_args "$@"
-  require_cmds aws tofu kubectl helm jq yq curl gh openssl htpasswd
+  require_cmds aws tofu kubectl helm jq yq curl openssl htpasswd
   trap on_exit EXIT
   dry_run && log "DRY-RUN: reads only; changes are printed"
 
   step 1 "preflight"
   require_role "$OPERATOR_ROLE"
   check_budget_action
+  check_reaper_sweep
   check_kubernetes_version
   if [ "$RESUME" = 1 ]; then resume_session; else new_session; fi
   check_root_apps

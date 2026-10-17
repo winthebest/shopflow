@@ -14,7 +14,7 @@ variable "alert_email" {
 }
 
 variable "operator_principal_arns" {
-  description = "IAM principals (ArnLike patterns) allowed to assume shopflow-operator. Null means the IAM Identity Center permission set `ShopflowOperator` of this account."
+  description = "IAM principals (ArnLike patterns) allowed to assume shopflow-operator. Null means the account's `aws login` admin role, role/managed/AccountFullAccessRole."
   type        = list(string)
   default     = null
 }

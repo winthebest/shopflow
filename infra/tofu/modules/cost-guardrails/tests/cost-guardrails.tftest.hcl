@@ -1,7 +1,7 @@
 # Mocked ARNs must look like ARNs: the provider still validates them.
 mock_provider "aws" {
   mock_resource "aws_sns_topic" {
-    defaults = { arn = "arn:aws:sns:ap-southeast-1:123456789012:shopflow-alerts" }
+    defaults = { arn = "arn:aws:sns:ap-southeast-2:123456789012:shopflow-alerts" }
   }
   mock_resource "aws_iam_role" {
     defaults = { arn = "arn:aws:iam::123456789012:role/shopflow-budget-action" }
