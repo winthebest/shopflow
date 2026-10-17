@@ -182,3 +182,46 @@ def correct_commit_throughput(verdict: Verdict, ops: Iterable[Op], seconds: floa
     if seconds <= 0:
         raise ValueError("the write phase must last a positive time")
     return acked_commits(ops) / seconds if verdict.valid else None
+
+
+@dataclass(frozen=True)
+class BoundsVerdict:
+    """The weaker grade of a run without the ledger, used only to measure the ledger's cost.
+
+    Deltas are positive, so per key Σ acked ≤ value ≤ Σ acked + Σ unknown. A value below the range means an acked add
+    is missing; above it, an add was counted twice or a failed one applied. A loss and a duplicate on the same key
+    can cancel out, which only the ledger would show.
+    """
+
+    below: int
+    above: int
+    wrong_rows: int  # a second row for a key, an unseeded key, a seeded key with no row
+
+    @property
+    def valid(self) -> bool:
+        return self.below == 0 and self.above == 0 and self.wrong_rows == 0
+
+
+def grade_bounds(ops: Sequence[Op], values: Iterable[tuple[int, int]], seeded_keys: Iterable[int]) -> BoundsVerdict:
+    acked: dict[int, int] = defaultdict(int)
+    unknown: dict[int, int] = defaultdict(int)
+    for op in ops:
+        if op.table != "counters":
+            continue
+        if op.delta <= 0:
+            raise ValueError(f"op {op.id}: bounds need positive deltas")
+        if op.outcome is Outcome.ACKED:
+            acked[op.key] += op.delta
+        elif op.outcome is Outcome.UNKNOWN:
+            unknown[op.key] += op.delta
+    rows: dict[int, list[int]] = defaultdict(list)
+    for key, value in values:
+        rows[key].append(value)
+    seeded = set(seeded_keys)
+    wrong = sum(len(v) - 1 for v in rows.values()) + len(rows.keys() - seeded) + len(seeded - rows.keys())
+    below = above = 0
+    for key in seeded & rows.keys():
+        value = rows[key][0]
+        below += value < acked[key]
+        above += value > acked[key] + unknown[key]
+    return BoundsVerdict(below=below, above=above, wrong_rows=wrong)

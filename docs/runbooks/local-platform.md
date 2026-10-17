@@ -47,7 +47,7 @@ Profile changes on an existing cluster:
 ```bash
 scripts/platform-root-apps.sh --print --overlay local --revision main --profiles core     # what would be applied
 scripts/platform-root-apps.sh --check --overlay aws --revision main --profiles core \
-  --param aws.region=ap-southeast-1 ...                                                   # validate a cloud call
+  --param aws.region=ap-southeast-2 ...                                                   # validate a cloud call
 ```
 
 - New parameter: declare it in `deploy/argocd/profiles/_common/platform-params.yaml` (and in

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 from e7_concurrency.oplog import Op, OpLogWriter, Outcome, read_oplog
-from e7_concurrency.oracle import CounterRow, EventRow, Verdict, correct_commit_throughput, grade
+from e7_concurrency.oracle import CounterRow, EventRow, Verdict, correct_commit_throughput, grade, grade_bounds
 
 ACKED, FAILED, UNKNOWN = Outcome.ACKED, Outcome.FAILED, Outcome.UNKNOWN
 KEYS = range(4)
@@ -241,3 +241,34 @@ def test_log_written_by_writers_grades_like_the_ops(tmp_path: Path):
     verdict = grade(ops, [EventRow("w1-0", 1, 0, 5)], [], seeded_keys=[])
     assert verdict.valid
     assert verdict.counts()["acked"] == 1
+
+
+# Without the ledger (only to measure its cost): bounds per key.
+
+BOUNDED = [
+    op("w2-0", 1, "counters", 0, 3, ACKED),
+    op("w2-0", 2, "counters", 0, 4, UNKNOWN),
+    op("w2-1", 1, "counters", 1, 5, FAILED),
+]
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        ([(0, 3), (1, 0), (2, 0), (3, 0)], (0, 0, 0)),  # the unknown add did not land
+        ([(0, 7), (1, 0), (2, 0), (3, 0)], (0, 0, 0)),  # it did
+        ([(0, 0), (1, 0), (2, 0), (3, 0)], (1, 0, 0)),  # the acked add is missing
+        ([(0, 10), (1, 0), (2, 0), (3, 0)], (0, 1, 0)),  # an add counted twice
+        ([(0, 3), (1, 5), (2, 0), (3, 0)], (0, 1, 0)),  # the failed add applied
+        ([(0, 3), (0, 3), (1, 0), (2, 0)], (0, 0, 2)),  # a second row for key 0, key 3 missing
+    ],
+)
+def test_bounds_without_the_ledger(values: list, expected: tuple):
+    verdict = grade_bounds(BOUNDED, values, KEYS)
+    assert (verdict.below, verdict.above, verdict.wrong_rows) == expected
+    assert verdict.valid is (expected == (0, 0, 0))
+
+
+def test_bounds_need_positive_deltas():
+    with pytest.raises(ValueError, match="positive"):
+        grade_bounds([op("w2-0", 1, "counters", 0, -1, ACKED)], [(0, 0)], [0])

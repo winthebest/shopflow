@@ -2,7 +2,7 @@
 
 - Status: **design, fixed before any dev run** (2026-10-18). No results yet; every number will come from
   `lab/results/e7_concurrency/`.
-- Code: `lab/experiments/e7_concurrency/` (op log, oracle; writers and runner to come), and later
+- Code: `lab/experiments/e7_concurrency/` (op log, oracle, scenarios, writers, runner), and later
   `lakeops/src/lakeops/writes/` (the method) and `lakeops/src/lakeops/verify/`.
 - Lab: the `lab_exp` catalog of the lab stack (`lab/stack.sh`, ADR 0417), as identity `harness`.
 
@@ -104,7 +104,7 @@ synthetic final state; the lab repeats each one on real tables:
 | Self-test | Synthetic state (unit test) | On the lab |
 |---|---|---|
 | 1. An acked op dropped | Event row removed → LostUpdate 1. Add removed from ledger and value → LostUpdate 1. From the ledger only → also WrongFinalRows 1 | `DELETE` one acked event; strip one ledger entry |
-| 2. Client killed right after commit | A real process killed after its `invoke` → unknown. Present once → valid, `unknown_present` 1. Retried blindly → Duplicates | SIGKILL a writer after it sends a statement; Trino keeps running it |
+| 2. Client killed right after commit | A real process killed after its `invoke` → unknown. Present once → valid, `unknown_present` 1. Retried blindly → Duplicates | `runner.Kill(writer, at)`: SIGKILL a writer mid-run; Trino keeps running its statement |
 | 3. A stale retry after another writer's add | The absolute write overwrites B's add → LostUpdate 1. Stale value with the ledger appended in SQL → WrongFinalRows 1, Duplicates 1 | An application-level read-modify-write writer, forced to retry after another writer's ack |
 
 Each oracle rule was also removed in turn, and each removal made the corresponding self-tests fail.
@@ -143,9 +143,11 @@ Each oracle rule was also removed in turn, and each removal made the correspondi
 
 - **Baseline (default writers):**
   - Trino's and Iceberg's default commit retries;
+  - the trino client's defaults: 3 HTTP attempts per request and a 30 s timeout. In trino 0.340.0 that includes
+    re-sending `POST /v1/statement` after a timeout or a lost connection, out of the op log's sight (question 7);
   - no application retry;
   - OPTIMIZE on the whole table;
-  - ops assigned to writers at random.
+  - ops dealt round robin from the shared stream.
 - **Method** (`lakeops.writes`, tuned on dev, frozen before held-out):
   - **Idempotent writes.**
     - Events via `MERGE INTO events ... ON (writer_id, seq, plus key and event_day for partition pruning) WHEN NOT
@@ -155,6 +157,7 @@ Each oracle rule was also removed in turn, and each removal made the correspondi
   - **Retry with full jitter** on a conflict and on unknown. An unknown attempt is first cancelled and waited on until
     it is terminal (`DELETE` then `GET /v1/query/{id}`). Otherwise the retry can race its own attempt still running on
     the server, and an insert-if-absent does not stop two concurrent inserts.
+  - **One HTTP attempt per request** (`max_attempts=1`), so every statement sent is an attempt the method sees.
   - **Serialise only overlapping keys**: ops are routed to writers by key, so two writers never update one key.
   - **OPTIMIZE per partition**, skipping the partitions being written.
   - Iceberg `commit.retry.*`, if Trino honours them (question 3).
@@ -164,9 +167,12 @@ Each oracle rule was also removed in turn, and each removal made the correspondi
 
 | Level | Counters keys | Event partitions | Maintenance |
 |---|---|---|---|
-| Low | 16 per writer, disjoint | One `event_day` per writer | None |
-| Medium | 64 shared, uniform | One shared day, all buckets | None |
-| High | 4 shared (hot keys) | One shared day | OPTIMIZE loop + sink-like appender |
+| Low | 16 per writer, disjoint | Days of its own per writer | None |
+| Medium | 64 shared, uniform | Shared days, all buckets | None |
+| High | 4 shared (hot keys) | Shared days | OPTIMIZE loop + sink-like appender |
+
+The event day moves forward every 10 s of the write phase, so a run writes several day partitions, and a past day
+can be compacted while writers append to the current one.
 
 - **Dev:** N ∈ {2, 4} × {low, medium}. Used for the conflict matrix, the classification allowlist and tuning.
 - **Held-out:** N = 8 × high, with OPTIMIZE.
@@ -174,16 +180,27 @@ Each oracle rule was also removed in turn, and each removal made the correspondi
     rules.
   - It runs once. A failed run is reported; it is rerun only for an infrastructure fault, and both runs are reported.
 
-## Runner (to come)
+## Runner
 
-1. Recreate and seed the tables.
-2. Start the writer processes (and the W3 loops) at a barrier.
-3. Write for a fixed time: 45 s, tuned on dev and frozen.
-4. Stop issuing ops, and let in-flight ops finish until a deadline. Ops still open stay unknown.
-5. Read both tables back as `harness`, grade, and write one results row: config, seed, counts, CCT and the secondary
-   metrics, through the lab's `results` module.
+`runner.run(scenario, arm, base_dir)`:
 
-Fault injection for the lab self-tests uses the same runner. Each configuration stays under about 10 minutes.
+1. **Prepare.** Recreate the tables as `harness`, check with the lab guard that both are stored in the lab bucket, and
+   seed the counters.
+2. **Launch.** One process per writer (plus the maintenance loop), each with its own connection and op log. All start
+   at one barrier.
+3. **Write phase.** Writers send ops for a fixed time: 45 s, tuned on dev and frozen.
+4. **Drain.** Writers stop sending and in-flight ops finish, up to 30 s. A process still running after that is killed,
+   and its open op stays unknown.
+5. **Collect.** Read both tables back, grade, and build one results row: config, seed, counts, CCT and the secondary
+   metrics. The row's denominator is the time from the barrier until the last writer ended.
+   - Secondary metrics: attempts, latency p50/p95, abort and unknown rates, error classes, the longest ledger, write
+     amplification from `$snapshots`, the share of acked ops whose query id is in a snapshot summary (question 4),
+     and the maintenance outcomes.
+   - Each run keeps its op logs and `result.json` in its own directory. Rows go to `lab/results/` through the lab's
+     `results` module once that exists.
+
+Fault injection for the lab self-tests uses the same runner (`Kill`). Each configuration stays under about 10
+minutes.
 
 Measurement:
 - warm-up, then the arms in ABBA order;
@@ -205,6 +222,7 @@ any docs read.
 | 4 | Do Trino's snapshot summaries carry the query id (`trino_query_id`)? That would resolve unknown ops by query id | pending |
 | 5 | Does Trino finish a write after its client is killed, and after how long does it abandon one? | pending |
 | 6 | Does a PyIceberg `upsert` racing another commit fail, retry or overwrite? | pending |
+| 7 | Does the trino client's own re-send of a statement (3 attempts by default, after a timeout or a lost connection) write an op twice? | pending |
 
 **Conflict matrix** (to come): pairs of concurrent operations (INSERT, MERGE on the same key, MERGE on another key,
 OPTIMIZE on the table, OPTIMIZE on a partition, PyIceberg append, PyIceberg upsert) × the outcome observed: both
