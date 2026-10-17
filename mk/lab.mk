@@ -1,7 +1,7 @@
 # Lakehouse lab targets (docs/contracts/environment.md: `lab-*`, sf-data). The stack is docker compose, outside k3d:
 # lab/compose.yml through lab/stack.sh (docs/adr/0419-lab-stack-separate-from-platform.md).
 
-.PHONY: lab-up lab-down lab-reset lab-base lab-base-drop lab-mem lab-test lab-check
+.PHONY: lab-up lab-down lab-reset lab-base lab-base-drop lab-py lab-mem lab-test lab-check
 
 lab-up: ## Start the lab stack: Trino https://127.0.0.1:28443, OTLP 127.0.0.1:24317/24318 (limits 4.9 GiB)
 	lab/stack.sh up
@@ -18,6 +18,10 @@ lab-base: ## Make RUN the active baseline run: catalog lab_base_<RUN> for baseli
 
 lab-base-drop: ## No active baseline run (its warehouse and data stay until lab-reset; restarts Trino)
 	lab/stack.sh base-drop
+
+lab-py: ## Python in a container on the lab network with a zone's catalog credentials (ZONE=exp, ARGS="python -m …")
+	@test -n "$(ZONE)" && test -n "$(ARGS)" || { echo 'usage: make lab-py ZONE=exp ARGS="python -m <module> …"'; exit 2; }
+	lab/stack.sh py $(ZONE) -- $(ARGS)
 
 lab-mem: ## One memory/CPU sample of the running lab containers
 	lab/stack.sh mem

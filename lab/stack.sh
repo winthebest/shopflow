@@ -5,6 +5,8 @@
 #   lab/stack.sh reset        remove containers, volumes and $LAB_RUN_DIR (every credential)
 #   lab/stack.sh base RUN     make RUN the active baseline run: its catalog lab_base_RUN (identity baseline_writer)
 #   lab/stack.sh base-drop    no active baseline run (its warehouse and data stay until reset)
+#   lab/stack.sh py ZONE -- ARGS  `uv run --project lab ARGS` in a container on the lab network, with ZONE's REST
+#                             principal and S3 key (zone exp: lab_exp's), for writers that commit through Polaris
 #   lab/stack.sh mem          one `docker stats` sample of the running containers (name, memory, CPU)
 #   lab/stack.sh mem-peak F   peak per container and of the stack's sum, from lines "time<TAB>$(lab/stack.sh mem)"
 #   lab/stack.sh compose ...  docker compose with this stack's files and env (e.g. `compose logs polaris`)
@@ -240,6 +242,36 @@ up() {
     "OTLP on 127.0.0.1:24317 (gRPC) and 24318 (HTTP), written to $RUN/otel"
 }
 
+# A container on the lab network with one zone's REST catalog and S3 credentials in its environment: read from the
+# run directory into this process's environment and passed by name (compose run -e NAME), so no value is ever on a
+# command line or printed. lab.iceberg.rest_catalog() builds the PyIceberg catalog from them.
+py() {
+  local zone="${1:-}" principal prefix
+  shift || true
+  [[ "${1:-}" == -- ]] && shift
+  case "$zone" in
+    exp) LAB_REST_WAREHOUSE=lab_exp principal=POLARIS_LAB_EXP_CREDENTIAL prefix=S3_EXP ;;
+    *) die "py: unknown zone '$zone' (exp)" ;;
+  esac
+  [[ -f "$RUN/polaris.env" ]] || die "no lab stack in $RUN: lab/stack.sh up first"
+  LAB_ZONE="$zone"
+  LAB_REST_CREDENTIAL="$(sed -n "s/^$principal=//p" "$RUN/polaris.env")"
+  LAB_S3_ACCESS_KEY="$(sed -n "s/^${prefix}_ACCESS_KEY=//p" "$RUN/trino.env")"
+  LAB_S3_SECRET_KEY="$(sed -n "s/^${prefix}_SECRET_KEY=//p" "$RUN/trino.env")"
+  [[ -n "$LAB_REST_CREDENTIAL" && -n "$LAB_S3_ACCESS_KEY" && -n "$LAB_S3_SECRET_KEY" ]] \
+    || die "py: zone $zone's credentials are missing in $RUN"
+  LAB_RESULTS_DIR="${LAB_RESULTS_DIR:-$REPO/lab/results}"
+  mkdir -p "$LAB_RESULTS_DIR"
+  # The container has no git metadata (only lab/ and lakeops/ are mounted): results record the host's state.
+  LAB_GIT_SHA="$(git -C "$REPO" rev-parse HEAD)"
+  LAB_GIT_DIRTY="$(git -C "$REPO" status --porcelain -- . ':(exclude)lab/results' ':(exclude)lab/freezes' | head -1)"
+  LAB_GIT_DIRTY="${LAB_GIT_DIRTY:+true}"
+  export LAB_ZONE LAB_REST_WAREHOUSE LAB_REST_CREDENTIAL LAB_S3_ACCESS_KEY LAB_S3_SECRET_KEY LAB_RESULTS_DIR \
+    LAB_GIT_SHA LAB_GIT_DIRTY
+  compose run --rm -T -e LAB_ZONE -e LAB_REST_WAREHOUSE -e LAB_REST_CREDENTIAL -e LAB_S3_ACCESS_KEY \
+    -e LAB_S3_SECRET_KEY -e LAB_GIT_SHA -e LAB_GIT_DIRTY py uv run --project /repo/lab "$@"
+}
+
 case "${1:-}" in
   up) up "${2:-base}" ;;
   down) if [[ -f "$RUN/.env" ]]; then compose --profile '*' down --remove-orphans; fi ;;
@@ -275,6 +307,7 @@ case "${1:-}" in
     }' "$2" | sort
     ;;
   base) base "${2:-}" ;;
+  py) shift && py "$@" ;;
   base-drop)
     [[ -n "$(active_run)" ]] || die "no active baseline run"
     rm -f "$RUN/base/active" "$RUN/base/loaded"
@@ -282,5 +315,6 @@ case "${1:-}" in
     compose up -d --wait --force-recreate trino
     ;;
   compose) shift && compose "$@" ;;
-  *) die "usage: lab/stack.sh up [spike] | down | reset | base RUN | base-drop | mem | mem-peak FILE | compose ARGS" ;;
+  *) die "usage: lab/stack.sh up [spike] | down | reset | base RUN | base-drop | py ZONE -- ARGS | mem | mem-peak FILE"\
+       "| compose ARGS" ;;
 esac

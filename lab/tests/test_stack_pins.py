@@ -15,8 +15,9 @@ PLATFORM_COMPONENT = {
     "chrislusf/seaweedfs": "seaweedfs",
     "otel/opentelemetry-collector-k8s": "otel-collector",
 }
-# Images only the lab has: the catalog's Postgres (the platform's runs under CNPG), the setup helper, the spike's OPA.
-LAB_ONLY = {"postgres", "python", "openpolicyagent/opa"}
+# Images only the lab has: the catalog's Postgres (the platform's runs under CNPG), the setup helper, the spike's OPA,
+# the experiments' Python (uv).
+LAB_ONLY = {"postgres", "python", "openpolicyagent/opa", "ghcr.io/astral-sh/uv"}
 COMPOSE_FILES = ["lab/compose.yml", "lab/spike/compose.yml"]
 
 
