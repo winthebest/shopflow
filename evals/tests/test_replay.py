@@ -127,8 +127,49 @@ def test_secrets_never_reach_the_cassette(tmp_path):
     assert ollama(Cassette(path, "replay")).start("s", []).send_user(leaky).text == "Posting to <discord-webhook>"
 
 
-def test_redact_leaves_ordinary_text_alone():
-    text = "SELECT count(*) FROM lab_ro.shop.orders -- see https://trino.io/docs/current/"
+# Each secret is built at run time: as one literal it would trip the repository's own gitleaks scan.
+CREDENTIALS = {
+    "pem-private-key": (
+        "-----BEGIN "
+        + "RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA"
+        + "q8Zx3Lm9" * 8
+        + "\n-----END RSA "
+        + "PRIVATE KEY-----",
+        "<private-key>",
+    ),
+    "anthropic-key": ("sk-ant-" + "api03-" + "Xy7_kQ2-" * 12 + "AA", "<anthropic-key>"),
+    "aws-key-id": ("AKIA" + "Q7XK2MZ9PL4RT8WV", "<aws-key-id>"),
+    "aws-secret-key": ('aws_secret_access_key = "' + "wJalrXUtnFEMI/K7MDENG/" + "bPxRfiCYq8Zx3Lm9" + '"', "<redacted>"),
+    "trino-header-on-its-own-line": ("X-Trino-User: agent_planner", "X-Trino-User: <redacted>"),
+    "basic-auth-on-its-own-line": ("Authorization: Basic " + "YWdlbnRfcGxhbm5lcjpwdw==", "Basic <credentials>"),
+    "bare-bearer-token": ("Bearer " + "eyJ0eXAiOiJKV1Qi" + "LCJhbGciOiJIUzI1NiJ9", "Bearer <credentials>"),
+}
+
+
+@pytest.mark.parametrize("kind", CREDENTIALS)
+def test_credentials_in_a_prompt_never_reach_the_cassette(kind, tmp_path):
+    secret, placeholder = CREDENTIALS[kind]
+    path = tmp_path / "dev.json"
+    prompt = f"The agent read this config:\n{secret}\nWhat does it connect to?"
+    ollama(Cassette(path, "record", backend=fo.FakeOllama(fo.Reply(content="ok")).transport)).start("s", []).send_user(
+        prompt
+    )
+
+    stored = path.read_text()
+    assert placeholder in stored
+    assert secret.split("\n")[0][-12:] not in stored and secret[-12:] not in stored
+    assert ollama(Cassette(path, "replay")).start("s", []).send_user(prompt).text == "ok"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "SELECT count(*) FROM lab_ro.shop.orders -- see https://trino.io/docs/current/",
+        "Basic understanding of the table is enough here.",
+        "A Bearer instrument here, and a Bearer bond there.",
+    ],
+)
+def test_redact_leaves_ordinary_text_alone(text):
     assert redact(text) == text
 
 

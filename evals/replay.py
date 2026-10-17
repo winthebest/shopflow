@@ -11,8 +11,9 @@ in the order they were recorded.
 The key is a SHA-256 of the method, the path, the allowed headers and the JSON body after `scrub`: volatile values the
 harness generates (a per-run namespace, say) replaced by stable placeholders. Before anything is stored or hashed,
 `redact` removes what must not reach git: every header outside `KEPT_REQUEST_HEADERS`/`KEPT_RESPONSE_HEADERS` (so no
-API key or Authorization), user info and query strings in the URL, and in bodies: credentials in URLs, Basic
-authorization values, `X-Trino-*` header lines and Discord webhook URLs.
+API key or Authorization), user info and query strings in the URL, and in bodies: credentials in URLs, Basic and
+Bearer values of an Authorization header, bare Bearer tokens, `X-Trino-*` header lines, Discord webhook URLs, Anthropic
+keys, AWS key ids and secret keys, and PEM private keys.
 
 Only LLM calls are recorded; Trino and the executor are never replayed. Held-out cassettes go under
 evals/cassettes/holdout/, which git ignores.
@@ -30,10 +31,22 @@ import httpx2
 KEPT_REQUEST_HEADERS = ("anthropic-beta", "anthropic-version", "content-type")
 KEPT_RESPONSE_HEADERS = ("content-type",)
 REDACTIONS = (
+    # Credentials a prompt or a tool result could carry: a key in a file the agent read, a config it described.
+    # No \b anchors: in a JSON body a value that starts a line follows the escaped newline `\n`, a word character.
+    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.DOTALL), "<private-key>"),
+    (re.compile(r"sk-ant-[A-Za-z0-9_-]{8,}"), "<anthropic-key>"),
+    (re.compile(r"(?<![A-Z0-9])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Z0-9])"), "<aws-key-id>"),
+    (
+        re.compile(r"(?i)(aws_secret_access_key|aws_session_token)(\s*[=:]\s*(?:\\?[\"'])?)[A-Za-z0-9/+=]{16,}"),
+        r"\1\2<redacted>",
+    ),
     (re.compile(r"https://(?:(?:ptb|canary)\.)?discord(?:app)?\.com/api/webhooks/[^\s\"'\\]+"), "<discord-webhook>"),
     (re.compile(r"(https?://)[^/\s:@\"'\\]+:[^/\s@\"'\\]+@"), r"\1<credentials>@"),
-    (re.compile(r"\b(Basic|Bearer)\s+[A-Za-z0-9+/=._~-]{8,}"), r"\1 <credentials>"),
-    (re.compile(r"(?i)\b(X-Trino-[A-Za-z-]+)\s*:\s*[^\r\n\"\\]+"), r"\1: <redacted>"),
+    # Basic and Bearer only in their header form, or a bare Bearer value that looks like a token (20+ characters,
+    # a digit among them): the words alone are ordinary prose ("a Basic understanding"), and responses replay as stored.
+    (re.compile(r"(?i)(authorization\s*:\s*(?:Basic|Bearer)\s+)[A-Za-z0-9+/=._~-]{8,}"), r"\1<credentials>"),
+    (re.compile(r"(Bearer\s+)(?=[A-Za-z0-9+/=._~-]*[0-9])[A-Za-z0-9+/=._~-]{20,}"), r"\1<credentials>"),
+    (re.compile(r"(?i)(X-Trino-[A-Za-z-]+)\s*:\s*[^\r\n\"\\]+"), r"\1: <redacted>"),
 )
 
 
