@@ -1,36 +1,16 @@
 """What an error tells the client about its op: definite-fail (nothing committed) or unknown (it may have).
 
-Every error gets a class: the Trino error name with the deepest cause in its failure info (e.g.
-`ICEBERG_COMMIT_ERROR/org.apache.iceberg.exceptions.CommitFailedException`), or a client-side class (`client-timeout`,
-`connection-error`). A class is definite only if the arm's allowlist names it; everything else is unknown. The
-allowlist starts empty and is filled from the conflict matrix on dev, before held-out.
+The error class comes from `lakeops.writes.error_class`: the Trino error name with the deepest cause in its failure
+info (e.g. `ICEBERG_COMMIT_ERROR/org.apache.iceberg.exceptions.CommitFailedException`), or a client-side class
+(`client-timeout`, `connection-error`). A class is definite only if the arm's allowlist names it; everything else is
+unknown. The allowlist starts empty and is filled from the conflict matrix on dev, before held-out.
 """
 
-import requests
-from trino import exceptions as trino_errors
+from lakeops.writes import error_class
 
 from .oplog import Outcome
 
-
-def _deepest_cause(failure_info: object) -> str | None:
-    node, deepest = failure_info, None
-    while isinstance(node, dict):
-        deepest = node.get("type") or deepest
-        node = node.get("cause")
-    return deepest
-
-
-def error_class(error: BaseException) -> str:
-    if isinstance(error, trino_errors.TrinoQueryError):
-        name = error.error_name or "QUERY_FAILED"
-        cause = _deepest_cause(error.failure_info)
-        return f"{name}/{cause}" if cause else name
-    # requests' ConnectTimeout is both a Timeout and a ConnectionError: the timeout wins.
-    if isinstance(error, requests.exceptions.Timeout):
-        return "client-timeout"
-    if isinstance(error, requests.exceptions.ConnectionError):
-        return "connection-error"
-    return type(error).__name__
+__all__ = ["classify", "error_class"]
 
 
 def classify(error: BaseException, definite: frozenset[str]) -> tuple[Outcome, str, str]:
