@@ -13,8 +13,14 @@
      "grants": [{"on": {"type": "catalog"}, "privileges": ["CATALOG_MANAGE_CONTENT"]}]},
     {"name": "lab_ro", "catalog": "lab_evalprod",
      "grants": [{"on": {"type": "catalog"}, "privileges": ["NAMESPACE_LIST", "NAMESPACE_READ_PROPERTIES", "TABLE_LIST",
-                                                         "TABLE_READ_PROPERTIES", "TABLE_READ_DATA"]}]},
+                                                         "VIEW_LIST", "TABLE_READ_PROPERTIES", "TABLE_READ_DATA"]}]},
     {"name": "lab_sbx", "catalog": "lab_sandbox",
-     "grants": [{"on": {"type": "catalog"}, "privileges": ["CATALOG_MANAGE_CONTENT"]}]}
+     "grants": [{"on": {"type": "catalog"}, "privileges": ["CATALOG_MANAGE_CONTENT"]}]},
+    {"name": "lab_exp_ro", "catalog": "lab_exp",
+     "grants": [{"on": {"type": "catalog"}, "privileges": ["NAMESPACE_LIST", "NAMESPACE_READ_PROPERTIES", "TABLE_LIST",
+                                                         "VIEW_LIST", "TABLE_READ_PROPERTIES", "TABLE_READ_DATA"]}]},
+    {"name": "lab_sbx_ro", "catalog": "lab_sandbox",
+     "grants": [{"on": {"type": "catalog"}, "privileges": ["NAMESPACE_LIST", "NAMESPACE_READ_PROPERTIES", "TABLE_LIST",
+                                                         "VIEW_LIST", "TABLE_READ_PROPERTIES", "TABLE_READ_DATA"]}]}
   ]
 }

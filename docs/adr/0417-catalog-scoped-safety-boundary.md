@@ -118,7 +118,7 @@ before the `queries` rule. The `lab_base_<run>` catalogs come with the harness.
 Reproduce: `lab/spike/run.sh` (fresh stack, about 3 minutes; evidence in `out/lab-spike/`), and
 `lab/stack.sh up && (cd lakeops && uv run pytest -m lab)`.
 
-## Update 2026-10-18: baseline runs, compressed floors
+## Update 2026-10-18: baseline runs, compressed floors, the observer
 
 - **Baseline runs.** A baseline arm (the agent with broad SQL) works in a catalog of its own run, `lab_base_<run>`, for
   identity `baseline_writer` only (`lab/stack.sh base <run>`, one active run at a time).
@@ -128,5 +128,14 @@ Reproduce: `lab/spike/run.sh` (fresh stack, about 3 minutes; evidence in `out/la
     table outside the catalog's warehouse with 403 "… is not in the list of allowed locations"; Trino reports it as
     "Failed to create transaction". Checked on the REST API on 2026-10-18; the deny matrix's `create_table_elsewhere`
     covers it for every writer.
+  - Not yet done: a key per run, limited to `lab-base/<run>/`. It needs SeaweedFS identities with prefix-scoped
+    actions (to be checked on the lab) and a SeaweedFS reload for every new run (its identities are read at start).
 - **Floors** are 7 simulated days, `7m` at the published time scale (ADR 0420), on `lab_ops`, `lab_sbx`, `lab_ro` and
   `lab_base_<run>`.
+- **Observer.** State captures for the scorer run as `observer`, which no arm can see (the `queries` rule). Observer
+  reads every zone through READ_ONLY catalogs: `lab_ro`, `lab_exp_ro`, `lab_sbx_ro`, `lab_base_ro_<run>`. Each has its
+  own read-only Polaris principal (with `VIEW_LIST`: listing tables also lists views) and a Read+List S3 key.
+  - In those catalogs its file rules are catalog `all` with SELECT and OWNERSHIP. File-based rules allow `SHOW CREATE
+    TABLE` only to an owner in a catalog with full access; observer needs it for the definition hash of a capture.
+  - The READ_ONLY connector still refuses every write, DDL and procedure. Checked on 2026-10-18 (SET PROPERTIES, DROP,
+    INSERT, expire_snapshots, CREATE TABLE, ADD COLUMN), and the deny matrix covers observer in every catalog.

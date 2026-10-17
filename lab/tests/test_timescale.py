@@ -4,7 +4,7 @@ from datetime import timedelta
 
 import pytest
 
-from lab.guard import read_properties
+from lab.guard import LakeGuardError, read_properties
 from lab.session import ArmSession
 from lab.timescale import PUBLISHED, REAL_TIME, Timescale, TimescaleError, format_duration, parse_duration
 from lab.trino_client import REPO
@@ -137,3 +137,8 @@ def test_an_arm_session_runs_the_rewritten_sql_and_keeps_both():
 def test_the_baseline_template_has_the_same_floors():
     properties = read_properties(REPO / "lab/trino/base/catalog.properties")
     assert [properties[p] for p in FLOOR_PROPERTIES] == [format_duration(PUBLISHED.real(timedelta(days=7)))] * 2
+
+
+def test_no_arm_session_runs_as_the_capture_identity():
+    with pytest.raises(LakeGuardError, match="no arm runs as it"):
+        ArmSession.open("observer")

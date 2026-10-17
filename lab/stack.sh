@@ -21,6 +21,10 @@
 #   lab_sbx  executor        warehouse lab_sandbox   bucket lab-sandbox   read/write, floors 7m
 #   lab_base_RUN  baseline_writer  warehouse lab_base_RUN  bucket lab-base (s3://lab-base/RUN/warehouse)
 #                                                                         read/write, floors 7m; one active run at a time
+#   lab_ro, lab_exp_ro, lab_sbx_ro, lab_base_ro_RUN  observer  each zone's warehouse, read only (Trino, Polaris, S3):
+#                                                    state captures only; no arm session is built as observer.
+#     observer's rules there are catalog `all` with SELECT and OWNERSHIP: file rules allow SHOW CREATE TABLE only
+#     to an owner in a catalog with full access. Writes, DDL and procedures stay refused by the READ_ONLY connector.
 # Floors are 7 simulated days at the published time scale, 1 simulated day = 1 real minute (lab/src/lab/timescale.py).
 # Nobody may set the *_min_retention session properties. Every other catalog is `allow: none` for every identity.
 # A baseline run's catalog holds only its own warehouse (Polaris also refuses table locations outside it), so a
@@ -38,15 +42,18 @@ RUN="${LAB_RUN_DIR:-$REPO/out/lab}"
 # The OTel collector runs as the host user: its output files in $RUN/otel belong to whoever started the stack.
 LAB_UID="$(id -u)" LAB_GID="$(id -g)"
 export LAB_UID LAB_GID
-USERS="harness agent_planner executor baseline_writer"
+USERS="harness agent_planner executor baseline_writer observer"
 BUCKETS="lab-exp,lab-evalprod,lab-sandbox,lab-base"
 # S3 identities: name, env prefix in trino.env (empty: not a Trino key), actions.
 S3_IDENTITIES="polaris||Read:lab-exp,List:lab-exp,Write:lab-exp,Read:lab-evalprod,List:lab-evalprod,Write:lab-evalprod,Read:lab-sandbox,List:lab-sandbox,Write:lab-sandbox,Read:lab-base,List:lab-base,Write:lab-base
 exp|EXP|Read:lab-exp,List:lab-exp,Write:lab-exp
 evalprod|EVALPROD|Read:lab-evalprod,List:lab-evalprod,Write:lab-evalprod
 evalprod-ro|EVALPROD_RO|Read:lab-evalprod,List:lab-evalprod
+exp-ro|EXP_RO|Read:lab-exp,List:lab-exp
+sandbox-ro|SANDBOX_RO|Read:lab-sandbox,List:lab-sandbox
 sandbox|SANDBOX|Read:lab-sandbox,List:lab-sandbox,Write:lab-sandbox
-base|BASE|Read:lab-base,List:lab-base,Write:lab-base"
+base|BASE|Read:lab-base,List:lab-base,Write:lab-base
+base-ro|BASE_RO|Read:lab-base,List:lab-base"
 SPIKE_USERS="spike"
 SPIKE_BUCKETS="lab-spike"
 SPIKE_S3_IDENTITIES="spike|SPIKE|Read:lab-spike,List:lab-spike,Write:lab-spike
@@ -168,8 +175,12 @@ render() {
     rules="$(cat "$LAB/trino/rules.json")"
   fi
   if [[ -n "$run" ]]; then
-    sed -e "s/@RUN@/$run/g" -e "s/@RUN_UPPER@/$(tr '[:lower:]' '[:upper:]' <<< "$run")/g" \
-      "$LAB/trino/base/catalog.properties" > "$RUN/trino/catalog/lab_base_$run.properties"
+    local upper template
+    upper="$(tr '[:lower:]' '[:upper:]' <<< "$run")"
+    for template in catalog:lab_base catalog-ro:lab_base_ro; do
+      sed -e "s/@RUN@/$run/g" -e "s/@RUN_UPPER@/$upper/g" "$LAB/trino/base/${template%%:*}.properties" \
+        > "$RUN/trino/catalog/${template#*:}_$run.properties"
+    done
     rules="${rules//@RUN@/$run}"
   fi
   printf '%s\n' "$rules" > "$RUN/trino/rules.json"
@@ -180,6 +191,8 @@ render() {
 base() {
   local run="$1"
   [[ "$run" =~ ^[a-z][a-z0-9_]{0,31}$ ]] || die "a run id is [a-z][a-z0-9_]{0,31}: '$run'"
+  # lab_base_ro_<run> is run <run>'s read-only catalog and principal: run ro_x would collide with run x's.
+  [[ "$run" != ro_* ]] || die "a run id must not start with ro_: '$run'"
   [[ -f "$RUN/.env" ]] || die "no lab stack in $RUN: lab/stack.sh up first"
   # base/loaded names the run Trino last restarted with, written only after that restart succeeded.
   if [[ "$(active_run)" == "$run" && "$(cat "$RUN/base/loaded" 2> /dev/null)" == "$run" \
@@ -189,9 +202,13 @@ base() {
   fi
   mkdir -p "$RUN/base"
   # The location ends in /warehouse, so no run's location is a prefix of another's (r1 and r10).
-  jq -n --arg n "lab_base_$run" --arg l "s3://lab-base/$run/warehouse" '{
+  jq -n --arg n "lab_base_$run" --arg ro "lab_base_ro_$run" --arg l "s3://lab-base/$run/warehouse" '{
     catalogs: [{name: $n, location: $l, properties: {"polaris.config.drop-with-purge.enabled": "true"}}],
-    principals: [{name: $n, catalog: $n, grants: [{on: {type: "catalog"}, privileges: ["CATALOG_MANAGE_CONTENT"]}]}]
+    principals: [
+      {name: $n, catalog: $n, grants: [{on: {type: "catalog"}, privileges: ["CATALOG_MANAGE_CONTENT"]}]},
+      {name: $ro, catalog: $n, grants: [{on: {type: "catalog"}, privileges: ["NAMESPACE_LIST",
+        "NAMESPACE_READ_PROPERTIES", "TABLE_LIST", "VIEW_LIST", "TABLE_READ_PROPERTIES", "TABLE_READ_DATA"]}]}
+    ]
   }' > "$RUN/base/$run.json"
   compose run --rm -T setup python -I /lab/polaris-setup.py "/run/lab/base/$run.json"
   echo "$run" > "$RUN/base/active"

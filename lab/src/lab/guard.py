@@ -25,6 +25,8 @@ import trino
 from lab.trino_client import Settings, connect, query, server_info
 
 LAB_ENVIRONMENT = "lab"
+# Read only in every zone (lab_ro, lab_exp_ro, lab_sbx_ro, lab_base_ro_<run>): captures table states for the scorer.
+CAPTURE_IDENTITY = "observer"
 LAB_POLARIS_URI = "http://polaris:8181/api/catalog"
 LAB_S3_ENDPOINT = "http://seaweedfs:8333"
 PLATFORM = "lake"
@@ -33,7 +35,7 @@ LAB_CONNECTORS = {
     "tpch": "generated benchmark data, computed in memory: no storage, no credentials",
 }
 
-LAB_CATALOG = re.compile(r"lab_(exp|ops|ro|sbx|base_[a-z0-9_]+)")
+LAB_CATALOG = re.compile(r"lab_(exp|ops|ro|sbx|exp_ro|sbx_ro|base_[a-z0-9_]+)")
 LAB_LOCATION = re.compile(r"s3://lab-[a-z0-9-]+/.*")
 _SHOWN_LOCATION = re.compile(r"\blocation = '([^']*)'")
 _IDENTIFIER = re.compile(r"[a-z0-9_]+")

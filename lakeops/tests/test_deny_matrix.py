@@ -28,9 +28,10 @@ pytestmark = pytest.mark.lab
 
 ACTIVE_RUN = (RUN / "base/active").read_text().strip() if (RUN / "base/active").is_file() else None
 BASE = f"lab_base_{ACTIVE_RUN}" if ACTIVE_RUN else None
+BASE_RO = f"lab_base_ro_{ACTIVE_RUN}" if ACTIVE_RUN else None
 
-IDENTITIES = ["harness", "agent_planner", "executor", "baseline_writer"]
-CATALOGS = ["lab_exp", "lab_ro", "lab_ops", "lab_sbx", *([BASE] if BASE else [])]
+IDENTITIES = ["harness", "agent_planner", "executor", "baseline_writer", "observer"]
+CATALOGS = ["lab_exp", "lab_ro", "lab_ops", "lab_sbx", "lab_exp_ro", "lab_sbx_ro", *([BASE, BASE_RO] if BASE else [])]
 # (identity, catalog) -> access; any pair not listed has none.
 ACCESS = {
     ("harness", "lab_exp"): "write",
@@ -38,18 +39,22 @@ ACCESS = {
     ("executor", "lab_ops"): "write",
     ("executor", "lab_sbx"): "write",
     ("baseline_writer", BASE): "write",
+    **{("observer", c): "read" for c in ("lab_ro", "lab_exp_ro", "lab_sbx_ro", BASE_RO)},
 }
-# catalog -> (identity, catalog) that creates its probe tables; lab_ro reads the evaluation warehouse of lab_ops.
+# catalog -> (identity, catalog) that creates its probe tables; a read-only catalog reads its writer's warehouse.
 WRITER = {
     "lab_exp": ("harness", "lab_exp"),
     "lab_ro": ("executor", "lab_ops"),
     "lab_ops": ("executor", "lab_ops"),
     "lab_sbx": ("executor", "lab_sbx"),
+    "lab_exp_ro": ("harness", "lab_exp"),
+    "lab_sbx_ro": ("executor", "lab_sbx"),
     BASE: ("baseline_writer", BASE),
+    BASE_RO: ("baseline_writer", BASE),
 }
-FLOOR = {"lab_exp": "0s", "lab_ro": "7m", "lab_ops": "7m", "lab_sbx": "7m", BASE: "7m"}
-DROP_WITH_PURGE = {"lab_exp": True, "lab_ro": False, "lab_ops": False, "lab_sbx": True, BASE: True}
-READ_ONLY = {"lab_ro"}  # iceberg.security=READ_ONLY
+READ_ONLY = {"lab_ro", "lab_exp_ro", "lab_sbx_ro", BASE_RO}  # iceberg.security=READ_ONLY
+FLOOR = {"lab_exp": "0s", "lab_ops": "7m", "lab_sbx": "7m", BASE: "7m", **{c: "7m" for c in READ_ONLY}}
+DROP_WITH_PURGE = {"lab_exp": True, "lab_ops": False, "lab_sbx": True, BASE: True, **{c: False for c in READ_ONLY}}
 # Outside every catalog's warehouse (each is s3://<bucket>/warehouse or s3://lab-base/<run>/warehouse), shaped like
 # another baseline run's warehouse: the bucket key reaches it, only Polaris's location check stands in the way.
 ELSEWHERE = "s3://lab-base/another_run/warehouse"
@@ -168,7 +173,19 @@ def test_each_identity_sees_only_its_catalogs(lab) -> None:
         "agent_planner": {"lab_ro", "system"},
         "executor": {"lab_ops", "lab_sbx", "system"},
         "baseline_writer": {BASE, "system"} if BASE else {"system"},
+        "observer": {"lab_ro", "lab_exp_ro", "lab_sbx_ro", "system", *([BASE_RO] if BASE else [])},
     }
+
+
+def test_no_arm_sees_the_observers_queries(lab) -> None:
+    """State captures run as observer: none of them shows up in an arm's system.runtime.queries."""
+    marker = f"capture_{uuid.uuid4().hex[:12]}"
+    query(connect("observer"), f"SELECT '{marker}'")
+    for arm in ("harness", "agent_planner", "executor", "baseline_writer"):
+        found = query(connect(arm), f"SELECT count(*) FROM system.runtime.queries WHERE query LIKE '%{marker}%'")
+        assert found == [[1]], arm  # its own lookup only: the statement text holds the marker too
+        users = query(connect(arm), 'SELECT DISTINCT "user" FROM system.runtime.queries')
+        assert users == [[arm]], arm
 
 
 # A query that stays RUNNING while its client does not fetch: 10^8 rows fill the output buffer and Trino waits.
