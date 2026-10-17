@@ -53,6 +53,9 @@ orchestrator adds rows when merging a PR that contains ADRs.
 | [0413](0413-silver-latest-epoch-full-rebuild.md) | Silver = current state of the latest completed CDC epoch, rebuilt in full | Accepted |
 | [0414](0414-airflow3-local-executor-cosmos.md) | Airflow 3 with LocalExecutor, dbt through Cosmos, DAGs baked into one image | Accepted |
 | [0415](0415-flink-sql-realtime-kpis.md) | Realtime KPIs with Flink SQL on the Flink Kubernetes Operator, job baked into one image | Accepted |
+| [0416](0416-metabase-bi-dashboards-from-git.md) | Metabase for BI on gold, with its dashboard provisioned from git through the API | Accepted |
+| [0417](0417-catalog-scoped-safety-boundary.md) | Lab safety boundary: one Trino catalog per zone, read-only in the engine, own warehouse, principal and key | Accepted |
+| [0418](0418-iceberg-tags-short-lived-pins.md) | Iceberg tags are short-lived pins; their max age counts from the snapshot, and no guarantee rests on them | Accepted |
 | [0500](0500-opentofu-over-terraform.md) | OpenTofu instead of Terraform for the AWS layers | Accepted |
 | [0501](0501-ephemeral-env-with-lease.md) | Ephemeral AWS sessions bounded by a lease and two reapers | Accepted |
 | [0502](0502-layer2-state-aws-only.md) | Layer 2 state holds only AWS resources | Accepted |
