@@ -76,7 +76,13 @@ def statement_class(sql: str) -> str:
     words = [t.text.upper() for t in tokens]
     if not words:
         return "EMPTY"
-    if words[0] in ("SHOW", "EXPLAIN", "DESCRIBE", "DESC"):
+    if words[0] == "EXPLAIN":  # EXPLAIN ANALYZE runs the statement: it has that statement's class
+        analyzed = _after_keyword(sql[tokens[0].end + 1 :], "ANALYZE")
+        if analyzed is None:
+            return "EXPLAIN"
+        verbose = _after_keyword(analyzed, "VERBOSE")
+        return statement_class(analyzed if verbose is None else verbose)
+    if words[0] in ("SHOW", "DESCRIBE", "DESC"):
         return "DESCRIBE" if words[0] == "DESC" else words[0]
     if words[0] == "CALL":  # the tokenizer keeps the rest of a CALL as one string: name(arguments)
         name = "".join(t.text for t in tokens[1:]).split("(")[0].strip().lower()
@@ -100,6 +106,17 @@ def statement_class(sql: str) -> str:
     if isinstance(tree, exp.Command):
         return str(tree.this).upper()
     return _PARSED.get(type(tree), type(tree).__name__.upper())
+
+
+def _after_keyword(text: str, keyword: str) -> str | None:
+    """The text after a leading keyword (comments before it do not count), or None if it does not start with it."""
+    try:
+        tokens = sqlglot.tokenize(text, read="trino")
+    except SqlglotError:
+        return None
+    if not tokens or tokens[0].text.upper() != keyword:
+        return None
+    return text[tokens[0].end + 1 :]
 
 
 def _after_name(tokens: list[Token]) -> list[str]:
