@@ -1,4 +1,5 @@
-"""Fixture `lab`: the lab stack (lab/stack.sh up) for tests marked `lab`; skips without it, fails if LAB_REQUIRED=1."""
+"""Fixture `lab` (for tests/ and experiments/): the lab stack (lab/stack.sh up) for tests marked `lab`; skips without
+it, fails if LAB_REQUIRED=1."""
 
 import os
 

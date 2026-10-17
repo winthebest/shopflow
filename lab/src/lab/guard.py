@@ -127,8 +127,11 @@ def shown_location(show_create: str) -> str:
     return match.group(1)
 
 
-def guarded_connect(user: str, *, require_lab: bool = True, settings: Settings | None = None) -> trino.dbapi.Connection:
-    """A connection as `user`, after the checks above; the default demands the lab stack."""
+def guarded_connect(
+    user: str, *, require_lab: bool = True, settings: Settings | None = None, **client_options: object
+) -> trino.dbapi.Connection:
+    """A connection as `user`, after the checks above; the default demands the lab stack. `client_options` go to
+    trino.dbapi.connect (lab.trino_client.connect: max_attempts=1 for writers)."""
     settings = settings or Settings.from_env()
     catalog_dir = settings.run_dir / "trino/catalog"
     if catalog_dir.is_dir():
@@ -136,7 +139,7 @@ def guarded_connect(user: str, *, require_lab: bool = True, settings: Settings |
     elif require_lab:
         raise LakeGuardError(f"{catalog_dir} does not exist: the lab stack is not set up (lab/stack.sh up)")
     check_environment(server_info(user, settings)["environment"], require_lab=require_lab)
-    conn = connect(user, settings)
+    conn = connect(user, settings, **client_options)
     check_visible_catalogs(row[0] for row in query(conn, "SHOW CATALOGS"))
     return conn
 
