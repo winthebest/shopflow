@@ -42,6 +42,10 @@ class Scenario:
     maintenance: Maintenance = "none"
     optimize_every_seconds: float = 5.0
     day_seconds: float = 10.0  # the event day moves forward this often during the write phase
+    # A sink-like appender beside the writers (events only): a batch of this many events per commit, through the
+    # REST catalog with PyIceberg; 0: none.
+    appender_batch: int = 0
+    appender_every_seconds: float = 1.0
     ops_per_writer: int = 20_000  # an upper bound: the deadline stops writers long before
 
     def __post_init__(self) -> None:
@@ -51,6 +55,8 @@ class Scenario:
             raise ValueError(f"unknown contention level {self.contention!r}")
         if not self.ledger and self.workload != "w2":
             raise ValueError("only the counters workload runs without the ledger")
+        if self.appender_batch and self.workload != "w1":
+            raise ValueError("the sink-like appender writes events: workload w1")
 
     @property
     def table(self) -> str:

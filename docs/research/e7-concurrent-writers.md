@@ -2,7 +2,7 @@
 
 - Status: **design, fixed before any dev run** (2026-10-18). No results yet; every number will come from
   `lab/results/e7_concurrency/`.
-- Code: `lab/experiments/e7_concurrency/` (op log, oracle, scenarios, writers, runner), and later
+- Code: `lab/experiments/e7_concurrency/` (op log, oracle, scenarios, writers, direct PyIceberg writers, runner), and later
   `lakeops/src/lakeops/writes/` (the method) and `lakeops/src/lakeops/verify/`.
 - Lab: the `lab_exp` catalog of the lab stack (`lab/stack.sh`, ADR 0417), as identity `harness`.
 
@@ -225,7 +225,7 @@ any docs read.
 | 3 | Which commit-retry settings does Trino honour: table `commit.retry.*`, a catalog setting? | pending |
 | 4 | Do Trino's snapshot summaries carry the query id (`trino_query_id`)? That would resolve unknown ops by query id | pending |
 | 5 | Does Trino finish a write after its client is killed, and after how long does it abandon one? | pending |
-| 6 | Does a PyIceberg `upsert` racing another commit fail, retry or overwrite? | pending |
+| 6 | PyIceberg 0.12 retries a commit that lost a race (`commit.retry.num-retries`, 4 by default) and checks the retry against `write.*.isolation-level` (serializable by default), read in its source. Does a racing `upsert` (W2-py) still lose an add, or is it refused? | pending |
 | 7 | Does the trino client's own re-send of a statement (3 attempts by default, after a timeout or a lost connection) write an op twice? | pending |
 
 **Conflict matrix** (to come): pairs of concurrent operations (INSERT, MERGE on the same key, MERGE on another key,

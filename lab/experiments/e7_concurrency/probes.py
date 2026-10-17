@@ -161,6 +161,27 @@ def q4_snapshot_query_id() -> dict:
     }
 
 
+def q6_pyiceberg_upsert_race(trials: int = 10) -> dict:
+    """Two PyIceberg read-modify-write adds (W2-py) on one key at the same moment: does PyIceberg's own commit retry,
+    checked against the table's isolation level, refuse the stale one, or is an add lost? Runs in the lab network."""
+    from .direct import W2_PY, pyiceberg_writes
+    from .scenario import OpSpec, Scenario
+
+    admin = lab_connector(ADMIN)
+    _fresh(admin)
+    scenario = Scenario("probe-q6", "w2", 2, "high", 0)
+    adds = [pyiceberg_writes(None, scenario, W2_PY, f"p{w}") for w in range(2)]  # each loads its own table
+    ops, results = [], []
+    for trial in range(1, trials + 1):
+        pair = _together(
+            [(lambda a=a, w=w, t=trial: a(f"p{w}:{t}", OpSpec(t, 0, 1), DAY0)) for w, a in enumerate(adds)]
+        )
+        results += pair
+        ops += [_op(f"p{w}", trial, "counters", 0, r) for w, r in enumerate(pair)]
+    verdict = grade(ops, [], _counters(admin), range(1))
+    return {"trials": trials, **_summary(results), "verdict": verdict.counts()}
+
+
 def _query_state(admin, query_id: str) -> str | None:
     if not re.fullmatch(r"[0-9a-z_]+", query_id):
         raise ValueError(f"not a Trino query id: {query_id!r}")
@@ -251,6 +272,7 @@ PROBES = {
     "q3": q3_commit_retries,
     "q4": q4_snapshot_query_id,
     "q5": q5_write_without_its_client,
+    "q6": q6_pyiceberg_upsert_race,
     "q7": q7_client_resubmission,
 }
 

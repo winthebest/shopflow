@@ -30,6 +30,7 @@ from .writers import baseline_writes, maintenance_statement, run_maintenance, ru
 EXPERIMENT = "e7_concurrency"
 BARRIER_TIMEOUT_SECONDS = 120.0  # every process connects (and passes the lab guard) before the write phase starts
 ADMIN = Arm("admin", client_max_attempts=1, request_timeout_seconds=300.0)  # setup and read-back, never retried
+APPENDER = "sink"  # the sink-like appender's writer id and op log
 
 Connector = Callable[[Arm], Connection]
 
@@ -121,11 +122,30 @@ def _maintenance_main(scenario: Scenario, arm: Arm, run_dir: Path, barrier, conn
     )
 
 
+def _appender_main(scenario: Scenario, arm: Arm, run_dir: Path, barrier, connector: Connector) -> None:
+    from .direct import load, run_appender
+
+    connector(arm)  # the lab guard's checks, as for every process; the appender itself writes through the catalog
+    table = load(sql.EVENTS)
+    with OpLogWriter(run_dir / f"{APPENDER}.jsonl", APPENDER) as log:
+        barrier.wait(BARRIER_TIMEOUT_SECONDS)
+        start = time.monotonic()
+        run_appender(
+            table,
+            scenario=scenario,
+            log=log,
+            start=start,
+            deadline=start + scenario.seconds,
+            definite=arm.definite_errors,
+        )
+
+
 def launch(scenario: Scenario, arm: Arm, run_dir: Path, connector: Connector, kill: Kill | None = None) -> Launched:
     ctx = multiprocessing.get_context("spawn")
     streams = op_streams(scenario, arm.assign)
     maintenance = scenario.maintenance == "optimize"
-    barrier = ctx.Barrier(len(streams) + maintenance + 1)
+    appender = scenario.appender_batch > 0
+    barrier = ctx.Barrier(len(streams) + maintenance + appender + 1)
     procs = {
         writer_name(scenario, i): ctx.Process(
             target=_writer_main, args=(i, ops, scenario, arm, run_dir, barrier, connector), daemon=True
@@ -135,6 +155,10 @@ def launch(scenario: Scenario, arm: Arm, run_dir: Path, connector: Connector, ki
     if maintenance:
         procs["maintenance"] = ctx.Process(
             target=_maintenance_main, args=(scenario, arm, run_dir, barrier, connector), daemon=True
+        )
+    if appender:
+        procs[APPENDER] = ctx.Process(
+            target=_appender_main, args=(scenario, arm, run_dir, barrier, connector), daemon=True
         )
     for proc in procs.values():
         proc.start()
@@ -202,7 +226,7 @@ def maintenance_stats(path: Path) -> dict:
 
 
 def collect(conn: Connection, scenario: Scenario, arm: Arm, run_dir: Path, launched: Launched) -> dict:
-    ops = read_oplog(sorted(run_dir.glob(f"{scenario.workload}-*.jsonl")))
+    ops = read_oplog(sorted([*run_dir.glob(f"{scenario.workload}-*.jsonl"), *run_dir.glob(f"{APPENDER}.jsonl")]))
     events = [EventRow(*row) for row in query(conn, sql.READ_EVENTS)]
     seeded = scenario.seeded_keys() if scenario.workload == "w2" else range(0)
     if scenario.ledger:
