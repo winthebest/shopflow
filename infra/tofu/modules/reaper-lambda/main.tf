@@ -162,6 +162,10 @@ resource "aws_scheduler_schedule" "sweep" {
     arn      = aws_lambda_function.this.arn
     role_arn = aws_iam_role.scheduler.arn
     input    = jsonencode({ trigger = "sweep" })
+
+    dead_letter_config {
+      arn = aws_sqs_queue.dead_letter.arn
+    }
   }
 }
 
@@ -184,10 +188,42 @@ resource "aws_iam_role_policy" "scheduler" {
   role = aws_iam_role.scheduler.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = "lambda:InvokeFunction"
-      Resource = aws_lambda_function.this.arn
-    }]
+    Statement = [
+      {
+        Sid      = "InvokeReaper"
+        Effect   = "Allow"
+        Action   = "lambda:InvokeFunction"
+        Resource = aws_lambda_function.this.arn
+      },
+      {
+        Sid      = "ReportUndelivered"
+        Effect   = "Allow"
+        Action   = "sqs:SendMessage"
+        Resource = aws_sqs_queue.dead_letter.arn
+      },
+    ]
   })
+}
+
+# Where Scheduler puts an invocation it could not deliver: the spend-limit SCP denies lambda:InvokeFunction near the
+# limit, or the scheduler role is broken. Neither shows up as a Lambda error, so a message here raises its own alarm.
+resource "aws_sqs_queue" "dead_letter" {
+  name                      = var.dead_letter_queue_name
+  message_retention_seconds = 1209600
+  sqs_managed_sse_enabled   = true
+}
+
+resource "aws_cloudwatch_metric_alarm" "undelivered" {
+  alarm_name          = "${var.function_name}-undelivered"
+  alarm_description   = "A reaper schedule could not invoke the function (messages in ${var.dead_letter_queue_name}): the kill switch is not running. Run make cloud-down from the laptop."
+  namespace           = "AWS/SQS"
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  dimensions          = { QueueName = aws_sqs_queue.dead_letter.name }
+  statistic           = "Maximum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [var.alert_topic_arn]
 }

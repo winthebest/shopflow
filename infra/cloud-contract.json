@@ -38,6 +38,7 @@
     "schedule_rate": "rate(15 minutes)",
     "sweep_schedule_name": "shopflow-reaper-sweep",
     "sweep_rate": "rate(1 hour)",
+    "dead_letter_queue": "shopflow-reaper-dlq",
     "grace_hours": 1
   },
   "lease": {

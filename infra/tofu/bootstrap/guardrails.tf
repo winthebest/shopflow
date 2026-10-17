@@ -30,6 +30,7 @@ module "reaper_lambda" {
   schedule_name            = local.contract.reaper.schedule_name
   sweep_schedule_name      = local.contract.reaper.sweep_schedule_name
   sweep_rate               = local.contract.reaper.sweep_rate
+  dead_letter_queue_name   = local.contract.reaper.dead_letter_queue
   alert_topic_arn          = module.cost_guardrails.alert_topic_arn
   permissions_boundary_arn = aws_iam_policy.boundary.arn
   source_dir               = "${path.module}/../../lambda/reaper/src"

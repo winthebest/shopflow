@@ -192,7 +192,7 @@ schedule_upsert() {
     --group-name "$SCHEDULE_GROUP" --name "$SCHEDULE_NAME"
     --schedule-expression "$(contract .reaper.schedule_rate)" --start-date "$start"
     --flexible-time-window Mode=OFF --state ENABLED
-    --target "{\"Arn\":\"$target\",\"RoleArn\":\"$role\",\"Input\":\"{}\"}"
+    --target "{\"Arn\":\"$target\",\"RoleArn\":\"$role\",\"Input\":\"{}\",\"DeadLetterConfig\":{\"Arn\":\"arn:aws:sqs:$REGION:$account:$(contract .reaper.dead_letter_queue)\"}}"
   )
   if aws_ scheduler get-schedule --group-name "$SCHEDULE_GROUP" --name "$SCHEDULE_NAME" >/dev/null 2>&1; then
     run aws_ scheduler update-schedule "${args[@]}" >/dev/null

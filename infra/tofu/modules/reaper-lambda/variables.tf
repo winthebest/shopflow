@@ -49,6 +49,11 @@ variable "sweep_rate" {
   default     = "rate(1 hour)"
 }
 
+variable "dead_letter_queue_name" {
+  description = "SQS queue that receives reaper invocations Scheduler could not deliver (alarmed)."
+  type        = string
+}
+
 variable "alert_topic_arn" {
   description = "SNS topic for reaper results and failures."
   type        = string

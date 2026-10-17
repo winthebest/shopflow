@@ -253,7 +253,14 @@ have no final backup: RPO is bounded by the WAL `archive_timeout` (60 s; 28–56
 | Laptop reaper | `make cloud-reap` (`scripts/cloud-reap.sh`, operator role) | by hand | takes the layer-2 state lock, re-reads the lease, API teardown, `tofu destroy -lock=false` under its lock, orphan check |
 
 A missing or unreadable lease counts as expired. The Lambda runs one invocation at a time (reserved concurrency
-1), so the two schedules never tear down concurrently. Failures alert through the Lambda error alarm (SNS email).
+1), so the two schedules never tear down concurrently. Failures alert by SNS email in two ways:
+- the Lambda error alarm;
+- the `shopflow-reaper-undelivered` alarm. Both schedules send an invocation they could not deliver to the SQS
+  dead-letter queue `shopflow-reaper-dlq`: the spend-limit SCP denying `lambda:InvokeFunction`, or a broken
+  scheduler role. Neither is a Lambda error.
+
+The operator role may create, update or delete only the per-session schedule. The permissions boundary denies every
+role any change to the sweep: only the layer-0 admin can touch it.
 There is no GitHub reaper: the project account denies OIDC identity providers (ADR 0513).
 
 Tests to run in the first sessions:
@@ -282,7 +289,8 @@ What to do:
    or `s3:PutObject`, so the final backup, the evidence export and the destroy still work. Run it at the first
    spend-limit email (50%), not at the limit.
 2. The lease sweep should have acted long before: the lease is 4 h, so a forgotten session costs ~$2, not $20.
-   If a session is still running near the limit, the sweep has failed; check the Lambda error alarm.
+   If a session is still running near the limit, the sweep has failed. Check the Lambda error alarm and the
+   `shopflow-reaper-undelivered` alarm (an invocation denied by the spend-limit SCP lands in the dead-letter queue).
 3. **What a pause does to billing** for the EKS control plane, EBS volumes and the NLB: the docs do not say.
    Assume EBS keeps billing (the data is kept). That is one more reason to have run `cloud-down` before.
 4. **If the project is paused:** within 90 days, raise the spend limit in AWS Settings → Billing to reactivate it,
@@ -315,6 +323,7 @@ Every resource layers 0–2 and a session create, against the AWS-managed SCPs
 | SNS topic + email subscription | 0 | allowed | allow-list `sns:*` |
 | Lambda (python3.13, arm64), reserved concurrency 1 | 0 | allowed (concurrency quota 400: probe) | allow-list `lambda:*`; **near the spend limit `lambda:InvokeFunction` is denied** |
 | Scheduler group, hourly sweep, per-session schedule | 0/session | allowed; near the spend limit `scheduler:CreateSchedule` is denied | allow-list `scheduler:*` |
+| SQS dead-letter queue for both schedules (SSE-SQS) + its alarm | 0 | allowed; near the spend limit only `sqs:CreateQueue` is denied, so delivery to the existing queue still works | allow-list `sqs:*`, `cloudwatch:*` |
 | CloudWatch alarm, log groups (EKS audit, Lambda) | 0/2 | allowed | allow-list `cloudwatch:*`, `logs:*` |
 | SSM parameters (String, SecureString with `aws/ssm`) | 0/session | allowed | allow-list `ssm:*`, `kms:*` |
 | Glue databases | 0 | allowed | allow-list `glue:*` |
@@ -369,6 +378,10 @@ Verify at Approval 1 (needs a valid `aws login` session; the probe session has e
          agent matches after the Service DNAT, and the VPC CIDR alone is enough.
 - [ ] OpenCost (`kubectl -n opencost port-forward svc/opencost 9090`) shows cost per namespace (on-demand prices,
       which now match the nodes); compare its total with Cost Explorer's the next day.
+- [ ] Node sizing (2 × r6g.large = 4 vCPU / 32 GiB, ADR 0513): `kubectl top nodes` and the pending pods under
+      `core,obs-lite` at rest and during the smoke. Write the CPU and memory headroom in `docs/cost.md`. Before any
+      session with `data`, `rt` or `batch`, decide between a third node (`node_desired_size`, 16-vCPU quota) and
+      xlarge types from those numbers.
 - [ ] `out/cloud/<session>/timings.json`: RTO-infra and RTO-service of the first session, for `docs/cost.md` and
       the Phase 6 report.
 - [ ] Measure $/hour (full stack and paused) and fill [`docs/cost.md`](../cost.md).

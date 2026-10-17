@@ -96,9 +96,16 @@ locals {
         Resource = "${local.arn.data_bucket}/${local.prefixes.evidence}*"
       },
       {
-        Sid      = "ReaperSchedule"
+        # Only the per-session schedule: the hourly sweep must not depend on the operator (the boundary also denies it).
+        Sid      = "SessionReaperSchedule"
         Effect   = "Allow"
-        Action   = ["scheduler:CreateSchedule", "scheduler:UpdateSchedule", "scheduler:DeleteSchedule", "scheduler:GetSchedule"]
+        Action   = ["scheduler:CreateSchedule", "scheduler:UpdateSchedule", "scheduler:DeleteSchedule"]
+        Resource = local.arn.session_rule
+      },
+      {
+        Sid      = "ReadReaperSchedules"
+        Effect   = "Allow"
+        Action   = "scheduler:GetSchedule"
         Resource = local.arn.schedules
       },
       {

@@ -23,6 +23,8 @@ locals {
     glue         = "arn:aws:glue:${local.region}:${local.account_id}"
     reaper_fn    = "arn:aws:lambda:${local.region}:${local.account_id}:function:${local.contract.reaper.function_name}"
     schedules    = "arn:aws:scheduler:${local.region}:${local.account_id}:schedule/${local.contract.reaper.schedule_group}/*"
+    session_rule = "arn:aws:scheduler:${local.region}:${local.account_id}:schedule/${local.contract.reaper.schedule_group}/${local.contract.reaper.schedule_name}"
+    sweep_rule   = "arn:aws:scheduler:${local.region}:${local.account_id}:schedule/${local.contract.reaper.schedule_group}/${local.contract.reaper.sweep_schedule_name}"
   }
 
   boundary_name    = "${local.project}-boundary"

@@ -30,7 +30,7 @@ every budget here excludes credits.
 | Budget Action | actual > $25 (cumulative) → attaches `shopflow-budget-deny` (no new EKS cluster/node group, EC2, EBS, ELB, NAT, EIP) to `shopflow-operator` and the LB controller role. Teardown, scale-down and reads keep working. Deliberate checkpoint: review this file, then raise the threshold (`action_threshold_usd`) and reset the action |
 | Cost Anomaly Detection | services monitor (AWS's default one is reused when present), each anomaly ≥ $1 sent immediately to SNS `shopflow-alerts` |
 | Cost allocation tags | `project`, `env`. In an organization only the management account can activate them, and this account is a member of an AWS-managed organization: expect `activate_cost_allocation_tags` to fail; verify at Approval 1 |
-| Lease + kill switches | the real stop: Budgets refresh only every 8–12 h. Lease default 4 h (max 8 h). Two in-AWS reapers run the same Lambda: the **hourly sweep** (always on, layer 0) and the **per-session schedule** from lease + 1 h (cloud-up). There is no GitHub reaper (ADR 0513) |
+| Lease + kill switches | the real stop: Budgets refresh only every 8–12 h. Lease default 4 h (max 8 h). Two in-AWS reapers run the same Lambda: the **hourly sweep** (always on, layer 0; only the layer-0 admin can change it) and the **per-session schedule** from lease + 1 h (cloud-up). An invocation neither can deliver lands in an SQS dead-letter queue that alarms. There is no GitHub reaper (ADR 0513) |
 | Spend limit (AWS, user setting) | $20/month, gross before credits and pre-tax; pauses the whole project at the limit (below) |
 
 Tags reach controller-created resources too: launch template `tag_specifications` (instances, volumes, ENIs),

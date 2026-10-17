@@ -246,6 +246,8 @@ def test_first_session_initdb_end_to_end(fake, hooks):
     final = datetime.fromisoformat(leases[-1])
     assert timedelta(hours=2, minutes=59) < final - datetime.now(UTC) <= timedelta(hours=3)
     schedule = next(c for c in fake.calls("aws") if "create-schedule" in c.argv)
+    target = json.loads(schedule.argv[schedule.argv.index("--target") + 1])
+    assert target["DeadLetterConfig"] == {"Arn": "arn:aws:sqs:ap-southeast-2:123456789012:shopflow-reaper-dlq"}, "undelivered invokes alarm"
     assert datetime.fromisoformat(schedule.argv[schedule.argv.index("--start-date") + 1]) == final + timedelta(hours=1)
 
     # The probe pod runs under Pod Security restricted with a label no allow rule selects, then is removed.

@@ -16,6 +16,9 @@ mock_provider "aws" {
   mock_resource "aws_cloudwatch_log_group" {
     defaults = { arn = "arn:aws:logs:ap-southeast-2:123456789012:log-group:mock" }
   }
+  mock_resource "aws_sqs_queue" {
+    defaults = { arn = "arn:aws:sqs:ap-southeast-2:123456789012:shopflow-reaper-dlq" }
+  }
   mock_resource "aws_lambda_function" {
     defaults = { arn = "arn:aws:lambda:ap-southeast-2:123456789012:function:shopflow-reaper" }
   }
@@ -131,6 +134,22 @@ run "no_github_oidc_and_an_hourly_reaper_sweep" {
   assert {
     condition     = !strcontains(jsonencode(output.role_boundaries), "ci-plan") && !contains(keys(output.role_boundaries), "shopflow-reaper")
     error_message = "No role is trusted by GitHub Actions: project accounts deny OIDC providers (iam:*Provider*)."
+  }
+
+  assert {
+    condition = alltrue([
+      for st in jsondecode(aws_iam_policy.operator.policy).Statement : !contains(flatten([st.Resource]), "arn:aws:scheduler:ap-southeast-2:123456789012:schedule/shopflow/shopflow-reaper-sweep")
+      && !contains(flatten([st.Resource]), "arn:aws:scheduler:ap-southeast-2:123456789012:schedule/shopflow/*")
+      if st.Effect == "Allow" && length([for a in flatten([st.Action]) : a if contains(["scheduler:CreateSchedule", "scheduler:UpdateSchedule", "scheduler:DeleteSchedule"], a)]) > 0
+    ])
+    error_message = "The operator may create, update or delete only the per-session schedule, never the sweep."
+  }
+
+  assert {
+    condition = one([
+      for st in jsondecode(aws_iam_policy.boundary.policy).Statement : st.Resource if st.Sid == "ProtectReaperSweep"
+    ]) == "arn:aws:scheduler:ap-southeast-2:123456789012:schedule/shopflow/shopflow-reaper-sweep"
+    error_message = "The boundary denies every role any change to the sweep."
   }
 
   assert {

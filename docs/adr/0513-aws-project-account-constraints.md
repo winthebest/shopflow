@@ -55,7 +55,11 @@ confirmed:
   - the **per-session schedule** from lease + 1 h, as before.
 
   The Lambda re-reads the lease and does nothing while it is valid. Its reserved concurrency of 1 serializes the two
-  schedules. `scripts/cloud-reap.sh` stays as the laptop tool for a full layer-2 destroy under the state lock.
+  schedules.
+  - Both schedules have an SQS dead-letter queue with an alarm, because an invocation the spend-limit SCP denies is
+    not a Lambda error.
+  - The operator role may change only the per-session schedule. The permissions boundary denies every role any
+    change to the sweep. `scripts/cloud-reap.sh` stays as the laptop tool for a full layer-2 destroy under the state lock.
 - **Third hard stop: the project spend limit** ($20/month, the user's setting in AWS Settings). It is gross before
   credits and pre-tax; it pauses the whole project at the limit and deletes the data after 90 days unresolved.
   Monthly budget thresholds under it are proposed in `docs/cost.md`; the user decides.

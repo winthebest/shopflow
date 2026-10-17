@@ -6,6 +6,9 @@ mock_provider "aws" {
   mock_resource "aws_cloudwatch_log_group" {
     defaults = { arn = "arn:aws:logs:ap-southeast-2:123456789012:log-group:/aws/lambda/shopflow-reaper" }
   }
+  mock_resource "aws_sqs_queue" {
+    defaults = { arn = "arn:aws:sqs:ap-southeast-2:123456789012:shopflow-reaper-dlq" }
+  }
   mock_resource "aws_lambda_function" {
     defaults = { arn = "arn:aws:lambda:ap-southeast-2:123456789012:function:shopflow-reaper" }
   }
@@ -26,6 +29,7 @@ variables {
   role_name                = "shopflow-reaper-lambda"
   scheduler_role_name      = "shopflow-reaper-scheduler"
   sweep_schedule_name      = "shopflow-reaper-sweep"
+  dead_letter_queue_name   = "shopflow-reaper-dlq"
 }
 
 run "function_is_configured_for_the_session_cluster" {
@@ -78,6 +82,24 @@ run "an_hourly_sweep_always_runs_the_reaper" {
   assert {
     condition     = aws_scheduler_schedule.sweep.name != var.schedule_name
     error_message = "The function deletes the per-session schedule when done; the sweep must not be that schedule."
+  }
+
+  assert {
+    condition     = one(one(aws_scheduler_schedule.sweep.target).dead_letter_config).arn == aws_sqs_queue.dead_letter.arn
+    error_message = "An invocation Scheduler cannot deliver (e.g. denied near the spend limit) lands in the dead-letter queue."
+  }
+
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.undelivered.dimensions["QueueName"] == "shopflow-reaper-dlq"
+      && aws_cloudwatch_metric_alarm.undelivered.alarm_actions == toset([var.alert_topic_arn])
+    )
+    error_message = "A message in the dead-letter queue alerts through SNS."
+  }
+
+  assert {
+    condition     = contains([for s in jsondecode(aws_iam_role_policy.scheduler.policy).Statement : s.Resource if s.Action == "sqs:SendMessage"], aws_sqs_queue.dead_letter.arn)
+    error_message = "The scheduler role may write to the dead-letter queue."
   }
 
   assert {
