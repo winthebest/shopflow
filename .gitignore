@@ -29,3 +29,6 @@ kubeconfig*
 .idea/
 .vscode/
 *.log
+
+# Held-out eval cassettes: never committed (the held-out set is published only after its single run)
+evals/cassettes/holdout/

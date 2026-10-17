@@ -5,8 +5,9 @@ OLLAMA_MODEL ?= qwen3:8b
 
 .PHONY: eval-agent-test eval-agent-test-ollama eval-ollama-unload
 
-eval-agent-test: ## Agent lint + provider contract against fakes (offline; the live Claude test skips without a key)
-	cd agent && uv sync --locked && uv run ruff check . && uv run ruff format --check . && uv run pytest -m "not ollama"
+eval-agent-test: ## Agent + evals lint, provider contract against fakes, LLM replay (offline; live Claude test skips)
+	cd agent && uv sync --locked && uv run ruff check . ../evals && uv run ruff format --check . ../evals \
+		&& uv run pytest -m "not ollama"
 
 eval-agent-test-ollama: ## Live provider contract against local Ollama (loads qwen3:8b, ~5 GB; unloads it after)
 	cd agent && uv sync --locked && uv run pytest -m ollama -v
