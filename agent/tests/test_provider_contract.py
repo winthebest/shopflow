@@ -114,7 +114,7 @@ def test_an_edited_history_is_rejected():
     turn = conversation.send_user(QUESTION)
     conversation._messages[0]["content"] = "How many rows does lab_ro.shop.payments have?"
 
-    with pytest.raises(ProviderRequestError, match="edited conversation"):
+    with pytest.raises(ProviderRequestError, match="bound to a different conversation"):
         conversation.send_tool_results([ToolResult(turn.tool_calls[0], "1234")])
 
 
@@ -355,8 +355,27 @@ def test_the_fake_accepts_what_the_api_does_not_count_as_an_edit(change):
     ids=["earlier-message-edited", "system-edited", "tool-removed"],
 )
 def test_the_fake_rejects_an_edited_prefix(change):
-    with pytest.raises(anthropic.BadRequestError, match="edited conversation"):
+    with pytest.raises(anthropic.BadRequestError, match="bound to a different conversation"):
         second_request(change)
+
+
+def test_the_fake_drops_stale_thinking_only_when_asked():
+    asked = {"thinking": {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}}}
+
+    def edit(request):
+        request["messages"][0]["content"][0]["text"] = QUESTION.replace("orders", "payments")
+        request.update(asked, betas=["thinking-binding-controls-2026-08-01"])
+
+    second_request(edit)  # accepted: the stale block is dropped
+
+    with pytest.raises(anthropic.BadRequestError, match="block_binding"):
+        second_request(lambda request: request.update(asked))  # the field needs its beta header
+
+
+def test_the_fake_answers_without_streaming_too():
+    fake = fa.FakeMessagesAPI(fa.Reply([fa.thinking(), fa.text("ok")], model="claude-opus-5-5"))
+    message = claude(fake).client.beta.messages.create(**VALID)
+    assert ([b.type for b in message.content], message.model) == (["thinking", "text"], "claude-opus-5-5")
 
 
 def test_the_fake_accepts_the_valid_request():

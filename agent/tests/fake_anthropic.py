@@ -1,6 +1,7 @@
 """A stand-in for the Messages API that answers like the real one, refusals of invalid requests included.
 
-It streams scripted replies as server-sent events, the way `client.beta.messages.stream()` reads them, and answers
+It answers scripted replies, streamed as server-sent events (as `client.beta.messages.stream()` reads them) or as one
+JSON message, and answers
 400 to what the API documents as invalid for claude-opus-5-5 (sources in docs/adr/0103-llm-provider-choice.md):
 thinking other than adaptive (`disabled`, `budget_tokens`), sampling parameters, an unknown effort, forced
 `tool_choice`, a strict tool whose schema is not closed, a `fallbacks` form without its own beta header, assistant
@@ -11,7 +12,9 @@ ignores `cache_control` markers, string content versus a single text block, whit
 text blocks, key order, the order of tools, other request parameters and thinking blocks (skill
 `shared/preserved-thinking-migration.md`), and `fallback` markers, which may be kept or dropped
 (`shared/model-migration.md` § refusal); everything else counts. Not modelled: the chain between thinking blocks,
-which makes removing a thinking block other than a leading one an edit.
+which makes removing a thinking block other than a leading one an edit. The server behaves like an enforced account
+(created on or after 2026-08-31): a mismatch is the documented 400 unless the request sets
+`block_binding.prefix_mismatch_behavior: "drop_block"`, in which case the stale block is dropped and counted.
 
 The checks are written here independently of `agent.llm`, so a mistake in the adapter cannot hide in a shared helper.
 Error messages quote the docs where the docs give the text; elsewhere they only name the field.
@@ -28,6 +31,7 @@ import httpx2
 MODEL = "claude-opus-5-5"
 EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 FALLBACK_BETAS = {"default": "server-side-fallback-2026-07-01", "list": "server-side-fallback-2026-06-01"}
+BINDING_BETA = "thinking-binding-controls-2026-08-01"  # lets a request set thinking.block_binding
 
 
 @dataclass
@@ -89,7 +93,8 @@ def echo_form(content: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def comparable(value: Any) -> Any:
-    """Without `cache_control` markers and null fields, which do not change what a block says."""
+    """Without `cache_control` markers (a documented rule) and null fields. Dropping nulls is tolerance for SDK noise
+    (a client may serialize an unset field as null), not a documented API rule."""
     if isinstance(value, dict):
         return {k: comparable(v) for k, v in value.items() if k != "cache_control" and v is not None}
     if isinstance(value, list):
@@ -124,6 +129,7 @@ class FakeMessagesAPI:
         self.requests: list[Recorded] = []
         self._issued: dict[str, tuple[str, str]] = {}  # signature -> (prefix, thinking text) as issued
         self._ids = itertools.count(1)
+        self.dropped_thinking_blocks = 0
 
     @property
     def transport(self) -> httpx2.MockTransport:
@@ -135,38 +141,57 @@ class FakeMessagesAPI:
         if body.get("model") != MODEL:
             return error(404, "not_found_error", f"model: {body.get('model')}")
         try:
-            validate(request.headers, body, self._issued)
+            self.dropped_thinking_blocks += validate(request.headers, body, self._issued)
         except Rejected as exc:
             return error(400, "invalid_request_error", str(exc))
         reply = self.replies.popleft()
         if reply.status != 200:
             return error(reply.status, reply.error_type, "scripted error")
-        assert body.get("stream") is True, "this fake only streams"
         echoed = echo_form(reply.content)
         for j, block in enumerate(echoed):
             if block["type"] == "thinking":
                 turn = {"role": "assistant", "content": echoed[:j]}
                 self._issued[block["signature"]] = (prefix_form(body, [*body["messages"], turn]), block["thinking"])
-        return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=sse(reply, next(self._ids)))
+        n = next(self._ids)
+        if body.get("stream") is True:
+            return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=sse(reply, n))
+        message = {
+            "id": f"msg_fake_{n}",
+            "type": "message",
+            "role": "assistant",
+            "model": reply.model,
+            "content": reply.content,
+            "stop_reason": reply.stop_reason,
+            "stop_sequence": None,
+            "stop_details": reply.stop_details,
+            "usage": reply.usage,
+        }
+        return httpx2.Response(200, json=message)
 
 
 def error(status: int, kind: str, message: str) -> httpx2.Response:
     return httpx2.Response(status, json={"type": "error", "error": {"type": kind, "message": message}})
 
 
-def validate(headers: httpx2.Headers, body: dict[str, Any], issued: dict[str, tuple[str, str]]) -> None:
+def validate(headers: httpx2.Headers, body: dict[str, Any], issued: dict[str, tuple[str, str]]) -> int:
+    """Raise `Rejected` for an invalid request; return how many stale thinking blocks `drop_block` dropped."""
     max_tokens = body.get("max_tokens")
     if not isinstance(max_tokens, int) or not 1 <= max_tokens <= 128_000:
         raise Rejected("max_tokens: must be between 1 and 128000")
     for name in ("temperature", "top_p", "top_k"):
         if name in body:
             raise Rejected(f"{name}: not supported for this model")
-    thinking_type = (body.get("thinking") or {"type": "adaptive"}).get("type")
+    thinking_config = body.get("thinking") or {"type": "adaptive"}
+    thinking_type = thinking_config.get("type")
     if thinking_type != "adaptive":
         raise Rejected(
             f'"thinking.type.{thinking_type}" is not supported for this model. '
             'Use "thinking.type.adaptive" and "output_config.effort" to control thinking behavior.'
         )
+    binding = thinking_config.get("block_binding")
+    if binding is not None and BINDING_BETA not in headers.get("anthropic-beta", ""):
+        raise Rejected(f"thinking.block_binding: needs the {BINDING_BETA} beta header")
+    drop = (binding or {}).get("prefix_mismatch_behavior") == "drop_block"
     effort = (body.get("output_config") or {}).get("effort")
     if effort is not None and effort not in EFFORTS:
         raise Rejected(f"output_config.effort: unknown value {effort!r}")
@@ -182,7 +207,7 @@ def validate(headers: httpx2.Headers, body: dict[str, Any], issued: dict[str, tu
     check_messages(body.get("messages") or [])
     if breakpoints(body) > 4:
         raise Rejected("cache_control: more than 4 breakpoints")
-    check_history(body, issued)
+    return check_history(body, issued, drop)
 
 
 def closed(schema: dict[str, Any]) -> bool:
@@ -232,8 +257,9 @@ def breakpoints(body: dict[str, Any]) -> int:
     return sum("cache_control" in item for item in marked) + ("cache_control" in body)
 
 
-def check_history(body: dict[str, Any], issued: dict[str, tuple[str, str]]) -> None:
+def check_history(body: dict[str, Any], issued: dict[str, tuple[str, str]], drop: bool) -> int:
     messages = body["messages"]
+    dropped = 0
     for i, message in enumerate(messages):
         if message["role"] != "assistant":
             continue
@@ -243,8 +269,18 @@ def check_history(body: dict[str, Any], issued: dict[str, tuple[str, str]]) -> N
                 continue
             prefix, thinking_text = issued[block["signature"]]
             turn = {"role": "assistant", "content": content[:j]}
-            if prefix_form(body, [*messages[:i], turn]) != prefix or block.get("thinking") != thinking_text:
-                raise Rejected(f"messages.{i}: thinking block from an edited conversation")
+            if prefix_form(body, [*messages[:i], turn]) == prefix and block.get("thinking") == thinking_text:
+                continue
+            if drop:
+                dropped += 1
+                continue
+            # The documented text, without its optional last sentence naming the first changed path.
+            raise Rejected(
+                f"messages.{i}.content.{j}: Invalid `signature` in `thinking` block. The block is bound to a "
+                "different conversation. Remove the block, or set `thinking.block_binding.prefix_mismatch_behavior` "
+                'to "drop_block".'
+            )
+    return dropped
 
 
 def sse(reply: Reply, n: int) -> bytes:
