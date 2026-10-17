@@ -44,6 +44,7 @@ class Op:
     group: str | None = None  # ops sent in one statement or commit share a group: all of them commit, or none
     attempts: int = 0
     error: str | None = None  # error class of the last attempt, e.g. a Trino error name
+    detail: str | None = None  # its message, shortened: the conflict matrix quotes it
     latency_ms: float | None = None
     query_ids: tuple[str, ...] = ()
     snapshot_id: int | None = None
@@ -92,6 +93,7 @@ class OpLogWriter:
         *,
         attempts: int,
         error: str | None = None,
+        detail: str | None = None,
         latency_ms: float | None = None,
         query_ids: Sequence[str] = (),
         snapshot_id: int | None = None,
@@ -103,6 +105,7 @@ class OpLogWriter:
                 "outcome": Outcome(outcome).value,
                 "attempts": attempts,
                 "error": error,
+                "detail": detail[:500] if detail else detail,
                 "latency_ms": latency_ms,
                 "query_ids": list(query_ids),
                 "snapshot_id": snapshot_id,
@@ -173,6 +176,7 @@ def read_oplog(paths: Iterable[Path]) -> list[Op]:
             extra = {
                 "attempts": done["attempts"],
                 "error": done["error"],
+                "detail": done.get("detail"),
                 "latency_ms": done["latency_ms"],
                 "query_ids": tuple(done["query_ids"]),
                 "snapshot_id": done["snapshot_id"],
