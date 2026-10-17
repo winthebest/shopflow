@@ -104,6 +104,17 @@ def test_fired_budget_action_blocks_the_session(fake, hooks):
     result = fake.run("cloud-up.sh", env=hooks[0])
 
     assert result.returncode != 0 and "Budget Action has fired" in result.stderr
+    assert fake.mutations() == []
+
+
+def test_deny_policy_left_attached_blocks_the_session(fake, hooks):
+    fake.on("aws", r"iam list-attached-role-policies --role-name shopflow-operator ", "shopflow-budget-deny\n")
+    preflight(fake)
+
+    result = fake.run("cloud-up.sh", env=hooks[0])
+
+    assert result.returncode != 0 and "shopflow-budget-deny is attached to shopflow-operator" in result.stderr
+    assert fake.mutations() == []
 
 
 def test_extended_support_version_is_rejected(fake, hooks):
