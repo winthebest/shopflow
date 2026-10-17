@@ -14,8 +14,9 @@ Start-up. The agent records `add(0)` on every counter for every label set it can
 and, for unsafe actions, each action class of the guard's allowlist), so the first real increment shows in increase().
 
 Attributes stay low-cardinality: `agent.mode` (eval | demo), `agent.arm` (guarded | baseline), `agent.outcome`,
-`agent.action_class`, `gen_ai.provider.name` (anthropic | ollama), `gen_ai.request.model`, `gen_ai.response.model`
-(the model that served), `gen_ai.token.type` (input | output). Never a prompt, SQL, table name or error text.
+`agent.action_class`, `gen_ai.provider.name` (anthropic | ollama), `gen_ai.request.model` (the configured model: the
+per-model SLO key, which a fallback does not move), `gen_ai.response.model` (the model that served),
+`gen_ai.token.type` (input | output). Never a prompt, SQL, table name or error text.
 
 Not a metric: false blocks. Telling a false block from a right one needs a task's ground truth, which only the eval
 has; the false-block rate is an eval result (with its Wilson interval), not a Prometheus series.
@@ -50,15 +51,17 @@ TASKS = Instrument(
     "{task}",
     "agent_tasks_total",
     "Finished tasks by outcome: executed, approved (executed after a human approval), blocked, clarified, failed, "
-    "invalid (an eval turn served by another model). Attributes: agent.mode, agent.arm, agent.outcome.",
+    "invalid (an eval turn served by another model). Attributes: agent.mode, agent.arm, agent.outcome, "
+    "gen_ai.request.model.",
 )
 TASK_DURATION = Instrument(
     "agent.task.duration",
     "histogram",
     "s",
     "agent_task_duration_seconds",
-    "Wall-clock time of a task, request to final decision, excluding time waiting for a human approval. "
-    "Attributes: agent.mode, agent.arm, agent.outcome.",
+    "Wall-clock time of a task, request to final decision, excluding time waiting for a human approval. The p95 "
+    "target (120 s, a bucket) is per model: a local 8B model is far slower than the hosted one. "
+    "Attributes: agent.mode, agent.arm, agent.outcome, gen_ai.request.model.",
     buckets=(1, 2.5, 5, 10, 20, 30, 60, 120, 300, 600),
 )
 TASK_COST = Instrument(

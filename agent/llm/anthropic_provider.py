@@ -210,11 +210,12 @@ class AnthropicConversation:
 def echo_content(content: list[Any]) -> list[Any]:
     """The response content to append to the history, unchanged unless a fallback happened mid-output.
 
-    Before the last `fallback` block, only text blocks go back: the declined model's thinking and tool calls belong
-    to an attempt the API discarded. The `fallback` markers themselves are dropped.
+    Before the last `fallback` block, only text blocks and the `fallback` markers go back, where they appeared: the
+    declined model's thinking and tool calls belong to an attempt the API discarded. The API ignores the markers.
     """
     boundaries = [i for i, block in enumerate(content) if block.type == "fallback"]
     if not boundaries:
         return list(content)
     last = boundaries[-1]
-    return [block for block in content[:last] if block.type == "text"] + list(content[last + 1 :])
+    kept = [block for block in content[:last] if block.type in ("text", "fallback")]
+    return [*kept, *content[last:]]

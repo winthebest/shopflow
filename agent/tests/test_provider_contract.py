@@ -96,6 +96,17 @@ def test_tool_round_trip_with_an_append_only_history(backend):
     assert [m["role"] for m in second[len(first) :]] == ["assistant", "user" if backend == "anthropic" else "tool"]
 
 
+def test_thinking_blocks_go_back_unchanged():
+    """Dropping them is allowed by the API but loses the model's reasoning between tool calls."""
+    provider, sent = claude_round_trip()
+    conversation = provider.start(SYSTEM, [ROW_COUNT])
+    turn = conversation.send_user(QUESTION)
+    conversation.send_tool_results([ToolResult(turn.tool_calls[0], "1234")])
+    echoed = sent()[1][1]["content"]
+    assert [b["type"] for b in echoed] == ["thinking", "tool_use"]
+    assert echoed[0]["signature"].startswith("sig-")
+
+
 def test_an_edited_history_is_rejected():
     """The fake enforces what the API enforces on thinking blocks: an edit of an earlier turn is a 400."""
     provider, _ = claude_round_trip()
@@ -166,7 +177,7 @@ def test_demo_mode_records_the_fallback_and_echoes_only_the_kept_blocks():
     assert turn.cost_usd is None  # no list price here for the fallback model
     conversation.send_user("Thanks.")
     echoed = fake.requests[1].body["messages"][1]["content"]
-    assert [b["type"] for b in echoed] == ["text", "thinking", "text"]
+    assert [b["type"] for b in echoed] == ["text", "fallback", "thinking", "text"]
 
 
 def test_refusal_is_a_terminal_turn_without_tool_calls():
@@ -231,6 +242,13 @@ TOOL_TURN = [
 ]
 TEXT = {"type": "text", "text": "Here is the result:"}
 ANSWER = {"type": "tool_result", "tool_use_id": "toolu_1", "content": "1234"}
+EPHEMERAL = {"type": "ephemeral"}
+OTHER_TOOL = {
+    "name": "describe_table",
+    "input_schema": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+    "strict": True,
+}
+TOOL_ANSWER = {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "1234"}]}
 ORPHAN_RESULT = {"type": "tool_result", "tool_use_id": "toolu_9", "content": "1"}
 OPEN_TOOL = {"name": "row_count", "input_schema": {"type": "object", "properties": {}}, "strict": True}
 
@@ -283,6 +301,62 @@ def test_the_fake_rejects_what_the_api_rejects(changes, betas, rejected_for):
     request = VALID | changes | ({"betas": betas} if betas else {})
     with pytest.raises(anthropic.BadRequestError, match=rejected_for), client.beta.messages.stream(**request) as s:
         s.get_final_message()
+
+
+def second_request(change) -> None:
+    """A tool round trip by hand, with `change` applied to the second request before it is sent."""
+    fake = fa.FakeMessagesAPI(
+        fa.Reply([fa.thinking(), fa.tool_use("toolu_1", "row_count", ARGS)], stop_reason="tool_use"),
+        fa.Reply([fa.text("ok")]),
+    )
+    client = claude(fake).client
+    first = {
+        "model": "claude-opus-5-5",
+        "max_tokens": 1024,
+        "system": [{"type": "text", "text": SYSTEM}],
+        "tools": [STRICT_TOOL, OTHER_TOOL],
+        "messages": [{"role": "user", "content": [{"type": "text", "text": QUESTION, "cache_control": EPHEMERAL}]}],
+    }
+    with client.beta.messages.stream(**first) as stream:
+        assistant = [block.to_dict() for block in stream.get_final_message().content]
+    second = first | {"messages": [*first["messages"], {"role": "assistant", "content": assistant}, TOOL_ANSWER]}
+    change(second)
+    with client.beta.messages.stream(**second) as stream:
+        stream.get_final_message()
+
+
+def move_cache_marker(request):
+    del request["messages"][0]["content"][0]["cache_control"]
+    request["messages"][-1]["content"][0]["cache_control"] = EPHEMERAL
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda r: None,
+        move_cache_marker,
+        lambda r: r["messages"][0].update(content=QUESTION),
+        lambda r: r["messages"][0]["content"][0].update(text=f"  {QUESTION}\n"),
+        lambda r: r.update(tools=r["tools"][::-1]),
+    ],
+    ids=["unchanged", "cache-marker-moved", "string-for-text-block", "whitespace-around-text", "tools-reordered"],
+)
+def test_the_fake_accepts_what_the_api_does_not_count_as_an_edit(change):
+    second_request(change)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda r: r["messages"][0]["content"][0].update(text=QUESTION.replace("orders", "payments")),
+        lambda r: r.update(system=[{"type": "text", "text": SYSTEM + " Be brief."}]),
+        lambda r: r.update(tools=[STRICT_TOOL]),
+    ],
+    ids=["earlier-message-edited", "system-edited", "tool-removed"],
+)
+def test_the_fake_rejects_an_edited_prefix(change):
+    with pytest.raises(anthropic.BadRequestError, match="edited conversation"):
+        second_request(change)
 
 
 def test_the_fake_accepts_the_valid_request():

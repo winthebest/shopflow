@@ -43,10 +43,10 @@ Claude Code 2.1.293; SDK = `anthropic` 1.15.0):
 | `thinking: {type: "adaptive"}`; `disabled` and `budget_tokens` are a 400; sampling parameters are a 400 | skill § Thinking & Effort (table); `model-migration.md` § Opus 5.5 (error text); SDK `BetaThinkingConfigAdaptiveParam` |
 | `output_config.effort`, set explicitly (the default is `medium`) | skill § Thinking & Effort; SDK `BetaOutputConfigParam.effort` |
 | `strict: true` needs `additionalProperties: false` and `required`; `tool_choice` `any`/`tool` is a 400 | skill § Tool Use Patterns; `model-migration.md` § Opus 5.5 (forced `tool_choice`); SDK `BetaToolParam.strict` |
-| Append-only history; thinking blocks tied to the conversation (an edited prefix is a 400) | skill § Claude Opus 5.5; `model-migration.md` § Opus 5.5, breaking change 3 and checklist |
+| Append-only history; thinking blocks tied to the conversation (an edited prefix is a 400). What is not an edit: `cache_control` markers, string versus a single text block, whitespace around text, key order, tool order | skill § Claude Opus 5.5; `model-migration.md` § Opus 5.5, breaking change 3 and checklist; `shared/preserved-thinking-migration.md` (what the comparison ignores) |
 | `stop_reason: "refusal"` before reading content; `stop_details.category`; `model_context_window_exceeded` | skill `python/claude-api/README.md` § Stop Reasons; `model-migration.md` § refusal; SDK `BetaRefusalStopDetails`, `BetaMessage.stop_reason` |
 | `fallbacks: "default"` + beta `server-side-fallback-2026-07-01`; the array form uses `-2026-06-01`; a header with the other form is a 400 | `model-migration.md` § Migrating to Claude Opus 5, New API features (1), and § refusal (key semantics); SDK `Messages.stream(fallbacks: BetaFallbacksParam)` |
-| `fallback` content block; after a mid-output fallback, echo only text before the last `fallback` block | `model-migration.md` § refusal (reading the response, echoing fallback turns back); SDK `BetaFallbackBlock`, stream accumulator |
+| `fallback` content block; after a mid-output fallback, echo only text (and the markers, which are ignored) before the last `fallback` block | `model-migration.md` § refusal (reading the response, echoing fallback turns back); SDK `BetaFallbackBlock`, stream accumulator |
 | `usage.iterations` per attempt, each with its `model` | `model-migration.md` § refusal (billing); SDK `BetaUsage.iterations` |
 | Breakpoint on the last system block covers tools + system; top-level automatic `cache_control`; at most 4 | skill `shared/prompt-caching.md` (render order, automatic vs explicit, API reference) |
 | Streaming with `get_final_message()`, `max_tokens` 64,000 | skill § Defaults and Common Pitfalls (`max_tokens`) |
@@ -62,7 +62,7 @@ Claude Code 2.1.293; SDK = `anthropic` 1.15.0):
 | Fallback on in evals too | A refusal re-run on another model would count as the configured model's answer |
 | Ollama's OpenAI-compatible endpoint | Its options cover less: no `truncate`, no `think` |
 | Ollama's default context and silent truncation | 4,096 cuts the agent's prompts; a cut prompt still gets an answer, so the failure is invisible |
-| Mocks that return canned responses for any request | Prove nothing about request shapes; the fakes here reject 14 documented invalid requests, and six injected adapter mistakes each fail the suite |
+| Mocks that return canned responses for any request | Prove nothing about request shapes; the fakes here reject 14 documented invalid requests and accept what the API does not count as an edit, and seven injected adapter mistakes each fail the suite |
 
 ## Consequences
 
