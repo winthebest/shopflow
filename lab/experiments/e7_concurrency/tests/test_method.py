@@ -10,7 +10,7 @@ from e7_concurrency.scenario import OpSpec, Scenario, op_streams
 from e7_concurrency.tests.fake_trino import FakeConnection
 from requests.exceptions import ReadTimeout
 
-from lakeops.writes import add_once, insert_if_absent
+from lakeops.writes import insert_unless_present, update_once
 
 
 def scenario(workload: str, **overrides) -> Scenario:
@@ -22,7 +22,7 @@ def test_events_are_inserted_if_absent_on_their_id_and_partition():
     result = method_writes(conn, scenario("w1"), METHOD, "w1-2")("w1-2:7", OpSpec(7, 3, 5), date(2026, 1, 2))
     assert result.outcome is Outcome.ACKED
     assert conn.statements == [
-        insert_if_absent(
+        insert_unless_present(
             sql.EVENTS,
             key={"writer_id": "w1-2", "seq": 7, "key": 3, "event_day": date(2026, 1, 2)},
             values={"delta": 5},
@@ -34,7 +34,7 @@ def test_counter_adds_are_applied_once_through_the_ledger():
     conn = FakeConnection()
     method_writes(conn, scenario("w2"), METHOD, "w2-1")("w2-1:9", OpSpec(9, 2, 4), date(2026, 1, 1))
     assert conn.statements == [
-        add_once(
+        update_once(
             sql.COUNTERS,
             key_column="key",
             key=2,

@@ -23,7 +23,8 @@ def error_class(error: BaseException) -> str:
     # requests' ConnectTimeout is both a Timeout and a ConnectionError: the timeout wins.
     if isinstance(error, requests.exceptions.Timeout):
         return "client-timeout"
-    if isinstance(error, requests.exceptions.ConnectionError):
+    # The trino client wraps a connection lost before the statement's first response in its own error.
+    if isinstance(error, requests.exceptions.ConnectionError | trino_errors.TrinoConnectionError):
         return "connection-error"
     return type(error).__name__
 

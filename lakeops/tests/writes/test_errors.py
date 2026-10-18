@@ -2,7 +2,7 @@
 
 import pytest
 import requests
-from trino.exceptions import TrinoQueryError
+from trino.exceptions import TrinoConnectionError, TrinoQueryError
 
 from lakeops.writes import error_class, is_fatal
 
@@ -25,6 +25,7 @@ def query_error(name: str, error_type: str = "EXTERNAL", *causes: str) -> TrinoQ
         (requests.exceptions.ReadTimeout(), "client-timeout"),
         (requests.exceptions.ConnectTimeout(), "client-timeout"),
         (requests.exceptions.ConnectionError(), "connection-error"),
+        (TrinoConnectionError("lost"), "connection-error"),
         (OSError("reset"), "OSError"),
     ],
 )

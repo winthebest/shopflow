@@ -1,6 +1,7 @@
 """The dev split as designed: N ∈ {2, 4} x {low, medium}, both workloads, the ledger-cost variant; ABBA order."""
 
-from e7_concurrency.dev import abba, dev_scenarios
+from e7_concurrency.arms import ARMS
+from e7_concurrency.dev import abba, dev_scenarios, runnable
 from e7_concurrency.scenario import BASELINE, Arm
 
 
@@ -24,3 +25,10 @@ def test_arms_alternate_abba():
         ["baseline", "other"],
         ["other", "baseline"],
     ]
+
+
+def test_arms_skip_scenarios_they_cannot_run():
+    noledger = next(s for s in dev_scenarios() if not s.ledger)
+    events = next(s for s in dev_scenarios() if s.workload == "w1")
+    assert [name for name, arm in ARMS.items() if runnable(noledger, arm)] == ["baseline"]
+    assert [name for name, arm in ARMS.items() if runnable(events, arm)] == ["baseline", "method"]

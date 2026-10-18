@@ -89,6 +89,87 @@ def q1_same_key_merges(trials: int = 20) -> dict:
     return {"trials": trials, **_summary(results), "verdict": verdict.counts()}
 
 
+def q1b_different_keys(trials: int = 20) -> dict:
+    """Two writes at the same moment on keys in different buckets (bucket(key, 8) of 0 and of 1 differ): as MERGE
+    (conflict filter `true` in q1?) and as UPDATE with the key in its WHERE. Does either avoid the conflict?"""
+    admin = lab_connector(ADMIN)
+    _fresh(admin, keys=8)
+    # Two keys whose rows are in different bucket partitions (bucket(0, 8) and bucket(1, 8) are the same bucket).
+    parts = query(admin, f'SELECT key, CAST("$partition" AS varchar) FROM {sql.COUNTERS} ORDER BY key')  # noqa: S608
+    first = parts[0]
+    second = next(row for row in parts if row[1] != first[1])
+    keys = [first[0], second[0]]
+    conns = [lab_connector(ONE_ATTEMPT) for _ in range(2)]
+    evidence: dict = {"trials": trials, "keys": keys, "partitions": [first[1], second[1]]}
+    for form in ("merge", "update"):
+        ops, results = [], []
+        for trial in range(1, trials + 1):
+            calls = []
+            for w, c in enumerate(conns):
+                oid, key = f"{form[0]}{w}:{trial}", keys[w]
+                text = (
+                    sql.add_to_counter(oid, key, 1)
+                    if form == "merge"
+                    else f"UPDATE {sql.COUNTERS} SET value = value + 1, applied = applied || '{oid}' WHERE key = {key}"  # noqa: S608
+                )
+                calls.append(lambda c=c, text=text: execute_once(c, text, frozenset()))
+            pair = _together(calls)
+            results += pair
+            ops += [_op(f"{form[0]}{w}", trial, "counters", keys[w], r) for w, r in enumerate(pair)]
+        verdict = grade(ops, [], _counters(admin), range(8))
+        evidence[form] = {**_summary(results), "verdict": verdict.counts()}
+        _fresh(admin, keys=8)
+    return evidence
+
+
+def q8_method_forms(trials: int = 20) -> dict:
+    """The method's statements: each is a no-op the second time, and how they fare against each other concurrently:
+    INSERT unless present (two writers, different ops) and UPDATE once (keys in different partitions, then one key)."""
+    from lakeops.writes import insert_unless_present, update_once
+
+    admin = lab_connector(ADMIN)
+    _fresh(admin, keys=8)
+    parts = query(admin, f'SELECT key, CAST("$partition" AS varchar) FROM {sql.COUNTERS} ORDER BY key')  # noqa: S608
+    apart = [parts[0][0], next(k for k, part in parts if part != parts[0][1])]
+
+    def insert(writer: str, seq: int) -> str:
+        key = {"writer_id": writer, "seq": seq, "key": 0, "event_day": DAY0}
+        return insert_unless_present(sql.EVENTS, key=key, values={"delta": 1})
+
+    def update(oid: str, key: int) -> str:
+        return update_once(
+            sql.COUNTERS, key_column="key", key=key, value_column="value", delta=1, ledger_column="applied", op_id=oid
+        )
+
+    evidence: dict = {"trials": trials, "keys_apart": apart}
+    twice = [execute_once(admin, insert("once", 1), frozenset()) for _ in range(2)]
+    twice += [execute_once(admin, update("once:1", apart[0]), frozenset()) for _ in range(2)]
+    evidence["idempotent"] = {
+        "outcomes": [r.outcome.value for r in twice],
+        "event_rows": _rows_for(admin, "once"),
+        "counter": [list(r) for r in query(admin, f"SELECT value, applied FROM {sql.COUNTERS} WHERE key = {apart[0]}")],  # noqa: S608
+    }
+    conns = [lab_connector(ONE_ATTEMPT) for _ in range(2)]
+    cases = {
+        "insert-different-ops": lambda w, t: insert(f"i{w}", t),
+        "update-keys-apart": lambda w, t: update(f"u{w}:{t}", apart[w]),
+        "update-same-key": lambda w, t: update(f"s{w}:{t}", apart[0]),
+    }
+    for case, statement in cases.items():
+        results = []
+        for trial in range(1, trials + 1):
+            texts = [statement(w, trial) for w in range(2)]
+            results += _together(
+                [
+                    lambda c=c, text=text: execute_once(c, text, frozenset())
+                    for c, text in zip(conns, texts, strict=True)
+                ]
+            )
+        evidence[case] = _summary(results)
+    evidence["insert_rows"] = [_rows_for(admin, f"i{w}") for w in range(2)]
+    return evidence
+
+
 def q2_optimize_vs_merge(trials: int = 10, files: int = 5) -> dict:
     """OPTIMIZE on counters racing a MERGE on a key: does one fail, or does a deleted row come back?"""
     admin = lab_connector(ADMIN)
@@ -268,12 +349,14 @@ def q7_client_resubmission(wait_seconds: float = 20.0) -> dict:
 
 PROBES = {
     "q1": q1_same_key_merges,
+    "q1b": q1b_different_keys,
     "q2": q2_optimize_vs_merge,
     "q3": q3_commit_retries,
     "q4": q4_snapshot_query_id,
     "q5": q5_write_without_its_client,
     "q6": q6_pyiceberg_upsert_race,
     "q7": q7_client_resubmission,
+    "q8": q8_method_forms,
 }
 
 

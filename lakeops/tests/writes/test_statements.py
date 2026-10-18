@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 import pytest
 
-from lakeops.writes import add_once, insert_if_absent
+from lakeops.writes import add_once, insert_if_absent, insert_unless_present, update_once
 
 
 def test_insert_if_absent_matches_on_the_key_and_inserts_only_when_missing():
@@ -57,3 +57,33 @@ def test_add_once_skips_a_row_whose_ledger_has_the_op():
 def test_anything_outside_the_accepted_shapes_is_refused(call):
     with pytest.raises((ValueError, TypeError)):
         call()
+
+
+def test_insert_unless_present_appends_only_when_the_key_is_missing():
+    statement = insert_unless_present(
+        "lab_exp.lab_e7.events",
+        key={"writer_id": "w1-0", "seq": 17, "key": 5, "event_day": date(2026, 1, 2)},
+        values={"delta": 3},
+    )
+    assert statement == (
+        "INSERT INTO lab_exp.lab_e7.events (writer_id, seq, key, event_day, delta) SELECT * FROM "
+        "(SELECT 'w1-0' AS writer_id, 17 AS seq, 5 AS key, DATE '2026-01-02' AS event_day, 3 AS delta) "
+        "WHERE NOT EXISTS (SELECT 1 FROM lab_exp.lab_e7.events "
+        "WHERE writer_id = 'w1-0' AND seq = 17 AND key = 5 AND event_day = DATE '2026-01-02')"
+    )
+
+
+def test_update_once_touches_one_key_unless_its_ledger_has_the_op():
+    statement = update_once(
+        "lab_exp.lab_e7.counters",
+        key_column="key",
+        key=5,
+        value_column="value",
+        delta=3,
+        ledger_column="applied",
+        op_id="w2-1:9",
+    )
+    assert statement == (
+        "UPDATE lab_exp.lab_e7.counters SET value = value + 3, applied = applied || 'w2-1:9' "
+        "WHERE key = 5 AND NOT contains(applied, 'w2-1:9')"
+    )
