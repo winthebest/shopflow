@@ -24,7 +24,9 @@ orchestrator adds rows when merging a PR that contains ADRs.
 | [0101](0101-data-contracts-in-ci.md) | Data contracts for CDC source tables, checked in CI against the migrated schema | Accepted |
 | [0102](0102-resilience-patterns-checkout.md) | Checkout resilience: idempotent payments, retry inside the deadline, circuit breaker | Accepted |
 | [0103](0103-llm-provider-choice.md) | LLM providers: Claude Opus 5.5 through the Anthropic SDK, Qwen3 8B through Ollama, one contract | Accepted |
+| [0104](0104-agent-framework.md) | Agent framework: our own tool loop on `agent/llm`, not Pydantic AI | Accepted |
 | [0105](0105-llm-gateway.md) | No LLM gateway: the agent calls the Claude API directly; budget in the app, spend limit per key | Accepted |
+| [0106](0106-genai-tracing.md) | Agent telemetry: GenAI spans and agent metrics from one wrapper, content-free by allowlist | Accepted |
 | [0107](0107-eval-independent-scorer.md) | Eval grading: an independent scorer judges what happened, from the harness's evidence | Accepted |
 | [0108](0108-eval-replay-and-golden.md) | Eval CI without an LLM: recorded LLM turns replay from cassettes, guard decisions check against a golden set | Accepted |
 | [0200](0200-k3d-over-kind.md) | Local Kubernetes on k3d (not kind or minikube) | Accepted |
