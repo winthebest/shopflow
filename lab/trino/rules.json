@@ -1,6 +1,7 @@
 {
   "catalogs": [
     {"user": "harness", "catalog": "lab_exp", "allow": "all"},
+    {"user": "harness", "catalog": "tpch", "allow": "read-only"},
     {"user": "agent_planner", "catalog": "lab_ro", "allow": "read-only"},
     {"user": "executor", "catalog": "(lab_ops|lab_sbx)", "allow": "all"},
     {"user": "baseline_writer", "catalog": "lab_base_@RUN@", "allow": "all"},
@@ -16,6 +17,7 @@
   ],
   "tables": [
     {"user": "harness", "catalog": "lab_exp", "privileges": ["SELECT", "INSERT", "DELETE", "UPDATE", "OWNERSHIP"]},
+    {"user": "harness", "catalog": "tpch", "privileges": ["SELECT"]},
     {"user": "executor", "catalog": "(lab_ops|lab_sbx)", "privileges": ["SELECT", "INSERT", "DELETE", "UPDATE", "OWNERSHIP"]},
     {"user": "baseline_writer", "catalog": "lab_base_@RUN@", "privileges": ["SELECT", "INSERT", "DELETE", "UPDATE", "OWNERSHIP"]},
     {"user": "agent_planner", "catalog": "lab_ro", "privileges": ["SELECT"]},

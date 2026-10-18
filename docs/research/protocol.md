@@ -136,6 +136,17 @@ Decisions behind it:
   - A new attempt is allowed only after an infrastructure failure, named with `RERUN_REASON=…`; both attempts are
     reported.
   - The freeze cannot change once an attempt exists.
+- **The held-out run, step by step.**
+  1. The lane that tuned the method: `make lab-freeze EXP=<exp>`, then commit and push `lab/freezes/<exp>.json`.
+  2. The user, in their own clone at that commit, with the lab stack up (`make lab-up`):
+     - `make lab-run EXP=<exp> SPLIT=dev`: a dev run with the code at the freeze, recorded in
+       `lab/freezes/<exp>.dev.jsonl`;
+     - `make lab-run EXP=<exp> SPLIT=holdout`, with their age key: the run's attempt goes into
+       `lab/freezes/<exp>.ledger.jsonl`.
+  3. Right after, commit and push the ledger and the dev record together. The dev record is not part of the
+     committed-and-pushed check, but it belongs with the ledger as the record of the run. Hand the result file to the
+     orchestrator.
+  4. After a failed attempt, the same: commit and push both before a rerun, which needs `RERUN_REASON=…`.
 - **Publish.** After the final run, `make lab-publish-holdout EXP=<exp>` (with the user's key) writes the decrypted
   scenarios next to the encrypted file, so others can reproduce the run.
 - **What is never done:** tuning on held-out results, looking at held-out scenarios before the run, re-running the

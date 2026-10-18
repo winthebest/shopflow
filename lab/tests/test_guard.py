@@ -30,6 +30,7 @@ def test_the_lab_catalog_files_pass():
         "lab_ro",
         "lab_sbx",
         "lab_sbx_ro",
+        "tpch",
     ]
     assert len(check_catalog_files(REPO / "lab/spike/trino/catalog")) == 9
 

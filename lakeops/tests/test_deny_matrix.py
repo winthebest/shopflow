@@ -169,7 +169,7 @@ def test_a_baseline_run_is_active(lab) -> None:
 def test_each_identity_sees_only_its_catalogs(lab) -> None:
     seen = {identity: {row[0] for row in query(connect(identity), "SHOW CATALOGS")} for identity in IDENTITIES}
     assert seen == {
-        "harness": {"lab_exp", "system"},
+        "harness": {"lab_exp", "system", "tpch"},
         "agent_planner": {"lab_ro", "system"},
         "executor": {"lab_ops", "lab_sbx", "system"},
         "baseline_writer": {BASE, "system"} if BASE else {"system"},
