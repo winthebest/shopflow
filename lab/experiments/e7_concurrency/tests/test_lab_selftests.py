@@ -4,12 +4,23 @@ Each test runs a short baseline scenario with the runner, then changes the final
 checks that the oracle reports exactly that fault.
 """
 
+import time
 from pathlib import Path
 
 import pytest
 from e7_concurrency import sql
 from e7_concurrency.oplog import OpLogWriter, Outcome, read_oplog
-from e7_concurrency.runner import ADMIN, Kill, Launched, collect, lab_check_table, lab_connector, launch, prepare, query
+from e7_concurrency.runner import (
+    ADMIN,
+    Kill,
+    Launched,
+    collect,
+    lab_check_table,
+    lab_connector,
+    launch,
+    prepare,
+    query,
+)
 from e7_concurrency.scenario import BASELINE, Scenario
 from e7_concurrency.writers import execute_once
 
@@ -23,7 +34,7 @@ def short(workload: str, **overrides) -> Scenario:
 
 def run_short(run_dir: Path, scenario: Scenario, kill: Kill | None = None):
     admin = lab_connector(ADMIN)
-    prepare(admin, scenario, lab_check_table)
+    prepare(admin, scenario, lab_check_table, retire=f"selftest_{time.time_ns()}")
     launched = launch(scenario, BASELINE, run_dir, lab_connector, kill)
     return admin, launched, collect(admin, scenario, BASELINE, run_dir, launched)
 
@@ -35,7 +46,7 @@ def first_acked(run_dir: Path, scenario: Scenario):
 
 def test_tables_are_created_as_designed(lab, tmp_path: Path):
     admin = lab_connector(ADMIN)
-    prepare(admin, short("w2"), lab_check_table)
+    prepare(admin, short("w2"), lab_check_table, retire=f"selftest_{time.time_ns()}")
     events = query(admin, f"SHOW CREATE TABLE {sql.EVENTS}")[0][0]
     counters = query(admin, f"SHOW CREATE TABLE {sql.COUNTERS}")[0][0]
     assert "format_version = 2" in events
@@ -92,7 +103,7 @@ def test_self_test_stale_retry_loses_the_other_writers_add(lab, tmp_path: Path):
     """A reads key 0, writes 0 + 3 (the client loses the answer), B adds 4, A retries its stale absolute write."""
     scenario = short("w2", contention="high")
     admin = lab_connector(ADMIN)
-    prepare(admin, scenario, lab_check_table)
+    prepare(admin, scenario, lab_check_table, retire=f"selftest_{time.time_ns()}")
     stale = f"UPDATE {sql.COUNTERS} SET value = 3, applied = ARRAY['w2-0:1'] WHERE key = 0"
     with OpLogWriter(tmp_path / "w2-0.jsonl", "w2-0") as a, OpLogWriter(tmp_path / "w2-1.jsonl", "w2-1") as b:
         assert query(admin, f"SELECT value, applied FROM {sql.COUNTERS} WHERE key = 0") == [[0, []]]

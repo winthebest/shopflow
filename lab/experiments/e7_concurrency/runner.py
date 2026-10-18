@@ -9,6 +9,7 @@
 import json
 import multiprocessing
 import os
+import re
 import signal
 import statistics
 import time
@@ -57,8 +58,14 @@ def query(conn: Connection, statement: str) -> list:
     return cur.fetchall()
 
 
-def prepare(conn: Connection, scenario: Scenario, check_table: Callable[[Connection, str], None]) -> None:
-    for statement in sql.recreate_tables(ledger=scenario.ledger):
+def retire_suffix(run_id: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", run_id.lower()).strip("_")[-60:]
+
+
+def prepare(
+    conn: Connection, scenario: Scenario, check_table: Callable[[Connection, str], None], *, retire: str
+) -> None:
+    for statement in sql.recreate_tables(retire=retire, ledger=scenario.ledger):
         query(conn, statement)
     for table in (sql.EVENTS, sql.COUNTERS):
         check_table(conn, table)
@@ -293,7 +300,7 @@ def run(
     run_dir = base_dir / run_id
     run_dir.mkdir(parents=True)
     admin = connector(ADMIN)
-    prepare(admin, scenario, check_table)
+    prepare(admin, scenario, check_table, retire=retire_suffix(run_id))
     launched = launch(scenario, arm, run_dir, connector, kill)
     row = collect(admin, scenario, arm, run_dir, launched)
     (run_dir / "result.json").write_text(json.dumps(row, indent=2, sort_keys=True) + "\n", encoding="utf-8")

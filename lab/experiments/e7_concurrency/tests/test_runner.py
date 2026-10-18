@@ -18,12 +18,12 @@ def scenario(**overrides) -> Scenario:
 
 def test_prepare_recreates_checks_and_seeds():
     conn, checked = FakeConnection(), []
-    prepare(conn, scenario(), lambda _conn, table: checked.append(table))
-    assert conn.statements == [*sql.recreate_tables(), sql.seed_counters(range(4))]
+    prepare(conn, scenario(), lambda _conn, table: checked.append(table), retire="r1")
+    assert conn.statements == [*sql.recreate_tables(retire="r1"), sql.seed_counters(range(4))]
     assert checked == [sql.EVENTS, sql.COUNTERS]
     conn = FakeConnection()
-    prepare(conn, scenario(workload="w1"), lambda _conn, _table: None)
-    assert conn.statements == sql.recreate_tables()
+    prepare(conn, scenario(workload="w1"), lambda _conn, _table: None, retire="r2")
+    assert conn.statements == sql.recreate_tables(retire="r2")
 
 
 def write_log(run_dir: Path, writer: str, ops: list[tuple[int, int, int, Outcome, str | None]]) -> None:

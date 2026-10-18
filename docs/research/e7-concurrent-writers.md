@@ -150,9 +150,12 @@ Each oracle rule was also removed in turn, and each removal made the correspondi
   - ops dealt round robin from the shared stream.
 - **Method** (`lakeops.writes`, tuned on dev, frozen before held-out):
   - **Idempotent writes.**
-    - Events via `MERGE INTO events ... ON (writer_id, seq, plus key and event_day for partition pruning) WHEN NOT
-      MATCHED THEN INSERT`.
-    - Counters via `WHEN MATCHED AND NOT contains(applied, op) THEN UPDATE`.
+    - Events via `INSERT … SELECT … WHERE NOT EXISTS` on (writer_id, seq, key, event_day). It is an append, so Iceberg
+      does not check it against other commits.
+    - Counters via `UPDATE … WHERE key = k AND NOT contains(applied, op)`. Trino scopes its conflict check to the
+      key's partition.
+    - Both replaced the first design's MERGE forms after the dev probes (questions 1 and 8): Trino checks every MERGE
+      against all concurrent commits to the table.
     - A retry of an op that committed then changes nothing.
   - **Retry with full jitter** on a conflict and on unknown. An unknown attempt is first cancelled and waited on until
     it is terminal (`DELETE` then `GET /v1/query/{id}`). Otherwise the retry can race its own attempt still running on
@@ -162,7 +165,7 @@ Each oracle rule was also removed in turn, and each removal made the correspondi
   - **OPTIMIZE per partition**, skipping the partitions being written.
   - Iceberg `commit.retry.*`, if Trino honours them (question 3).
 - Both arms process the same op stream, from the same seed.
-- The method is `lakeops.writes` (`write`, `insert_if_absent`, `add_once`) plus the arm in `method.py`. Its starting
+- The method is `lakeops.writes` (`write`, `insert_unless_present`, `update_once`) plus the arm in `method.py`. Its starting
   parameters (5 attempts, backoff 0.1–3 s with full jitter, 60 s to settle an attempt, polled every 0.5 s) are tuned
   on dev and frozen before held-out. It is correct when two things hold: every statement is idempotent, and no two
   attempts of one write run at once. Then a write lands at most once, whatever the errors say.
@@ -225,22 +228,39 @@ When two arms' intervals overlap, the result is reported as **not distinguishabl
 
 ## Questions answered by measurement
 
-Nothing below is assumed. Each answer will be filled in here with its evidence: run ids, error text, and the dates of
-any docs read.
+Nothing below is assumed. Each answer carries its evidence: the probe (`probes.py`, run on the lab stack on
+2026-10-18, Trino 483 single node), its trial count and the error text. The evidence files are in the results
+handed to the orchestrator.
 
 | # | Question | Answer |
 |---|---|---|
-| 1 | Does Trino 483 detect a concurrent MERGE on the same key, and with which error? Does it honour the table's `write.merge.isolation-level`? | pending |
-| 2 | OPTIMIZE racing a MERGE on `counters`: does one fail, or does a deleted row come back? | pending |
-| 3 | Which commit-retry settings does Trino honour: table `commit.retry.*`, a catalog setting? | pending |
-| 4 | Do Trino's snapshot summaries carry the query id (`trino_query_id`)? That would resolve unknown ops by query id | pending |
-| 5 | Does Trino finish a write after its client is killed, and after how long does it abandon one? | pending |
+| 1 | Does Trino 483 detect a concurrent MERGE on the same key, and with which error? Does it honour the table's `write.merge.isolation-level`? | **Yes.** In 20 of 20 trials of two MERGEs at once on one key, one committed and the other failed with `ICEBERG_COMMIT_ERROR/…ValidationException`, "Found conflicting files that can contain records matching **true**". The failed one was absent every time, with no lost, duplicated or wrong row. The filter is `true`, so a MERGE conflicts with every concurrent commit to the table. MERGEs on keys in different bucket partitions also conflicted, 20 of 20 (q1b). `UPDATE … WHERE key = k` on keys in different partitions did not conflict, 40 of 40 committed (q1b, q8); on one key, one of two conflicted (q8). The isolation-level setting was not varied |
+| 2 | OPTIMIZE racing a MERGE on `counters`: does one fail, or does a deleted row come back? | **One fails; nothing comes back.** In 10 of 10 trials, each after 5 small commits, OPTIMIZE committed and the MERGE failed with `…ValidationException`, "Cannot commit, missing data files". The failed add was absent, with no duplicate or extra row |
+| 3 | Which commit-retry settings does Trino honour: table `commit.retry.*`, a catalog setting? | **They can't be set through Trino.** `extra_properties` with `commit.retry.num-retries` is refused: `INVALID_TABLE_PROPERTY`, "Illegal keys in extra_properties". With the defaults, 4 INSERTs at once, 10 rounds: 40 of 40 committed, so Iceberg's own commit retry absorbed the append races. Setting the property through another client is not tested yet (needs the PyIceberg container) |
+| 4 | Do Trino's snapshot summaries carry the query id (`trino_query_id`)? That would resolve unknown ops by query id | **Yes.** The summary has `trino_query_id`, equal to the statement's query id, plus `trino_user`. A write's fate can be read from `$snapshots` even after its query has left `system.runtime.queries` |
+| 5 | Does Trino finish a write after its client is killed, and after how long does it abandon one? | **Only once it has been polled.** A statement that is POSTed and never polled did not run: after 20 s it is not in `system.runtime.queries` and its row is absent. Trino starts a query on its first poll. After one poll, the row was committed while the query still showed RUNNING 20 s later: Trino waits for the client to fetch the result. So RUNNING does not mean nothing committed, and a FAILED that follows a cancel doesn't either. When a query is finally abandoned was not measured |
 | 6 | PyIceberg 0.12 retries a commit that lost a race (`commit.retry.num-retries`, 4 by default) and checks the retry against `write.*.isolation-level` (serializable by default), read in its source. Does a racing `upsert` (W2-py) still lose an add, or is it refused? | pending |
-| 7 | Does the trino client's own re-send of a statement (3 attempts by default, after a timeout or a lost connection) write an op twice? | pending |
+| 7 | Does the trino client's own re-send of a statement (3 attempts by default, after a timeout or a lost connection) write an op twice? | **No, on Trino 483.** With the response to the first statement POST lost, the client re-sent it: acked, one row. The first copy never ran (it is not in `system.runtime.queries`), because of question 5. With one attempt the client reports `connection-error`, and nothing was written. A lost poll response is re-sent as the same GET, so it can't double a write either |
 
-**Conflict matrix** (to come): pairs of concurrent operations (INSERT, MERGE on the same key, MERGE on another key,
-OPTIMIZE on the table, OPTIMIZE on a partition, PyIceberg append, PyIceberg upsert) × the outcome observed: both
-commit, retried then committed, one definite-fail, or an anomaly.
+**Conflict matrix.** Two operations released at one barrier, each through its own connection with one HTTP attempt,
+on Trino 483 (probes q1, q1b, q2, q3, q8, 2026-10-18). "Fails" always meant `ICEBERG_COMMIT_ERROR/…ValidationException`
+with the failed write absent, and no anomaly in any trial.
+
+| A ∥ B | Trials | Outcome |
+|---|---|---|
+| INSERT ∥ INSERT (appends, 4 writers) | 10 rounds | all 40 commit |
+| INSERT … WHERE NOT EXISTS ∥ the same, different ops | 20 | all 40 commit |
+| MERGE ∥ MERGE, same key | 20 | one commits, one fails ("conflicting files … matching true") |
+| MERGE ∥ MERGE, keys in different partitions | 20 | one commits, one fails (same message) |
+| UPDATE key ∥ UPDATE key, different partitions | 20 | both commit (40) |
+| UPDATE key ∥ UPDATE key, same key | 20 | one commits, one fails |
+| OPTIMIZE (table) ∥ MERGE | 10 | OPTIMIZE commits, MERGE fails ("missing data files") |
+| OPTIMIZE ∥ appends, OPTIMIZE on a partition, PyIceberg append and upsert | — | pending: W3 runs and the PyIceberg container |
+
+Where the oracle graded the final state (q1, q1b, q2), every `ValidationException` failure was absent: 50 of 50.
+q8 counted outcomes only. That class is the first candidate for the definite-fail allowlist, which is decided on the
+full dev runs before freeze. The
+question-5 finding means a FAILED query state is not by itself proof that nothing committed.
 
 ## Threats to validity
 

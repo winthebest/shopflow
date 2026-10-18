@@ -32,7 +32,7 @@ REPO = Path(__file__).resolve().parents[3]
 
 
 def _fresh(admin, keys: int = 1) -> None:
-    for statement in sql.recreate_tables():
+    for statement in sql.recreate_tables(retire=f"probe_{time.time_ns()}"):
         query(admin, statement)
     query(admin, sql.seed_counters(range(keys)))
 
