@@ -6,6 +6,7 @@ makes the change. Shared root files are owned by the orchestrator.
 | Path | Owner lane | Phases |
 |---|---|---|
 | `README.md`, `docs/assets/` (diagrams, screenshots for the README) | sf-docs | all |
+| `lab/results/` (result Parquet files; lanes hand them over, only the orchestrator commits them) | orchestrator | 9–14 |
 | `LICENSE`, `Makefile`, `.gitignore`, `.github/CODEOWNERS`, `.github/pull_request_template.md`, `docs/contracts/`, `docs/gates/`, `docs/adr/README.md`, `docs/adr/0000-*`, `docs/adr/0001-*` | orchestrator | 0 |
 | `services/` (gateway, orders, payments, fulfillment-worker), `deploy/charts/shop/` and `deploy/argocd/apps/shop/` (from Phase 7: image bumps after migrations, the worker's ScaledObject), `docker-compose.yml`, `loadtest/`, `scripts/seed.py`, `scripts/app-*.sh`, `pyproject.toml`, `uv.lock`, `.pre-commit-config.yaml`, `.gitleaks.toml`, `.github/workflows/ci.yml`, `mk/app.mk`, `docs/perf-baseline.md` | sf-app | 1, 4–5 (migrations, contracts), 7 (app side) |
 | `data/contracts/`, `scripts/check_contracts.py` | sf-app | 5 |
@@ -13,9 +14,9 @@ makes the change. Shared root files are owned by the orchestrator.
 | `deploy/platform/{otel-collector,kube-prometheus-stack,loki,tempo,slo,grafana-dashboards,chaos-mesh,keda}/` and `slo/` (SLO toolchain, windows, every SLO except the `cdc*`/`gold*` files owned by sf-data; sf-sre reviews those), `chaos/`, `docs/slo/`, `docs/runbooks/checkout-*`, `docs/postmortems/`, `.github/workflows/sre-ci.yml`, `scripts/sre-*.sh`, `mk/sre.mk` | sf-sre | 3, 7 |
 | `images/kafka-connect/`, `deploy/platform/{strimzi,kafka,kafka-connect,seaweedfs,iceberg-catalog,trino,flink-operator,flink,airflow,metabase}/`, `data/{flink,dbt,airflow}/`, `services/freshness-exporter/`, `deploy/platform/freshness-exporter/`, `scripts/cdc-epoch.sh`, `scripts/data-*.sh`, `.github/workflows/{data-images,data-ci}.yml`, `slo/{cdc,gold}*.yaml`, `slo/tests/{cdc,gold}*.test.yaml`, `deploy/platform/slo/base/{cdc,gold}-*.prometheusrule.yaml`, `mk/data.mk` | sf-data | 4, 5 |
 | `infra/`, `scripts/{cloud-*,aws-*,export-evidence,restore-drill}.sh`, `deploy/platform/{external-secrets,aws-lb-controller,opencost}/`, `.github/workflows/infra-ci.yml`, `docs/cost.md`, `docs/runbooks/{cloud-session,restore}.md`, `mk/cloud.mk` | sf-cloud | 6, 7 (restore drill with sf-sre) |
-| `lab/` (except `lab/experiments/e7_concurrency/`), `lakeops/` (package layout, `pyproject.toml`, `uv.lock`, all code except `writes` and `verify`), `docs/research/` (except `e7-*`), `mk/lab.mk` | sf-data | 9, 12 |
+| `lab/` (except `lab/experiments/e7_concurrency/`, `lab/experiments/agent_safety/` and `lab/results/`), `lakeops/` (package layout, `pyproject.toml`, `uv.lock`, all code except `writes` and `verify`), `docs/research/` (except `e7-*`), `mk/lab.mk` | sf-data | 9, 12 |
 | `lab/experiments/e7_concurrency/`, the `writes` and `verify` packages of `lakeops/` and their tests, `docs/research/e7-*` | sf-platform | 10 |
-| `agent/`, `evals/`, `.github/workflows/eval.yml`, `mk/eval.mk` | sf-app | 13–14 |
+| `agent/`, `evals/`, `.github/workflows/eval.yml`, `mk/eval.mk`, `lab/experiments/agent_safety/` | sf-app | 13–14 |
 | Agent alerts and SLOs: `deploy/platform/slo/base/agent*.prometheusrule.yaml`, `slo/agent.yaml`, `slo/tests/agent.test.yaml`, `deploy/platform/grafana-dashboards/base/dashboards/agent.json`, `docs/runbooks/agent-*` (already under the sf-sre rows above; listed for the AI layer) | sf-sre | 13 |
 | `deploy/platform/<component>/aws/` | owner of `<component>` | 6 |
 | `deploy/argocd/apps/<component>/` (one Argo Application per component) | owner of `<component>` | 2–7 |
