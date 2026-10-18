@@ -489,11 +489,15 @@ name = "lakeops"
 version = "0.1.0"
 source = { editable = "../lakeops" }
 dependencies = [
+    { name = "sqlglot" },
     { name = "trino" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "trino", specifier = "==0.340.0" }]
+requires-dist = [
+    { name = "sqlglot", specifier = "==30.21.0" },
+    { name = "trino", specifier = "==0.340.0" },
+]
 
 [package.metadata.requires-dev]
 dev = [
