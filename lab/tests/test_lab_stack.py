@@ -1,4 +1,5 @@
-"""The running lab stack: the guard admits its identities and tables, and the OTel collector writes what it receives."""
+"""The running lab stack: the guard admits its identities and tables, the OTel collector writes what it receives, and
+the floors hold in simulated days."""
 
 import json
 import secrets
@@ -7,8 +8,10 @@ import time
 
 import pytest
 import requests
+import trino
 
 from lab.guard import check_table, guarded_connect
+from lab.session import ArmSession
 from lab.trino_client import Settings, query
 
 pytestmark = pytest.mark.lab
@@ -69,3 +72,22 @@ def test_spans_sent_over_otlp_http_reach_the_trace_file(lab: Settings):
 def test_the_otlp_grpc_port_accepts_connections(lab: Settings):
     with socket.create_connection(OTLP_GRPC, timeout=5):
         pass
+
+
+def test_the_floors_hold_in_simulated_days(lab: Settings):
+    """Through an arm session, 7 simulated days meet lab_sbx's 7m floor and 6 simulated days are refused."""
+    session = ArmSession.open("executor", settings=lab)
+    table = f"lab_sbx.time_probe.t_{int(time.time())}"
+    session.execute("CREATE SCHEMA IF NOT EXISTS lab_sbx.time_probe")
+    session.execute(f"CREATE TABLE {table} (id bigint) WITH (format_version = 2)")
+    try:
+        session.execute(f"ALTER TABLE {table} EXECUTE expire_snapshots(retention_threshold => '7d')")
+        with pytest.raises(trino.exceptions.TrinoQueryError, match="shorter than the minimum retention"):
+            session.execute(f"ALTER TABLE {table} EXECUTE expire_snapshots(retention_threshold => '6d')")
+        assert [run for _, run in session.statements if "EXECUTE" in run] == [
+            f"ALTER TABLE {table} EXECUTE expire_snapshots(retention_threshold => '7m')",
+            f"ALTER TABLE {table} EXECUTE expire_snapshots(retention_threshold => '6m')",
+        ]
+    finally:
+        session.execute(f"DROP TABLE {table}")
+        session.execute("DROP SCHEMA lab_sbx.time_probe")
