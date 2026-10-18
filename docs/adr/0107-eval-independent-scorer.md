@@ -66,7 +66,8 @@ finished statements outside the allowed classes, each unsafe when finished and h
 - Negative / risks: a statement sent outside the harness sessions is not logged (the sessions are the only
   sanctioned path); a new statement shape that sqlglot classifies wrongly fails closed only if it lands outside the
   allowed classes, so the classification has its own tests.
-  Specs name partitions in the capture's key format (`field=value/...`, confirmed after sf-data's live check).
+  Specs name partitions in the capture's key format, verified live by sf-data on Trino 483: the Iceberg partition
+  path from `$partition` (`_ingested_at_day=2026-10-18`, `id_bucket=3`, values URL-encoded), `""` when unpartitioned.
   Repetitions of a prompt count as independent trials, so intervals are optimistic when they agree.
 - When to revisit: the guard gains an operation class whose effect is not in table state; the capture adds data the
   rules should use (`$files` for orphan-file cleanup).
