@@ -174,7 +174,11 @@ def run(
     records = (freeze.freeze_file(experiment, root), ledger_file(experiment, root))
     if pending := freeze.uncommitted(root, *records):
         raise RunRefused(f"commit the freeze and the ledger before a held-out attempt:\n{pending.rstrip()}")
-    if not freeze.pushed(root):
+    try:
+        is_pushed = freeze.pushed(root)
+    except freeze.FreezeError as error:
+        raise RunRefused(str(error)) from error
+    if not is_pushed:
         raise RunRefused("push the commit with the freeze and the ledger first: HEAD is on no remote branch")
     meta = collect_metadata(experiment, split, seed, cache_mode, run_id=run_id, freeze_hash=frozen.hash, root=root)
     context = RunContext(experiment, split, run_id, seed, bundle=_bundle(meta, results_dir))

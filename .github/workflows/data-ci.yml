@@ -108,6 +108,11 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+    env:
+      SOPS_VERSION: v3.13.3
+      SOPS_SHA256: e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b  # the release's checksums.txt
+      AGE_VERSION: v1.3.2
+      AGE_SHA256: cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10  # of the tarball (no checksum list)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -118,7 +123,22 @@ jobs:
           python-version: "3.12"
           enable-cache: false
 
+      # The held-out runner's refusal tests decrypt with a throwaway age key (lab/tests/test_runner.py): sops and age
+      # must be there, and LAB_REQUIRE_SOPS=1 turns their absence into an error instead of skipped tests.
+      - name: Install sops and age (checksum verified)
+        run: |
+          curl -fsSL -o sops "https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/sops-${SOPS_VERSION}.linux.amd64"
+          echo "${SOPS_SHA256}  sops" | sha256sum -c -
+          sudo install sops /usr/local/bin/sops
+          curl -fsSL -o age.tar.gz "https://github.com/FiloSottile/age/releases/download/${AGE_VERSION}/age-${AGE_VERSION}-linux-amd64.tar.gz"
+          echo "${AGE_SHA256}  age.tar.gz" | sha256sum -c -
+          tar -xzf age.tar.gz age/age age/age-keygen
+          sudo install age/age age/age-keygen /usr/local/bin/
+          sops --version --disable-version-check && age --version
+
       - name: Lint and tests without the lab stack (lab, lakeops)
+        env:
+          LAB_REQUIRE_SOPS: "1"
         run: make lab-check
 
   dbt:
