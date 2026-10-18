@@ -6,6 +6,7 @@ src = ["src"]
 
 [lint.extend-per-file-ignores]
 "spike/**" = ["S603", "S608"]
+"tests/**" = ["S603", "S607"]  # tests run fixed commands (git, age-keygen, lab/stack.sh) in throwaway directories
 
 [lint.isort]
 known-first-party = ["lab", "lakeops"]

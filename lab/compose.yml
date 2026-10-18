@@ -137,6 +137,43 @@ services:
       - .:/lab:ro
       - ${LAB_RUN_DIR}:/run/lab
 
+  # One-off Python on the lab network (lab/stack.sh py <zone> -- <args>): experiments whose writers reach Polaris and
+  # SeaweedFS directly, the way the platform's sinks do inside the cluster. stack.sh passes one zone's REST principal
+  # and S3 key as environment (never on a command line), and the host checkout's git sha and dirty flag. Only lab/ and
+  # lakeops/ are mounted, read only (not the repository: out/lab holds every credential); results go to
+  # LAB_RESULTS_DIR. From the run directory: the zone identity's password (exp: harness), the certificate and the
+  # catalog files (lab.guard). A zone added to stack.sh py mounts its identity's password here too.
+  py:
+    profiles: [tools]
+    image: ghcr.io/astral-sh/uv:0.11.29-python3.12-trixie-slim@sha256:36cdfbf910c8b0f651355c013e7ece9678f4ecbf030a9fd9e6779de421189805
+    working_dir: /repo/lab
+    environment:
+      UV_PROJECT_ENVIRONMENT: /pyenv
+      UV_CACHE_DIR: /uv-cache
+      UV_FROZEN: "1"
+      UV_LINK_MODE: copy
+      UV_PYTHON_DOWNLOADS: never
+      PYTHONPATH: /repo/lab/experiments  # each experiment is a package (as lab's pytest pythonpath)
+      LAB_TRINO_URL: https://trino:8443
+      LAB_RUN_DIR: /run/lab
+      LAB_RESULTS_DIR: /results
+      LAB_REST_URI: http://polaris:8181/api/catalog
+      LAB_S3_ENDPOINT: http://seaweedfs:8333
+    volumes:
+      - ../lab:/repo/lab:ro
+      - ../lakeops:/repo/lakeops:ro
+      - ${LAB_RUN_DIR}/passwords/harness:/run/lab/passwords/harness:ro
+      - ${LAB_RUN_DIR}/trino/tls/cert.pem:/run/lab/trino/tls/cert.pem:ro
+      - ${LAB_RUN_DIR}/trino/catalog:/run/lab/trino/catalog:ro
+      - ${LAB_RESULTS_DIR:-../lab/results}:/results
+      - py-env:/pyenv
+      - py-cache:/uv-cache
+    # Fixed so every arm of an experiment gets the same: the Docker VM has more, Trino has its own 2.
+    cpus: 2
+    mem_limit: 2g
+
 volumes:
   catalog-db:
   seaweedfs:
+  py-env:
+  py-cache:
