@@ -1,4 +1,4 @@
-"""Scenarios and arms, and the op stream each writer works through (docs/research/e7-concurrent-writers.md).
+"""Scenarios and arms, and the op stream each writer works through (docs/research/e7-concurrent-writers-design.md).
 
 The stream is fixed by the scenario's seed, so both arms process the same ops; only how ops are assigned to writers
 may differ (the arm's `assign`). An op's `event_day` is not part of the stream: the writer stamps it when it sends

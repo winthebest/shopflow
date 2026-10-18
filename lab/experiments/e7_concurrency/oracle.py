@@ -1,4 +1,4 @@
-"""Oracle: grades the final tables against the op log (docs/research/e7-concurrent-writers.md).
+"""Oracle: grades the final tables against the op log (docs/research/e7-concurrent-writers-design.md).
 
 Rules:
 - an acked op is present exactly once;
