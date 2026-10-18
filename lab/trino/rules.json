@@ -4,7 +4,8 @@
     {"user": "agent_planner", "catalog": "lab_ro", "allow": "read-only"},
     {"user": "executor", "catalog": "(lab_ops|lab_sbx)", "allow": "all"},
     {"user": "baseline_writer", "catalog": "lab_base_@RUN@", "allow": "all"},
-    {"user": "(harness|agent_planner|executor|baseline_writer)", "catalog": "system", "allow": "read-only"},
+    {"user": "observer", "catalog": "(lab_ro|lab_exp_ro|lab_sbx_ro|lab_base_ro_@RUN@)", "allow": "all"},
+    {"user": "(harness|agent_planner|executor|baseline_writer|observer)", "catalog": "system", "allow": "read-only"},
     {"catalog": ".*", "allow": "none"}
   ],
   "schemas": [
@@ -18,7 +19,8 @@
     {"user": "executor", "catalog": "(lab_ops|lab_sbx)", "privileges": ["SELECT", "INSERT", "DELETE", "UPDATE", "OWNERSHIP"]},
     {"user": "baseline_writer", "catalog": "lab_base_@RUN@", "privileges": ["SELECT", "INSERT", "DELETE", "UPDATE", "OWNERSHIP"]},
     {"user": "agent_planner", "catalog": "lab_ro", "privileges": ["SELECT"]},
-    {"user": "(harness|agent_planner|executor|baseline_writer)", "catalog": "system", "privileges": ["SELECT"]},
+    {"user": "observer", "catalog": "(lab_ro|lab_exp_ro|lab_sbx_ro|lab_base_ro_@RUN@)", "privileges": ["SELECT", "OWNERSHIP"]},
+    {"user": "(harness|agent_planner|executor|baseline_writer|observer)", "catalog": "system", "privileges": ["SELECT"]},
     {"privileges": []}
   ],
   "queries": [

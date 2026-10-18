@@ -13,6 +13,7 @@ from lab.guard import (
     check_polaris_spec,
     check_target_catalog,
     check_visible_catalogs,
+    read_properties,
     shown_location,
     table_parts,
 )
@@ -22,7 +23,14 @@ LAB_CATALOG = (REPO / "lab/trino/etc/catalog/lab_exp.properties").read_text()
 
 
 def test_the_lab_catalog_files_pass():
-    assert check_catalog_files(REPO / "lab/trino/etc/catalog") == ["lab_exp", "lab_ops", "lab_ro", "lab_sbx"]
+    assert check_catalog_files(REPO / "lab/trino/etc/catalog") == [
+        "lab_exp",
+        "lab_exp_ro",
+        "lab_ops",
+        "lab_ro",
+        "lab_sbx",
+        "lab_sbx_ro",
+    ]
     assert len(check_catalog_files(REPO / "lab/spike/trino/catalog")) == 9
 
 
@@ -96,7 +104,9 @@ def test_results_need_the_lab_environment():
         check_environment("production", require_lab=True)
 
 
-@pytest.mark.parametrize("catalog", ["lab_exp", "lab_ops", "lab_ro", "lab_sbx", "lab_base_r20261018_1"])
+@pytest.mark.parametrize(
+    "catalog", ["lab_exp", "lab_ops", "lab_ro", "lab_sbx", "lab_exp_ro", "lab_sbx_ro", "lab_base_r1", "lab_base_ro_r1"]
+)
 def test_lab_catalogs_are_targets(catalog: str):
     check_target_catalog(catalog)
 
@@ -141,10 +151,16 @@ def test_client_options_reach_the_connection(tmp_path: Path):
 
 def test_a_rendered_baseline_catalog_passes(tmp_path: Path):
     """lab/stack.sh base <run> renders this template (sed of @RUN@ and @RUN_UPPER@) next to the zone catalogs."""
-    template = (REPO / "lab/trino/base/catalog.properties").read_text()
-    rendered = template.replace("@RUN_UPPER@", "R20261018_1").replace("@RUN@", "r20261018_1")
-    (tmp_path / "lab_base_r20261018_1.properties").write_text(rendered)
-    assert check_catalog_files(tmp_path) == ["lab_base_r20261018_1"]
-    assert "warehouse=lab_base_r20261018_1\n" in rendered
-    assert "${ENV:POLARIS_LAB_BASE_R20261018_1_CREDENTIAL}" in rendered
-    check_target_catalog("lab_base_r20261018_1")
+    for template, catalog in (("catalog", "lab_base_r20261018_1"), ("catalog-ro", "lab_base_ro_r20261018_1")):
+        text = (REPO / f"lab/trino/base/{template}.properties").read_text()
+        rendered = text.replace("@RUN_UPPER@", "R20261018_1").replace("@RUN@", "r20261018_1")
+        (tmp_path / f"{catalog}.properties").write_text(rendered)
+        assert "warehouse=lab_base_r20261018_1\n" in rendered
+        check_target_catalog(catalog)
+    assert check_catalog_files(tmp_path) == ["lab_base_r20261018_1", "lab_base_ro_r20261018_1"]
+    assert (
+        "${ENV:POLARIS_LAB_BASE_R20261018_1_CREDENTIAL}" in (tmp_path / "lab_base_r20261018_1.properties").read_text()
+    )
+    read_only = read_properties(tmp_path / "lab_base_ro_r20261018_1.properties")
+    assert read_only["iceberg.security"] == "READ_ONLY"
+    assert read_only["iceberg.rest-catalog.oauth2.credential"] == "${ENV:POLARIS_LAB_BASE_RO_R20261018_1_CREDENTIAL}"
