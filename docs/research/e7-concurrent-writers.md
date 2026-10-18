@@ -1,7 +1,7 @@
 # E7. Concurrent writers on Iceberg: a correctness oracle and correct commit throughput
 
-- Status: **design, fixed before any dev run** (2026-10-18). No results yet; every number will come from
-  `lab/results/e7_concurrency/`.
+- Status: **dev** (2026-10-18). The design was fixed before any run; probes and a first dev pass are in. No
+  held-out yet. Every number comes from `lab/results/e7_concurrency/`.
 - Code: `lab/experiments/e7_concurrency/` (op log, oracle, scenarios, writers, direct PyIceberg writers, runner), and later
   `lakeops/src/lakeops/writes/` (the method) and `lakeops/src/lakeops/verify/`.
 - Lab: the `lab_exp` catalog of the lab stack (`lab/stack.sh`, ADR 0417), as identity `harness`.
@@ -280,9 +280,51 @@ question-5 finding means a FAILED query state is not by itself proof that nothin
   raised with the direct PyIceberg writers.
 - **The classification allowlist is tuned on dev.** It is frozen with the rest of the method before held-out.
 
+## Dev results: first pass (2026-10-18)
+
+The dev split, 20 s write phases, 3 runs per arm and cell, in ABBA order after 10 warm-up runs. The lab stack is
+single-node Trino 483. Code at 2944c772, clean tree. 54 measured runs. Rows: `dev-20261018T055436Z.parquet`.
+
+This pass tunes the method; it is not the result. Only non-overlapping ranges are called a difference. The held-out
+split is N = 8 at high contention with OPTIMIZE.
+
+| Cell | Baseline CCT, median [range] | Method CCT | Baseline unknown ops | Method retries |
+|---|---|---|---|---|
+| w1, N=2, low | 8.82 [8.80–9.80] | 8.50 [8.44–8.90] | 0.4% | 1 |
+| w1, N=2, medium | 8.94 [8.31–9.82] | 8.26 [8.03–8.46] | 0.5% | 0 |
+| w1, N=4, low | 9.96 [9.58–10.00] | **8.85 [8.60–8.88]** (lower) | 4.8% | 18 |
+| w1, N=4, medium | 9.69 [9.36–10.06] | **8.71 [8.69–8.82]** (lower) | 4.5% | 20 |
+| w2, N=2, low | 2.73 [2.72–2.85] | **5.73 [5.27–5.99]** (higher) | 49.7% | 45 |
+| w2, N=2, medium | 2.93 [2.92–2.99] | **6.05 [5.83–6.18]** (higher) | 49.9% | 42 |
+| w2, N=4, low | 1.95 [1.57–2.26] | **5.85 [4.73–5.94]** (higher) | 74.6% | 117 |
+| w2, N=4, medium | 1.72 [1.59–1.88] | **4.97 [4.42–5.23]** (higher) | 74.8% | 111 |
+
+- **Correctness:** every run of both arms was valid, with LostUpdate = Duplicates = WrongFinalRows = 0.
+- **Counters:** the baseline lost half its adds to conflicts at N = 2 and three quarters at N = 4. Each lost add was a
+  MERGE refused with `ValidationException`, logged unknown and absent. The baseline doesn't retry, so these are ops
+  that never committed, not LostUpdates. The
+  method's per-key UPDATE, retried after its conflicts, ended with almost no unknown op.
+- **Events:** at N = 4 the baseline's appends failed 4.5–4.8% of the time (`CommitFailedException` after Iceberg's own
+  commit retries). The method retried those to 0, but its NOT EXISTS read made it slower overall.
+- **Ledger cost:** baseline counters at medium contention, with vs without the ledger: N = 2, 2.93 [2.92–2.99] vs
+  2.33 [2.16–2.68]; N = 4, 1.72 [1.59–1.88] vs 1.57 [1.37–2.03]. The ledger's cost is not distinguishable at this
+  run length; without it was not faster.
+- **Settles:** every ambiguous attempt the method settled ended FAILED. None ended `unsettled:not-found`, so Trino's
+  query history (`query.max-history`, default 100) did not run out at N ≤ 4.
+
 ## Failure cases
 
-Pending: at least one, from the dev or held-out runs.
+- **The method loses on uncontended appends.** At N = 4 on events, the method's CCT was about 10% below the
+  baseline's, with ranges that don't overlap. The `INSERT … WHERE NOT EXISTS` reads the row's partition before each
+  append, and that read costs more than the method's retries win back. The baseline's appends rarely conflict, so its
+  4.8% unknown ops are the only thing the method buys there. A method that let the ledger guard counters only, and
+  resolved an event's ambiguous attempt by its query id in `$snapshots` (question 4) instead of re-reading, might
+  close the gap. That is still to try on dev.
+- **The harness overloaded the catalog** (first dev attempt, discarded). Dropping and recreating the tables every
+  ~21 s made Polaris purge hundreds of one-op data files per drop in the background. The purges exhausted its S3
+  connection pool ("Timeout waiting for connection from pool", hundreds a minute). Runs stalled to a CCT near 0, then
+  a table load failed. The runner now renames the previous run's tables aside and never drops them. The lab stack's
+  reset removes them without a purge. Rows: `dev-20261018T053628Z-aborted.parquet`.
 
 ## How to rerun
 
