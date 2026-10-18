@@ -9,6 +9,7 @@
 import json
 import multiprocessing
 import os
+import re
 import signal
 import statistics
 import time
@@ -30,6 +31,7 @@ from .writers import baseline_writes, maintenance_statement, run_maintenance, ru
 EXPERIMENT = "e7_concurrency"
 BARRIER_TIMEOUT_SECONDS = 120.0  # every process connects (and passes the lab guard) before the write phase starts
 ADMIN = Arm("admin", client_max_attempts=1, request_timeout_seconds=300.0)  # setup and read-back, never retried
+APPENDER = "sink"  # the sink-like appender's writer id and op log
 
 Connector = Callable[[Arm], Connection]
 
@@ -38,12 +40,10 @@ def lab_connector(arm: Arm) -> Connection:
     """A `harness` connection to the lab stack, after the lab guard, with the arm's client settings."""
     from lab.guard import guarded_connect  # the lab package, imported only where a real run needs it
 
-    conn = guarded_connect("harness")
-    # lab.trino_client.connect takes no client options; the connection reads both per request.
+    options: dict[str, object] = {"request_timeout": arm.request_timeout_seconds}
     if arm.client_max_attempts is not None:
-        conn.max_attempts = arm.client_max_attempts
-    conn.request_timeout = arm.request_timeout_seconds
-    return conn
+        options["max_attempts"] = arm.client_max_attempts
+    return guarded_connect("harness", **options)
 
 
 def lab_check_table(conn: Connection, table: str) -> None:
@@ -58,8 +58,14 @@ def query(conn: Connection, statement: str) -> list:
     return cur.fetchall()
 
 
-def prepare(conn: Connection, scenario: Scenario, check_table: Callable[[Connection, str], None]) -> None:
-    for statement in sql.recreate_tables(ledger=scenario.ledger):
+def retire_suffix(run_id: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", run_id.lower()).strip("_")[-60:]
+
+
+def prepare(
+    conn: Connection, scenario: Scenario, check_table: Callable[[Connection, str], None], *, retire: str
+) -> None:
+    for statement in sql.recreate_tables(retire=retire, ledger=scenario.ledger):
         query(conn, statement)
     for table in (sql.EVENTS, sql.COUNTERS):
         check_table(conn, table)
@@ -123,11 +129,30 @@ def _maintenance_main(scenario: Scenario, arm: Arm, run_dir: Path, barrier, conn
     )
 
 
+def _appender_main(scenario: Scenario, arm: Arm, run_dir: Path, barrier, connector: Connector) -> None:
+    from .direct import load, run_appender
+
+    connector(arm)  # the lab guard's checks, as for every process; the appender itself writes through the catalog
+    table = load(sql.EVENTS)
+    with OpLogWriter(run_dir / f"{APPENDER}.jsonl", APPENDER) as log:
+        barrier.wait(BARRIER_TIMEOUT_SECONDS)
+        start = time.monotonic()
+        run_appender(
+            table,
+            scenario=scenario,
+            log=log,
+            start=start,
+            deadline=start + scenario.seconds,
+            definite=arm.definite_errors,
+        )
+
+
 def launch(scenario: Scenario, arm: Arm, run_dir: Path, connector: Connector, kill: Kill | None = None) -> Launched:
     ctx = multiprocessing.get_context("spawn")
     streams = op_streams(scenario, arm.assign)
     maintenance = scenario.maintenance == "optimize"
-    barrier = ctx.Barrier(len(streams) + maintenance + 1)
+    appender = scenario.appender_batch > 0
+    barrier = ctx.Barrier(len(streams) + maintenance + appender + 1)
     procs = {
         writer_name(scenario, i): ctx.Process(
             target=_writer_main, args=(i, ops, scenario, arm, run_dir, barrier, connector), daemon=True
@@ -137,6 +162,10 @@ def launch(scenario: Scenario, arm: Arm, run_dir: Path, connector: Connector, ki
     if maintenance:
         procs["maintenance"] = ctx.Process(
             target=_maintenance_main, args=(scenario, arm, run_dir, barrier, connector), daemon=True
+        )
+    if appender:
+        procs[APPENDER] = ctx.Process(
+            target=_appender_main, args=(scenario, arm, run_dir, barrier, connector), daemon=True
         )
     for proc in procs.values():
         proc.start()
@@ -204,7 +233,7 @@ def maintenance_stats(path: Path) -> dict:
 
 
 def collect(conn: Connection, scenario: Scenario, arm: Arm, run_dir: Path, launched: Launched) -> dict:
-    ops = read_oplog(sorted(run_dir.glob(f"{scenario.workload}-*.jsonl")))
+    ops = read_oplog(sorted([*run_dir.glob(f"{scenario.workload}-*.jsonl"), *run_dir.glob(f"{APPENDER}.jsonl")]))
     events = [EventRow(*row) for row in query(conn, sql.READ_EVENTS)]
     seeded = scenario.seeded_keys() if scenario.workload == "w2" else range(0)
     if scenario.ledger:
@@ -246,6 +275,8 @@ def collect(conn: Connection, scenario: Scenario, arm: Arm, run_dir: Path, launc
         "abort_rate": round(sum(op.outcome is Outcome.FAILED for op in ops) / len(ops), 4) if ops else None,
         "unknown_rate": round(sum(op.outcome is Outcome.UNKNOWN for op in ops) / len(ops), 4) if ops else None,
         "error_classes": json.dumps(dict(Counter(op.error for op in ops if op.error)), sort_keys=True),
+        # How ambiguous attempts settled (method arm): unsettled:not-found means the query left system.runtime.queries.
+        "settles": json.dumps(dict(Counter(s for op in ops for s in op.settled)), sort_keys=True),
         "max_ledger": max_ledger,
         **snapshot_stats(query(conn, sql.snapshots(table)), ops),
         **maintenance_stats(run_dir / "maintenance.jsonl"),
@@ -269,7 +300,7 @@ def run(
     run_dir = base_dir / run_id
     run_dir.mkdir(parents=True)
     admin = connector(ADMIN)
-    prepare(admin, scenario, check_table)
+    prepare(admin, scenario, check_table, retire=retire_suffix(run_id))
     launched = launch(scenario, arm, run_dir, connector, kill)
     row = collect(admin, scenario, arm, run_dir, launched)
     (run_dir / "result.json").write_text(json.dumps(row, indent=2, sort_keys=True) + "\n", encoding="utf-8")

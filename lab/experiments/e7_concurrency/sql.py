@@ -35,13 +35,23 @@ def _int(value: int) -> int:
     return value
 
 
-def recreate_tables(*, ledger: bool = True) -> list[str]:
-    """Statements that drop and create both tables, so a run inherits no files, snapshots or ledgers."""
+RETIRED = "_retired_"
+_SUFFIX = re.compile(r"[a-z0-9_]{1,60}")
+
+
+def recreate_tables(*, retire: str, ledger: bool = True) -> list[str]:
+    """Statements that set the previous run's tables aside and create both afresh, so a run inherits no files,
+    snapshots or ledgers. The old tables are renamed to <table>_retired_<retire>, not dropped: a drop makes Polaris
+    purge every data file in the background, and between runs a minute apart those purges exhausted its S3
+    connection pool and stalled the next run's commits (2026-10-18). They stay until the lab stack is reset, which
+    removes its volumes without a purge."""
+    if not _SUFFIX.fullmatch(retire):
+        raise ValueError(f"retire suffix {retire!r} is not [a-z0-9_]+")
     applied = ", applied array(varchar) NOT NULL" if ledger else ""
     return [
         f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{SCHEMA}",
-        f"DROP TABLE IF EXISTS {EVENTS}",
-        f"DROP TABLE IF EXISTS {COUNTERS}",
+        f"ALTER TABLE IF EXISTS {EVENTS} RENAME TO {EVENTS}{RETIRED}{retire}",
+        f"ALTER TABLE IF EXISTS {COUNTERS} RENAME TO {COUNTERS}{RETIRED}{retire}",
         f"CREATE TABLE {EVENTS} (writer_id varchar NOT NULL, seq bigint NOT NULL, key bigint NOT NULL, "
         f"delta bigint NOT NULL, event_day date NOT NULL) "
         f"WITH (format_version = 2, partitioning = ARRAY['bucket(key, {BUCKETS})', 'event_day'])",

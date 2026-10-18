@@ -46,7 +46,9 @@ class WriteResult:
     error: str | None = None  # class of the last error
     detail: str | None = None
     query_ids: tuple[str, ...] = ()
-    settled: tuple[str, ...] = ()  # the state each ambiguous attempt settled to (FINISHED, FAILED, or unsettled)
+    # What each ambiguous attempt settled to: FINISHED, FAILED, no-query-id, or unsettled:<last seen> where the last
+    # seen is a state (still RUNNING…), not-found (gone from system.runtime.queries, or never there) or unreadable.
+    settled: tuple[str, ...] = ()
 
 
 def _query_state(conn: Connection, query_id: str) -> str | None:
@@ -66,8 +68,9 @@ def settle(
     *,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
-) -> str | None:
-    """Cancels the attempt and waits until it is FINISHED or FAILED; None if that is not known in time."""
+) -> tuple[str | None, str]:
+    """Cancels the attempt and waits until it is FINISHED or FAILED. Returns that state (None if it is not known in
+    time) and the last thing seen: a state, `not-found` or `unreadable`."""
     # A DELETE of the query's next URI; nothing to do if the query is already over. The state below decides: a failed
     # cancel only means waiting for the query to end by itself.
     with contextlib.suppress(trino_errors.Error, requests.exceptions.RequestException):
@@ -76,12 +79,13 @@ def settle(
     while True:
         try:
             state = _query_state(conn, query_id)
+            seen = state or "not-found"
         except (trino_errors.Error, requests.exceptions.RequestException):
-            state = None  # unreadable this time: poll again until the deadline
+            state, seen = None, "unreadable"  # poll again until the deadline
         if state in TERMINAL:
-            return state
+            return state, seen
         if clock() >= deadline:
-            return None
+            return None, seen
         sleep(policy.poll_seconds)
 
 
@@ -114,8 +118,8 @@ def write(
             if error in policy.definite:
                 state = "FAILED"
             elif query_id:
-                state = settle(conn, cur, query_id, policy, sleep=sleep, clock=clock)
-                settled.append(state or "unsettled")
+                state, seen = settle(conn, cur, query_id, policy, sleep=sleep, clock=clock)
+                settled.append(state or f"unsettled:{seen}")
             else:
                 state = "FAILED" if policy.retry_without_query_id else None
                 settled.append("no-query-id")

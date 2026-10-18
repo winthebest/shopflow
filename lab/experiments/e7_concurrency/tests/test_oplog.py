@@ -72,3 +72,12 @@ def test_groups_and_outcomes_round_trip(tmp_path: Path):
         ("sink:0", "sink:commit-1", Outcome.UNKNOWN, "client-timeout"),
         ("sink:1", "sink:commit-1", Outcome.UNKNOWN, "client-timeout"),
     ]
+
+
+def test_how_ambiguous_attempts_settled_round_trips(tmp_path: Path):
+    with OpLogWriter(tmp_path / "w2-0", "w2-0") as log:
+        oid = log.invoke(1, "counters", 0, 1)
+        log.complete(oid, Outcome.ACKED, attempts=2, settled=["FAILED"])
+        oid = log.invoke(2, "counters", 0, 1)
+        log.complete(oid, Outcome.UNKNOWN, attempts=1, settled=["unsettled:not-found"])
+    assert [o.settled for o in read_oplog([tmp_path / "w2-0"])] == [("FAILED",), ("unsettled:not-found",)]

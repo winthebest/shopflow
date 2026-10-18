@@ -7,17 +7,19 @@ from e7_concurrency import sql
 
 
 def test_tables_are_recreated_in_the_lab_catalog_as_format_v2():
-    statements = sql.recreate_tables()
+    statements = sql.recreate_tables(retire="r1")
     assert statements[:3] == [
         "CREATE SCHEMA IF NOT EXISTS lab_exp.lab_e7",
-        "DROP TABLE IF EXISTS lab_exp.lab_e7.events",
-        "DROP TABLE IF EXISTS lab_exp.lab_e7.counters",
+        "ALTER TABLE IF EXISTS lab_exp.lab_e7.events RENAME TO lab_exp.lab_e7.events_retired_r1",
+        "ALTER TABLE IF EXISTS lab_exp.lab_e7.counters RENAME TO lab_exp.lab_e7.counters_retired_r1",
     ]
     events, counters = statements[3:]
     assert "partitioning = ARRAY['bucket(key, 8)', 'event_day']" in events
     assert "applied array(varchar) NOT NULL" in counters
     assert all("format_version = 2" in s for s in (events, counters))
-    assert "applied" not in sql.recreate_tables(ledger=False)[4]
+    assert "applied" not in sql.recreate_tables(retire="r1", ledger=False)[4]
+    with pytest.raises(ValueError, match="retire suffix"):
+        sql.recreate_tables(retire="r1; DROP")
 
 
 def test_counters_are_seeded_in_one_statement():

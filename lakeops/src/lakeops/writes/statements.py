@@ -1,9 +1,15 @@
 """Idempotent write statements: applying one a second time changes nothing.
 
-- `insert_if_absent`: a row identified by its key columns is inserted only if no row has that key. Put the partition
-  columns in the key too, so Trino reads only that partition to check.
-- `add_once`: adds `delta` to a counter row unless the row's ledger already holds the op id, and appends the op id
-  in the same statement.
+- `insert_unless_present`: an INSERT … SELECT … WHERE NOT EXISTS of the row's key. An append, so Iceberg does not
+  check it against other commits; two attempts of one write must never run at once (`retry.write` sees to that).
+- `insert_if_absent`: the same as a MERGE … WHEN NOT MATCHED. Trino checks a MERGE against every concurrent commit to
+  the table (its conflict filter is `true`), so concurrent inserts of different rows conflict.
+- `update_once`: an UPDATE of one key that adds `delta` and appends the op id to the row's ledger, unless the ledger
+  already holds it. Trino scopes an UPDATE's conflict check to the rows its WHERE can match, so updates of keys in
+  different partitions do not conflict.
+- `add_once`: the same as a MERGE (conflict filter `true`).
+
+Put the partition columns in the key, so Trino reads only that partition to check.
 
 Only identifiers matching [a-z0-9_] (tables as catalog.schema.table), integers, dates and short strings of
 [A-Za-z0-9_.:-] are accepted, so a statement never carries anything that could change its meaning.
@@ -67,4 +73,30 @@ def add_once(
         f"AS s(key, delta, op) ON t.{k} = s.key "
         f"WHEN MATCHED AND NOT contains(t.{ledger}, s.op) "
         f"THEN UPDATE SET {v} = t.{v} + s.delta, {ledger} = t.{ledger} || s.op"
+    )
+
+
+def insert_unless_present(table: str, key: Mapping[str, Value], values: Mapping[str, Value]) -> str:
+    if not key:
+        raise ValueError("insert_unless_present needs at least one key column")
+    columns = [_identifier(c) for c in (*key, *values)]
+    if len(set(columns)) != len(columns):
+        raise ValueError("a column is both in the key and in the values")
+    row = ", ".join(f"{literal(v)} AS {c}" for c, v in zip(columns, (*key.values(), *values.values()), strict=True))
+    match = " AND ".join(f"{c} = {literal(v)}" for c, v in key.items())
+    target = _table(table)
+    return (
+        f"INSERT INTO {target} ({', '.join(columns)}) SELECT * FROM (SELECT {row}) "  # noqa: S608  # validated literals
+        f"WHERE NOT EXISTS (SELECT 1 FROM {target} WHERE {match})"
+    )
+
+
+def update_once(
+    table: str, *, key_column: str, key: int, value_column: str, delta: int, ledger_column: str, op_id: str
+) -> str:
+    k, v, ledger = _identifier(key_column), _identifier(value_column), _identifier(ledger_column)
+    op = literal(op_id)
+    return (
+        f"UPDATE {_table(table)} SET {v} = {v} + {literal(delta)}, {ledger} = {ledger} || {op} "  # noqa: S608
+        f"WHERE {k} = {literal(key)} AND NOT contains({ledger}, {op})"
     )

@@ -48,6 +48,7 @@ class Op:
     latency_ms: float | None = None
     query_ids: tuple[str, ...] = ()
     snapshot_id: int | None = None
+    settled: tuple[str, ...] = ()  # what each ambiguous attempt settled to, when the writer settles them
 
     @property
     def id(self) -> str:
@@ -97,6 +98,7 @@ class OpLogWriter:
         latency_ms: float | None = None,
         query_ids: Sequence[str] = (),
         snapshot_id: int | None = None,
+        settled: Sequence[str] = (),
     ) -> None:
         self._write(
             {
@@ -109,6 +111,7 @@ class OpLogWriter:
                 "latency_ms": latency_ms,
                 "query_ids": list(query_ids),
                 "snapshot_id": snapshot_id,
+                "settled": list(settled),
             }
         )
 
@@ -180,6 +183,7 @@ def read_oplog(paths: Iterable[Path]) -> list[Op]:
                 "latency_ms": done["latency_ms"],
                 "query_ids": tuple(done["query_ids"]),
                 "snapshot_id": done["snapshot_id"],
+                "settled": tuple(done.get("settled", ())),
             }
         ops.append(
             Op(

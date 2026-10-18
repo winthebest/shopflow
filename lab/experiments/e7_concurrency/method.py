@@ -1,7 +1,10 @@
 """The method arm: writes from lakeops.writes, ops routed to writers by key, OPTIMIZE only on past days.
 
-- Every write is idempotent: events with `insert_if_absent` on (writer_id, seq, key, event_day), counter adds with
-  `add_once` on the ledger. A retry of a write that did commit changes nothing.
+- Every write is idempotent: events with `insert_unless_present` on (writer_id, seq, key, event_day), counter adds
+  with `update_once` on the ledger. A retry of a write that did commit changes nothing.
+- Those forms rather than MERGE: on the lab, Trino checked every MERGE against all concurrent commits to the table
+  (conflict filter `true`, probes q1 and q1b), while an UPDATE of one key conflicted only within its partition and an
+  INSERT (an append) not at all.
 - `lakeops.writes.write` runs one attempt at a time and settles an ambiguous attempt before the next.
 - One HTTP attempt per request, so the trino client never re-sends a statement on its own.
 - Two writers never update one key (`by_key`), and OPTIMIZE leaves the day being written alone.
@@ -11,7 +14,7 @@ from datetime import date
 
 from trino.dbapi import Connection
 
-from lakeops.writes import RetryPolicy, WriteResult, add_once, insert_if_absent, write
+from lakeops.writes import RetryPolicy, WriteResult, insert_unless_present, update_once, write
 
 from . import sql
 from .oplog import Outcome
@@ -26,7 +29,9 @@ def by_key(_index: int, key: int, writers: int) -> int:
 
 
 def attempted(result: WriteResult) -> Attempted:
-    return Attempted(_OUTCOME[result.state], result.attempts, result.error, result.detail, result.query_ids)
+    return Attempted(
+        _OUTCOME[result.state], result.attempts, result.error, result.detail, result.query_ids, result.settled
+    )
 
 
 def method_writes(conn: Connection, scenario: Scenario, arm: Arm, writer: str) -> Apply:
@@ -36,7 +41,7 @@ def method_writes(conn: Connection, scenario: Scenario, arm: Arm, writer: str) -
     if scenario.workload == "w1":
 
         def insert(_oid: str, op: OpSpec, day: date) -> Attempted:
-            statement = insert_if_absent(
+            statement = insert_unless_present(
                 sql.EVENTS,
                 key={"writer_id": writer, "seq": op.seq, "key": op.key, "event_day": day},
                 values={"delta": op.delta},
@@ -46,7 +51,7 @@ def method_writes(conn: Connection, scenario: Scenario, arm: Arm, writer: str) -
         return insert
 
     def add(oid: str, op: OpSpec, _day: date) -> Attempted:
-        statement = add_once(
+        statement = update_once(
             sql.COUNTERS,
             key_column="key",
             key=op.key,
