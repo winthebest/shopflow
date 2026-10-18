@@ -143,6 +143,8 @@ class Snapshot:
 
 @dataclass(frozen=True)
 class TableState:
+    # Keyed by the Iceberg partition path, as Trino's `$partition` gives it: `<field>=<value>` joined by `/` in
+    # partition-spec order (`_ingested_at_day=2026-10-18`, `id_bucket=3`), values URL-encoded; "" when unpartitioned.
     partitions: Mapping[str, Partition]
     snapshots: Mapping[int, Snapshot]  # `$snapshots` by id
     refs: Mapping[str, int]  # `$refs`: name -> snapshot id
