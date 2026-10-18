@@ -63,7 +63,7 @@ confirmed:
     change to the sweep. `scripts/cloud-reap.sh` stays as the laptop tool for a full layer-2 destroy under the state lock.
 - **Third hard stop: the project spend limit** ($20/month, the user's setting in AWS Settings). It is gross before
   credits and pre-tax; it pauses the whole project at the limit and deletes the data after 90 days unresolved.
-- **Budgets under the spend limit** (the user's decision at Approval 1):
+- **Budgets under the spend limit** (user decision, 2026-10-18 (Approval 1)):
   - a MONTHLY budget `shopflow-monthly` ($20, mirroring the limit) emails at 40% actual ($8) and 75% forecast ($15);
   - its Budget Action attaches `shopflow-budget-deny` at 60% actual ($12), so Budgets' 8–12 h lag still lands under
     the limit;

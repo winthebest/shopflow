@@ -75,7 +75,7 @@ What it means for this project (failure mode in
 
 ### Monthly thresholds under the $20 spend limit
 
-The user's decision at Approval 1 (ADR 0513). The spend limit itself stays the user's setting; `monthly_limit_usd`
+User decision, 2026-10-18 (Approval 1; ADR 0513). The spend limit itself stays the user's setting; `monthly_limit_usd`
 only mirrors it.
 
 Every alarm and deny fires before the monthly limit, allowing for Budgets' 8–12 h refresh. At $0.5/h, that lag is
