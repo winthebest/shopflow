@@ -54,6 +54,10 @@ from lakeops.state import capture_namespace
 READ_CATALOG = {"lab_ops": "lab_ro", "lab_ro": "lab_ro", "lab_exp": "lab_exp_ro", "lab_sbx": "lab_sbx_ro"}
 
 
+class HeldOutScenarioError(RuntimeError):
+    """The decrypted held-out scenarios fail the experiment's check; the attempt is recorded as failed."""
+
+
 class RunRefused(RuntimeError):
     """The held-out run may not start: no valid freeze, or the ledger does not allow another attempt."""
 
@@ -137,10 +141,8 @@ def check_attempt(experiment: str, root: Path, rerun_reason: str | None) -> int:
     return len(previous) + 1
 
 
-def load_experiment(
-    experiment: str, root: Path = REPO, frozen: freeze.Freeze | None = None
-) -> Callable[[list[dict], RunContext], list[Row]]:
-    """The experiment's `run`. With a freeze, from exactly the bytes the freeze hashed (refused if they differ)."""
+def load_module(experiment: str, root: Path = REPO, frozen: freeze.Freeze | None = None) -> types.ModuleType:
+    """The experiment's module. With a freeze, from exactly the bytes the freeze hashed (refused if they differ)."""
     relative = f"lab/experiments/{experiment}/experiment.py"
     path = root / relative
     if not path.is_file():
@@ -170,7 +172,30 @@ def load_experiment(
     module.__package__ = experiment
     sys.modules[name] = module
     exec(compile(source, str(path), "exec"), module.__dict__)  # noqa: S102 (the repository's own, verified code)
+    return module
+
+
+def entry(module: types.ModuleType) -> Callable[[list[dict], RunContext], list[Row]]:
+    """The module's `run(scenarios, context)`, or RunRefused."""
+    if not callable(getattr(module, "run", None)):
+        raise RunRefused(f"{module.__file__} defines no run(scenarios, context)")
     return module.run
+
+
+def load_experiment(
+    experiment: str, root: Path = REPO, frozen: freeze.Freeze | None = None
+) -> Callable[[list[dict], RunContext], list[Row]]:
+    """The experiment's `run` (see load_module)."""
+    return entry(load_module(experiment, root, frozen))
+
+
+def check_scenarios(module: types.ModuleType, items: list[dict], split: str) -> list[dict]:
+    """The experiment's own check of a split's scenarios, `check_scenarios(scenarios, split)` in its experiment.py
+    when it defines one (it raises on a bad scenario); the scenarios, unchanged."""
+    check = getattr(module, "check_scenarios", None)
+    if check is not None:
+        check(items, split)
+    return items
 
 
 def run(
@@ -188,10 +213,12 @@ def run(
         raise ValueError(f"split {split!r}: dev or holdout")
     run_id = new_run_id()
     if split == "dev":
-        experiment_run = load_experiment(experiment, root)
+        module = load_module(experiment, root)
+        experiment_run = entry(module)
+        items = check_scenarios(module, scenarios.load_dev(experiment, root), split)
         meta = collect_metadata(experiment, split, seed, cache_mode, run_id=run_id, root=root)
         context = RunContext(experiment, split, run_id, seed, bundle=_bundle(meta, results_dir))
-        path = write_run(experiment_run(scenarios.load_dev(experiment, root), context), meta, results_dir)
+        path = write_run(experiment_run(items, context), meta, results_dir)
         _record_dev_run(experiment, root, run_id, path)
         return path
     # Held-out: every check before any of the experiment's code runs.
@@ -220,8 +247,15 @@ def run(
         _record(experiment, root, run_id=run_id, event="started", attempt=attempt, freeze_hash=frozen.hash,
                 rerun_reason=rerun_reason)  # fmt: skip
     try:
-        experiment_run = load_experiment(experiment, root, frozen)
-        rows = experiment_run(scenarios.decrypt_holdout(experiment, root), context)
+        module = load_module(experiment, root, frozen)
+        experiment_run = entry(module)
+        items = scenarios.decrypt_holdout(experiment, root)
+        try:
+            check_scenarios(module, items, split)
+        except Exception as error:
+            # The ledger is committed, and the check's message may quote held-out values: it stays in the traceback.
+            raise HeldOutScenarioError("the held-out scenarios fail the experiment's check (details above)") from error
+        rows = experiment_run(items, context)
         path = write_run(rows, meta, results_dir)
     except Exception as error:
         _record(

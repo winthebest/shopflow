@@ -109,7 +109,10 @@ Decisions behind it:
 
 - **Who writes the held-out scenarios.** The user or another session, never the lane that tunes the method. They
   are encrypted with SOPS to the repository's age recipient, public key only: `python -m lab.scenarios encrypt
-  <plain.yaml> <exp>` writes `lab/scenarios/<exp>/holdout.sops.yaml`. The plaintext stays outside git.
+  <plain.yaml> <exp>` writes `lab/scenarios/<exp>/holdout.sops.yaml`. The plaintext stays outside git. `encrypt`
+  first runs the checks of `python -m lab.scenarios check <plain.yaml> <exp>`: the common shape and the experiment's
+  own `check_scenarios`, if it has one. The runner repeats that check after decryption, but a failure there fails
+  the attempt; its ledger entry leaves out the check's message, which could quote held-out values.
 - **Agent workspaces cannot read them.** The age key stays with the user. Any decryption (`sops -d`) needs the user's
   approval.
 - **Freeze.** `make lab-freeze EXP=<exp>` hashes everything that can change a result (`lab.freeze.FROZEN`):

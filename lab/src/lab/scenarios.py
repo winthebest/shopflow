@@ -2,9 +2,10 @@
 
 Both files hold {"scenarios": [{"id": ..., ...}, ...]}. The held-out file is written by the user or another session,
 never by the lane that tunes the method, and is encrypted to the repository's age recipient (.sops.yaml) with the
-public key only: `python -m lab.scenarios encrypt <plain.yaml> <exp>`. Only the held-out run decrypts it, in memory
-(`sops -d` with the caller's own key); no plaintext is written. After the final held-out run, `publish` writes the
-decrypted file next to it (holdout.yaml) so others can reproduce the run.
+public key only: `python -m lab.scenarios encrypt <plain.yaml> <exp>`, which first runs the checks of `python -m
+lab.scenarios check <plain.yaml> <exp>` (the experiment's own `check_scenarios`, if any). Only the held-out run
+decrypts it, in memory (`sops -d` with the caller's own key); no plaintext is written. After the final held-out run,
+`publish` writes the decrypted file next to it (holdout.yaml) so others can reproduce the run.
 
 The files may live elsewhere when another lane owns them (e.g. the agent eval's sets in evals/datasets/operator/):
 lab/scenarios/<exp>/location then holds one repository-relative directory under evals/, read without running any of
@@ -96,13 +97,25 @@ def repository_recipient(root: Path = REPO) -> str:
     return recipients.pop()
 
 
+def check(plain: Path, experiment: str, root: Path = REPO) -> list[dict]:
+    """A held-out plaintext's scenarios, checked as the held-out run will check them: the common shape, then the
+    experiment's own `check_scenarios(scenarios, "holdout")` when its experiment.py defines one. A file that failed
+    only after decryption would burn the attempt, so `encrypt` checks first."""
+    items = _scenarios(yaml.safe_load(plain.read_text()), str(plain))
+    if (root / "lab/experiments" / experiment / "experiment.py").is_file():
+        from lab import runner  # here, not at the top: lab.runner imports this module
+
+        runner.check_scenarios(runner.load_module(experiment, root), items, "holdout")
+    return items
+
+
 def encrypt(plain: Path, experiment: str, recipient: str, root: Path = REPO) -> Path:
     """Encrypts `plain` (kept outside git) to `recipient` only, into lab/scenarios/<exp>/holdout.sops.yaml.
 
     `--config /dev/null`: the repository's .sops.yaml has no rule for these files, and the recipient is given
     explicitly, so no creation rule (and no other key) can change who can read it.
     """
-    _scenarios(yaml.safe_load(plain.read_text()), str(plain))
+    check(plain, experiment, root)
     out = holdout_file(experiment, root)
     if out.exists():
         raise ScenarioError(f"{out} exists: held-out scenarios are written once")
@@ -122,9 +135,13 @@ def publish(experiment: str, root: Path = REPO) -> Path:
 
 
 def main() -> None:
-    if len(sys.argv) != 4 or sys.argv[1] != "encrypt":
-        sys.exit("usage: python -m lab.scenarios encrypt <plain.yaml> <experiment>")
-    print(encrypt(Path(sys.argv[2]), sys.argv[3], repository_recipient()))
+    if len(sys.argv) != 4 or sys.argv[1] not in ("check", "encrypt"):
+        sys.exit("usage: python -m lab.scenarios check|encrypt <plain.yaml> <experiment>")
+    plain, experiment = Path(sys.argv[2]), sys.argv[3]
+    if sys.argv[1] == "check":
+        print(f"{plain}: {len(check(plain, experiment))} held-out scenario(s) pass {experiment}'s check")
+    else:
+        print(encrypt(plain, experiment, repository_recipient()))
 
 
 if __name__ == "__main__":

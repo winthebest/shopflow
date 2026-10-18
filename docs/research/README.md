@@ -7,15 +7,17 @@ scenarios in `lab/scenarios/<exp>/` and its results in `lab/results/<exp>/`. How
 | Experiment | Topic (brief) | Code | Status |
 |---|---|---|---|
 | `e0_toy` | none: exercises the protocol's mechanics, with known answers | `lab/experiments/e0_toy/` | mechanics tested (`lab/tests/test_runner.py`) |
-| [E5](e5-retention-policy-design.md) | 5. Retention policy per table profile | `lab/experiments/e5_retention/` (planned) | design draft, nothing measured |
+| [E5](e5-retention-policy-design.md) | 5. Retention policy per table profile | `lab/experiments/e5_retention/` (scenario check; simulator after the first measurements) | design fixed, nothing measured |
 | [E7](e7-concurrent-writers.md) | 7. Concurrent writers | `lab/experiments/e7_concurrency/` | design fixed, no results yet |
 
-An experiment plugs into the runner with one function, in `lab/experiments/<exp>/experiment.py`:
-`run(scenarios: list[dict], context: lab.runner.RunContext) -> list[lab.results.Row]`. `make lab-run EXP=<exp>
-SPLIT=dev|holdout` calls it, with the scenarios of the split, and writes the result file. The file is loaded as
-module `<exp>.experiment` of package `<exp>` (`lab/experiments/<exp>/`), so its own modules import relatively or as
-`<exp>.…`. The repository root is on the path too: `agent.…` and `evals.…` import, on the agent's pins, which the
-lab project carries (`lab/tests/test_agent_pins.py`).
+An experiment plugs into the runner with one function, in `lab/experiments/<exp>/experiment.py`: `run(scenarios:
+list[dict], context: lab.runner.RunContext) -> list[lab.results.Row]`. `make lab-run EXP=<exp> SPLIT=dev|holdout` calls
+it, with the scenarios of the split, and writes the result file. An optional second function,
+`check_scenarios(scenarios: list[dict], split: str) -> None`, raises on a scenario the experiment cannot use. It runs
+before `run` on both splits, and in `python -m lab.scenarios check|encrypt` before a held-out file is written. The file
+is loaded as module `<exp>.experiment` of package `<exp>` (`lab/experiments/<exp>/`), so its own modules import
+relatively or as `<exp>.…`. The repository root is on the path too: `agent.…` and `evals.…` import, on the agent's pins,
+which the lab project carries (`lab/tests/test_agent_pins.py`).
 
 - A scenario is one entry of the split's file; the only key the runner requires is a unique `id`. The files are
   `lab/scenarios/<exp>/{dev.yaml,holdout.sops.yaml}`, or, when another lane owns them, in the directory under `evals/`
