@@ -7,6 +7,7 @@ scenarios in `lab/scenarios/<exp>/` and its results in `lab/results/<exp>/`. How
 | Experiment | Topic (brief) | Code | Status |
 |---|---|---|---|
 | `e0_toy` | none: exercises the protocol's mechanics, with known answers | `lab/experiments/e0_toy/` | mechanics tested (`lab/tests/test_runner.py`) |
+| [E5](e5-retention-policy-design.md) | 5. Retention policy per table profile | `lab/experiments/e5_retention/` (planned) | design draft, nothing measured |
 | [E7](e7-concurrent-writers.md) | 7. Concurrent writers | `lab/experiments/e7_concurrency/` | design fixed, no results yet |
 
 An experiment plugs into the runner with one function, in `lab/experiments/<exp>/experiment.py`:
