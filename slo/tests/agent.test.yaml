@@ -1,0 +1,178 @@
+# promtool unit tests for the operator agent's alerts (sf-sre). Rule files: the `.spec` of
+# deploy/platform/slo/base/agent.prometheusrule.yaml and agent-slo.prometheusrule.yaml, extracted next to this file by
+# scripts/sre-check.sh. Series carry the labels the OTLP receiver gives the agent's metrics (agent/instruments.py):
+# job = service.name, instance = service.instance.id (a new one per process).
+rule_files:
+  - agent.rules.yaml
+  - agent-slo.rules.yaml
+evaluation_interval: 1m
+
+tests:
+  # The usual case: the counter started at 0 (an allowlisted action class) and goes to 1 between minutes 30 and 31.
+  # Pages at once (no `for`), stays up while the increase is in the 15-minute window, then resolves.
+  - name: an unsafe action of a class that started at 0 pages at once, for 15 minutes
+    interval: 1m
+    input_series:
+      - series: 'agent_unsafe_actions_total{agent_mode="demo",agent_arm="guarded",agent_action_class="delete_rows",job="operator-agent",instance="a"}'
+        values: '0x30 1x40'
+    alert_rule_test:
+      - {eval_time: 30m, alertname: AgentUnsafeActionExecuted, exp_alerts: []}
+      - eval_time: 32m
+        alertname: AgentUnsafeActionExecuted
+        exp_alerts:
+          - exp_labels: {severity: page, team: sf-sre, agent_arm: guarded, agent_action_class: delete_rows}
+            exp_annotations:
+              summary: "The agent (guarded arm) executed an unsafe delete_rows change: stop the agent and check what it changed."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/agent-unsafe-action.md
+      - eval_time: 40m
+        alertname: AgentUnsafeActionExecuted
+        exp_alerts:
+          - exp_labels: {severity: page, team: sf-sre, agent_arm: guarded, agent_action_class: delete_rows}
+            exp_annotations:
+              summary: "The agent (guarded arm) executed an unsafe delete_rows change: stop the agent and check what it changed."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/agent-unsafe-action.md
+      - {eval_time: 50m, alertname: AgentUnsafeActionExecuted, exp_alerts: []}
+
+  # A class outside the guard's allowlist was never started at 0: its first sample is already 1, and increase() over
+  # samples that are all 1 is 0. The second branch pages on it while the series is younger than the window.
+  - name: an unsafe action of a class that never started at 0 still pages
+    interval: 1m
+    input_series:
+      - series: 'agent_unsafe_actions_total{agent_mode="demo",agent_arm="baseline",agent_action_class="drop_table",job="operator-agent",instance="a"}'
+        values: '_x31 1x40'
+    alert_rule_test:
+      - {eval_time: 30m, alertname: AgentUnsafeActionExecuted, exp_alerts: []}
+      - eval_time: 32m
+        alertname: AgentUnsafeActionExecuted
+        exp_alerts:
+          - exp_labels: {severity: page, team: sf-sre, agent_arm: baseline, agent_action_class: drop_table}
+            exp_annotations:
+              summary: "The agent (baseline arm) executed an unsafe drop_table change: stop the agent and check what it changed."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/agent-unsafe-action.md
+      - eval_time: 40m
+        alertname: AgentUnsafeActionExecuted
+        exp_alerts:
+          - exp_labels: {severity: page, team: sf-sre, agent_arm: baseline, agent_action_class: drop_table}
+            exp_annotations:
+              summary: "The agent (baseline arm) executed an unsafe drop_table change: stop the agent and check what it changed."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/agent-unsafe-action.md
+      - {eval_time: 50m, alertname: AgentUnsafeActionExecuted, exp_alerts: []}
+
+  # What must never page: proposals the guard blocked (a task outcome, not an unsafe action), unsafe actions in an eval
+  # (eval runs do not reach this Prometheus, but a mislabelled run must not page), a counter that has been above 0
+  # for the whole window (an action already paged), and a restarted process whose counters start at 0 again.
+  - name: blocked proposals, eval runs, an old count and a restart do not page
+    interval: 1m
+    input_series:
+      - series: 'agent_tasks_total{agent_mode="demo",agent_arm="guarded",agent_outcome="blocked",gen_ai_request_model="claude-opus-5-5",job="operator-agent",instance="a"}'
+        values: '0+1x60'
+      - series: 'agent_unsafe_actions_total{agent_mode="demo",agent_arm="guarded",agent_action_class="delete_rows",job="operator-agent",instance="a"}'
+        values: '0x60'
+      - series: 'agent_unsafe_actions_total{agent_mode="eval",agent_arm="baseline",agent_action_class="delete_rows",job="operator-agent",instance="e"}'
+        values: '0x10 1+1x50'
+      - series: 'agent_unsafe_actions_total{agent_mode="demo",agent_arm="guarded",agent_action_class="update_rows",job="operator-agent",instance="old"}'
+        values: '3x30'
+      - series: 'agent_unsafe_actions_total{agent_mode="demo",agent_arm="guarded",agent_action_class="update_rows",job="operator-agent",instance="new"}'
+        values: '_x30 0x30'
+    alert_rule_test:
+      - {eval_time: 20m, alertname: AgentUnsafeActionExecuted, exp_alerts: []}
+      - {eval_time: 33m, alertname: AgentUnsafeActionExecuted, exp_alerts: []}
+      - {eval_time: 59m, alertname: AgentUnsafeActionExecuted, exp_alerts: []}
+
+  # Task-latency SLO: 95% of claude-opus-5-5 demo tasks under 120 s. 48 tasks a day (one every 30 minutes), 20% of
+  # them slow: over a day that is 4x the 5% budget, above the 3x ticket line, with far more than 10 tasks. The slow
+  # qwen3:8b tasks next to them are not counted.
+  - name: 20% slow opus tasks over a day raise the latency ticket; qwen tasks do not count
+    interval: 30m
+    input_series:
+      - series: 'agent_task_duration_seconds_count{agent_mode="demo",agent_arm="guarded",agent_outcome="executed",gen_ai_request_model="claude-opus-5-5",job="operator-agent",instance="a"}'
+        values: '0+1x60'
+      - series: 'agent_task_duration_seconds_bucket{agent_mode="demo",agent_arm="guarded",agent_outcome="executed",gen_ai_request_model="claude-opus-5-5",job="operator-agent",instance="a",le="120"}'
+        values: '0+0.8x60'
+      - series: 'agent_task_duration_seconds_count{agent_mode="demo",agent_arm="guarded",agent_outcome="executed",gen_ai_request_model="qwen3:8b",job="operator-agent",instance="a"}'
+        values: '0+1x60'
+      - series: 'agent_task_duration_seconds_bucket{agent_mode="demo",agent_arm="guarded",agent_outcome="executed",gen_ai_request_model="qwen3:8b",job="operator-agent",instance="a",le="120"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 30h
+        alertname: AgentTaskLatencyBudgetBurn
+        exp_alerts:
+          - exp_labels: {severity: ticket, team: sf-sre, sloth_id: agent-task-latency, sloth_service: agent, sloth_slo: task-latency}
+            exp_annotations:
+              summary: "20% of claude-opus-5-5 demo tasks took more than 120 s; the task-latency SLO allows 5%."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/agent-task-latency.md
+      - {eval_time: 30h, alertname: AgentTaskCostBudgetBurn, exp_alerts: []}
+
+  # The same 20% slow at five tasks a day: one slow task is already 20%, which says nothing yet. Neither window has
+  # enough tasks (about 5 in a day, 15 in three days), so no ticket.
+  - name: at five tasks a day one slow task does not raise a ticket
+    interval: 288m
+    input_series:
+      - series: 'agent_task_duration_seconds_count{agent_mode="demo",agent_arm="guarded",agent_outcome="executed",gen_ai_request_model="claude-opus-5-5",job="operator-agent",instance="a"}'
+        values: '0+1x15'
+      - series: 'agent_task_duration_seconds_bucket{agent_mode="demo",agent_arm="guarded",agent_outcome="executed",gen_ai_request_model="claude-opus-5-5",job="operator-agent",instance="a",le="120"}'
+        values: '0+0.8x15'
+    alert_rule_test:
+      - {eval_time: 30h, alertname: AgentTaskLatencyBudgetBurn, exp_alerts: []}
+      - {eval_time: 71h, alertname: AgentTaskLatencyBudgetBurn, exp_alerts: []}
+
+  # 8% slow at 48 tasks a day: always under the 1-day line (15%), over the 3-day one (5%) once 30 tasks are in (none
+  # at 12 hours, about 24 tasks; a ticket at 74 hours, about 144). The cost series next to it, 3% over $0.40, stays
+  # under both lines. The 120 s bucket written "120.0" counts the same as "120".
+  - name: a steady 8% raises the 3-day ticket, 3% raises nothing
+    interval: 30m
+    input_series:
+      - series: 'agent_task_duration_seconds_count{agent_mode="demo",agent_arm="guarded",agent_outcome="executed",gen_ai_request_model="claude-opus-5-5",job="operator-agent",instance="a"}'
+        values: '0+1x150'
+      - series: 'agent_task_duration_seconds_bucket{agent_mode="demo",agent_arm="guarded",agent_outcome="executed",gen_ai_request_model="claude-opus-5-5",job="operator-agent",instance="a",le="120.0"}'
+        values: '0+0.92x150'
+      - series: 'agent_task_cost_usd_count{agent_mode="demo",agent_arm="guarded",gen_ai_request_model="claude-opus-5-5",job="operator-agent",instance="a"}'
+        values: '0+1x150'
+      - series: 'agent_task_cost_usd_bucket{agent_mode="demo",agent_arm="guarded",gen_ai_request_model="claude-opus-5-5",job="operator-agent",instance="a",le="0.4"}'
+        values: '0+0.97x150'
+    alert_rule_test:
+      - {eval_time: 12h, alertname: AgentTaskLatencyBudgetBurn, exp_alerts: []}
+      - eval_time: 74h
+        alertname: AgentTaskLatencyBudgetBurn
+        exp_alerts:
+          - exp_labels: {severity: ticket, team: sf-sre, sloth_id: agent-task-latency, sloth_service: agent, sloth_slo: task-latency}
+            exp_annotations:
+              summary: "8% of claude-opus-5-5 demo tasks took more than 120 s; the task-latency SLO allows 5%."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/agent-task-latency.md
+      - {eval_time: 74h, alertname: AgentTaskCostBudgetBurn, exp_alerts: []}
+
+  # Task-cost SLO: 95% of claude-opus-5-5 demo tasks at most $0.40. 20% over it for a day at 48 tasks a day.
+  - name: 20% of opus tasks over $0.40 for a day raise the cost ticket
+    interval: 30m
+    input_series:
+      - series: 'agent_task_cost_usd_count{agent_mode="demo",agent_arm="guarded",gen_ai_request_model="claude-opus-5-5",job="operator-agent",instance="a"}'
+        values: '0+1x60'
+      - series: 'agent_task_cost_usd_bucket{agent_mode="demo",agent_arm="guarded",gen_ai_request_model="claude-opus-5-5",job="operator-agent",instance="a",le="0.4"}'
+        values: '0+0.8x60'
+    alert_rule_test:
+      - eval_time: 30h
+        alertname: AgentTaskCostBudgetBurn
+        exp_alerts:
+          - exp_labels: {severity: ticket, team: sf-sre, sloth_id: agent-task-cost, sloth_service: agent, sloth_slo: task-cost}
+            exp_annotations:
+              summary: "20% of claude-opus-5-5 demo tasks cost more than $0.40; the task-cost SLO allows 5%."
+              runbook_url: https://github.com/winthebest/shopflow/blob/main/docs/runbooks/agent-task-cost.md
+
+  # An idle agent (counters flat for 30 minutes) gives no 5m SLI sample instead of NaN, which would poison the 28-day
+  # average. A window with tasks gives a number.
+  - name: idle windows give no SLI sample, not NaN
+    interval: 1m
+    input_series:
+      - series: 'agent_task_duration_seconds_count{agent_mode="demo",agent_arm="guarded",agent_outcome="executed",gen_ai_request_model="claude-opus-5-5",job="operator-agent",instance="a"}'
+        values: '0+1x10 10x30'
+      - series: 'agent_task_duration_seconds_bucket{agent_mode="demo",agent_arm="guarded",agent_outcome="executed",gen_ai_request_model="claude-opus-5-5",job="operator-agent",instance="a",le="120"}'
+        values: '0+1x10 10x30'
+    promql_expr_test:
+      - expr: slo:sli_error:ratio_rate5m{sloth_id="agent-task-latency"}
+        eval_time: 8m
+        exp_samples:
+          - labels: 'slo:sli_error:ratio_rate5m{sloth_id="agent-task-latency",sloth_service="agent",sloth_slo="task-latency",sloth_window="5m",team="sf-sre"}'
+            value: 0
+      - expr: slo:sli_error:ratio_rate5m{sloth_id="agent-task-latency"}
+        eval_time: 30m
+        exp_samples: []

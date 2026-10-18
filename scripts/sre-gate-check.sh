@@ -87,6 +87,9 @@ data_up="$(count 'kube_namespace_status_phase{namespace="lakehouse", phase="Acti
 data_age="$(scalar 'time() - max(kube_namespace_created{namespace="lakehouse"})')"
 batch_age="$(scalar 'time() - max(kube_namespace_created{namespace="airflow"})')"
 exporter_age="$(scalar 'time() - max(process_start_time_seconds{job="freshness-exporter"})')"
+# The agent's demo deployment starts every counter at 0, so agent_tasks_total exists as soon as it runs.
+agent_demo="$(count 'agent_tasks_total{agent_mode="demo"}')"
+agent_opus_1d="$(count 'sum(increase(agent_task_duration_seconds_count{agent_mode="demo", gen_ai_request_model="claude-opus-5-5"}[1d])) > 0')"
 younger() { [[ -n "$1" ]] && awk -v a="$1" -v l="$2" 'BEGIN{exit !(a < l)}'; }  # age $1 (seconds) below $2
 # The SLI rules drop their first 900 s, but the series only appears at the next 1m rule evaluations after that: a
 # check at 900–1020 s would find nothing yet. So the check waits two evaluations longer than the rules.
@@ -101,8 +104,13 @@ not_counted() {  # prints why service $1 has no SLI samples by design, nothing w
       if [[ -z "$batch_age" ]]; then echo "profile batch not up (namespace airflow absent)"
       elif younger "$batch_age" 7200; then echo "profile batch up for less than 2h (first dbt run)"
       elif younger "$exporter_age" "$sli_guard"; then echo "freshness exporter (re)started less than 17 minutes ago (15-minute SLI guard + 2 rule evaluations)"; fi ;;
+    agent)
+      if [[ "${agent_demo:-0}" -eq 0 ]]; then echo "no agent demo running (no agent_tasks_total with agent_mode=demo)"
+      elif [[ "${agent_opus_1d:-0}" -eq 0 ]]; then echo "no claude-opus-5-5 demo task in the last day (the agent SLOs cover that model only)"; fi ;;
   esac
 }
+# The window whose SLI sample shows the SLO is computed. A few dozen agent tasks a day leave most 5m windows empty.
+sli_window() { case "$1" in agent) echo 1d ;; *) echo 5m ;; esac; }
 
 # Every Sloth spec in slo/ must have SLI samples (one per SLO). A check that finds nothing to check fails: without
 # specs (a copy of this script without slo/) or with an unreadable one, the comparison below would pass on nothing.
@@ -116,11 +124,12 @@ for spec in ${specs[@]+"${specs[@]}"}; do
   fi
   why="$(not_counted "$svc")"
   if [[ -n "$why" ]]; then skip "SLO $svc has SLI data" "$why"; continue; fi
-  got="$(count "slo:sli_error:ratio_rate5m{sloth_service=\"$svc\"}")"
-  if [[ "${got:-0}" -ge "$want" ]]; then pass "SLO $svc has SLI data" "$got/$want SLOs"
+  win="$(sli_window "$svc")"
+  got="$(count "slo:sli_error:ratio_rate$win{sloth_service=\"$svc\"}")"
+  if [[ "${got:-0}" -ge "$want" ]]; then pass "SLO $svc has SLI data" "$got/$want SLOs (${win} window)"
   elif [[ "$svc" == checkout ]] && awk -v t="${traffic:-0}" 'BEGIN{exit !(t == 0)}'; then
     fail "SLO $svc has SLI data" "$got/$want: no gateway traffic in the last 5 minutes; re-run while make app-loadtest runs"
-  else fail "SLO $svc has SLI data" "$got/$want SLOs with a 5m sample (SLI source missing?)"; fi
+  else fail "SLO $svc has SLI data" "$got/$want SLOs with a ${win} sample (SLI source missing?)"; fi
 done
 
 # AirflowDagRunFailed reads cnpg_airflow_dag_run_last_failed, one series per DAG with a finished run: with profile
