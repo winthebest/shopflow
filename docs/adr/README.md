@@ -29,6 +29,7 @@ orchestrator adds rows when merging a PR that contains ADRs.
 | [0106](0106-genai-tracing.md) | Agent telemetry: GenAI spans and agent metrics from one wrapper, content-free by allowlist | Accepted |
 | [0107](0107-eval-independent-scorer.md) | Eval grading: an independent scorer judges what happened, from the harness's evidence | Accepted |
 | [0108](0108-eval-replay-and-golden.md) | Eval CI without an LLM: recorded LLM turns replay from cassettes, guard decisions check against a golden set | Accepted |
+| [0109](0109-guard-pipeline-and-interfaces.md) | The guard: a deterministic pipeline from proposal to verified write, and its interfaces with lakeops | Proposed |
 | [0200](0200-k3d-over-kind.md) | Local Kubernetes on k3d (not kind or minikube) | Accepted |
 | [0201](0201-argocd-over-flux.md) | GitOps with Argo CD app-of-apps (not Flux) | Accepted |
 | [0202](0202-gateway-api-envoy-gateway.md) | Edge: Gateway API with Envoy Gateway, TLS from cert-manager | Accepted |
