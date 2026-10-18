@@ -4,7 +4,8 @@
 - Date: 2026-10-18
 - Lane: sf-cloud
 - Supersedes: 0505 (Graviton spot nodes), 0509 (CI cannot apply; OIDC roles scoped to one workflow)
-- Amends: 0501 (the two reapers), 0504 (the spot wording), 0500 and 0502 (the reaper that holds the state lock)
+- Amends: 0501 (the two reapers), 0504 (the spot wording), 0500 and 0502 (the reaper that holds the state lock),
+  0510 (the Budget Action moves to a monthly budget)
 
 ## Context
 
@@ -62,7 +63,14 @@ confirmed:
     change to the sweep. `scripts/cloud-reap.sh` stays as the laptop tool for a full layer-2 destroy under the state lock.
 - **Third hard stop: the project spend limit** ($20/month, the user's setting in AWS Settings). It is gross before
   credits and pre-tax; it pauses the whole project at the limit and deletes the data after 90 days unresolved.
-  Monthly budget thresholds under it are proposed in `docs/cost.md`; the user decides.
+- **Budgets under the spend limit** (user decision, 2026-10-18 (Approval 1)):
+  - a MONTHLY budget `shopflow-monthly` ($20, mirroring the limit) emails at 40% actual ($8) and 75% forecast ($15);
+  - its Budget Action attaches `shopflow-budget-deny` at 60% actual ($12), so Budgets' 8–12 h lag still lands under
+    the limit;
+  - the cumulative `shopflow-total` ($100) keeps its emails at $10/$20/forecast $25, and its $25 action is removed:
+    it would fire after the monthly limit in month one and $5 into month two;
+  - AWS does not document whether a new month detaches a policy the action applied, so cloud-up checks the
+    operator role for `shopflow-budget-deny` as well as the action status.
 - **Identity:**
   - admin = an `aws login` session (role `role/managed/AccountFullAccessRole`), used only for layer 0;
   - operator = `shopflow-operator`, assumed from that session (role chaining, 1 h);

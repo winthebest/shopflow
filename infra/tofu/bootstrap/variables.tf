@@ -37,10 +37,16 @@ variable "budget_end" {
   default     = "2027-10-01_00:00"
 }
 
-variable "action_threshold_usd" {
-  description = "Actual spend at which the Budget Action blocks new capacity. Raise only after reviewing docs/cost.md."
+variable "monthly_limit_usd" {
+  description = "Limit of the monthly budget: mirrors the account's monthly spend limit (AWS Settings, the user's setting, not managed here). Change both together."
   type        = number
-  default     = 25
+  default     = 20
+}
+
+variable "action_threshold_percent" {
+  description = "Actual spend this month, in percent of monthly_limit_usd, at which the Budget Action blocks new capacity. Change only after reviewing docs/cost.md."
+  type        = number
+  default     = 60
 }
 
 variable "anomaly_monitor_arn" {

@@ -34,12 +34,12 @@ Expected spend for the first session: about **$2 for 4 hours** (`core,obs-lite`,
 ≈ $0.5/month.
 
 Guardrails live from step 2:
-- emails at $10 and $20 actual and $25 forecast (cumulative);
-- the Budget Action at $25 blocks new capacity;
+- the monthly budget (`shopflow-monthly`, $20): emails at 40% actual ($8) and 75% forecast ($15); the Budget Action
+  at 60% ($12) blocks new capacity;
+- the cumulative budget (`shopflow-total`, $100): emails at $10 and $20 actual and $25 forecast;
 - the lease (4 h by default), with the hourly sweep and the per-session reaper, is the real stop;
 - above them sits the user's **$20/month spend limit**: see
-  [When the spend limit is near](#when-the-spend-limit-is-near), and the monthly thresholds proposed in
-  `docs/cost.md`.
+  [When the spend limit is near](#when-the-spend-limit-is-near).
 
 Prerequisites from other lanes, all in place: the root-app hook with the session parameters (ADR 0206), the
 `profiles-aws` trees (`core`, `obs`, `obs-lite`), the `aws` overlays of their components (the Envoy Gateway Service
@@ -99,7 +99,7 @@ export AWS_PROFILE=shopflow-admin AWS_PAGER=""
 aws sts get-caller-identity --query Arn --output text      # .../assumed-role/AccountFullAccessRole/...
 export ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 aws s3api head-bucket --bucket "shopflow-tfstate-$ACCOUNT_ID" 2>&1 | grep -q 404 && echo "state bucket: free"
-aws budgets describe-budgets --account-id "$ACCOUNT_ID" --query 'Budgets[].BudgetName' --output text  # no shopflow-total
+aws budgets describe-budgets --account-id "$ACCOUNT_ID" --query 'Budgets[].BudgetName' --output text  # no shopflow-* budget yet
 aws ce get-anomaly-monitors --query 'AnomalyMonitors[].[MonitorArn,MonitorType,MonitorDimension]' --output text
 aws eks describe-cluster-versions --region ap-southeast-2 --cluster-versions 1.35 --query 'clusterVersions[0].versionStatus' --output text  # STANDARD_SUPPORT
 aws eks describe-addon-versions --region ap-southeast-2 --addon-name metrics-server --kubernetes-version 1.35 \
@@ -123,7 +123,8 @@ tofu plan -input=false -out=l0.plan
 Expected: only additions, 0 to change, 0 to destroy. The plan should contain:
 - the state and data buckets;
 - the boundary and the IAM roles (operator, EKS cluster/node, pod, ESO, reaper Lambda/scheduler, budget action);
-- the Budget with its action, the anomaly monitor or subscription, the SNS topic and its email subscription;
+- the budgets `shopflow-total` and `shopflow-monthly`, the Budget Action on the monthly one, the anomaly monitor or
+  subscription, the SNS topic and its email subscription;
 - the Glue databases;
 - the reaper Lambda with its error alarm, the schedule group, the hourly sweep, the dead-letter queue and its alarm.
 
@@ -166,7 +167,7 @@ cd -
       ApproximateNumberOfMessages` is 0, and the alarms `shopflow-reaper-errors` and `shopflow-reaper-undelivered`
       are `OK`.
 - [ ] Budget Action in standby: `aws budgets describe-budget-actions-for-budget --account-id $ACCOUNT_ID
-      --budget-name shopflow-total --query 'Actions[].Status'`.
+      --budget-name shopflow-monthly --query 'Actions[].Status'` is `STANDBY`.
 - [ ] Cost Anomaly Detection in a member account: the monitor and the subscription exist (`aws ce
       get-anomaly-monitors`, `aws ce get-anomaly-subscriptions`).
 - [ ] Cost allocation tags: `aws ce list-cost-allocation-tags --tag-keys project env`. Leave
@@ -356,7 +357,7 @@ What to do:
 
 1. **`make cloud-down` from the laptop is the guaranteed path.** None of those SCPs deny `Delete*`, `ssm:PutParameter`
    or `s3:PutObject`, so the final backup, the evidence export and the destroy still work. Run it at the first
-   spend-limit email (50%), not at the limit.
+   warning, not at the limit: normally our monthly budget's 40% email ($8), at the latest AWS's 50% email.
 2. The lease sweep should have acted long before: the lease is 4 h, so a forgotten session costs ~$2, not $20.
    If a session is still running near the limit, the sweep has failed. Check the Lambda error alarm and the
    `shopflow-reaper-undelivered` alarm (an invocation denied by the spend-limit SCP lands in the dead-letter queue).
@@ -467,5 +468,5 @@ Verify at Approval 1 (needs a valid `aws login` session; the probe session has e
 | `make cloud-reap`: "state lock is old" | a run died holding `cluster/terraform.tfstate.tflock`; confirm nothing runs, delete the object |
 | cloud-up: "hourly reaper sweep is missing" / "is DISABLED" | layer 0 not applied, or the schedule was disabled: apply layer 0 or re-enable `shopflow/shopflow-reaper-sweep` before any session |
 | Spend-limit email (50%/75%/90%) or an access denied on `lambda:InvokeFunction` / `eks:Create*` | the spend limit is near: `make cloud-down` now, see [When the spend limit is near](#when-the-spend-limit-is-near) |
-| cloud-up: "Budget Action has fired" or "shopflow-budget-deny is attached" | spend passed $25: review `docs/cost.md`, raise `action_threshold_usd` in layer 0, then reverse the action in the Budgets console (Action history → Reverse), which detaches the policy, and reset it |
+| cloud-up: "Budget Action has fired" or "shopflow-budget-deny is attached" | this month passed 60% of $20 ($12): review `docs/cost.md`. Then wait for next month, or deliberately reverse the action in the Budgets console (Action history → Reverse), which detaches the policy. If the policy is still attached in a new month, reverse it the same way |
 | cloud-up: EKS version not in standard support | bump `kubernetes_version` in `infra/cloud-contract.json` |

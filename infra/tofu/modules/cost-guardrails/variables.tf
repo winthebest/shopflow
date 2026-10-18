@@ -24,13 +24,13 @@ variable "permissions_boundary_arn" {
 }
 
 variable "budget_limit_usd" {
-  description = "Budget limit for the whole budget period (the project credit cap)."
+  description = "Limit of the cumulative budget for the whole project window (the project cap)."
   type        = number
   default     = 100
 }
 
 variable "budget_time_unit" {
-  description = "Budget period. CUSTOM covers the whole project window (budget_start..budget_end) without resetting, so the USD thresholds are cumulative; MONTHLY/QUARTERLY/ANNUALLY would reset them mid-project."
+  description = "Period of the cumulative budget. CUSTOM covers the whole project window (budget_start..budget_end) without resetting, so its USD thresholds are cumulative; the monthly budget is separate."
   type        = string
   default     = "CUSTOM"
 
@@ -41,33 +41,56 @@ variable "budget_time_unit" {
 }
 
 variable "budget_start" {
-  description = "Start of the budget window, format YYYY-MM-DD_hh:mm (UTC)."
+  description = "Start of both budgets, format YYYY-MM-DD_hh:mm (UTC)."
   type        = string
   default     = "2026-10-01_00:00"
 }
 
 variable "budget_end" {
-  description = "End of the budget window (UTC). AWS deletes the budget after this date, so keep it past the credit expiry (12 months after account creation once on the Paid plan)."
+  description = "End of both budgets (UTC). AWS deletes a budget after this date, so keep it past the credit expiry (12 months after account creation once on the Paid plan)."
   type        = string
   default     = "2027-10-01_00:00"
 }
 
 variable "actual_alert_thresholds_usd" {
-  description = "Actual (not forecast) spend, in USD, that triggers an email."
+  description = "Cumulative actual (not forecast) spend, in USD, that triggers an email."
   type        = list(number)
   default     = [10, 20]
 }
 
 variable "forecast_alert_threshold_usd" {
-  description = "Forecasted spend, in USD, that triggers an email."
+  description = "Cumulative forecasted spend, in USD, that triggers an email."
   type        = number
   default     = 25
 }
 
-variable "action_threshold_usd" {
-  description = "Actual spend, in USD, at which the Budget Action attaches the deny policy. A deliberate checkpoint: raise it only after reviewing docs/cost.md."
+variable "monthly_limit_usd" {
+  description = "Limit of the monthly budget. Mirrors the account's monthly spend limit, which is set in AWS Settings and not managed here."
   type        = number
-  default     = 25
+  default     = 20
+}
+
+variable "monthly_actual_alert_percent" {
+  description = "Actual spend this month, in percent of monthly_limit_usd, that triggers an email."
+  type        = number
+  default     = 40
+}
+
+variable "monthly_forecast_alert_percent" {
+  description = "Forecasted spend this month, in percent of monthly_limit_usd, that triggers an email."
+  type        = number
+  default     = 75
+}
+
+variable "action_threshold_percent" {
+  description = "Actual spend this month, in percent of monthly_limit_usd, at which the Budget Action attaches the deny policy. Budgets lag 8-12 h, so keep it low enough that the lag stays under the limit. A deliberate checkpoint: change it only after reviewing docs/cost.md."
+  type        = number
+  default     = 60
+
+  validation {
+    condition     = var.action_threshold_percent > 0 && var.action_threshold_percent < 100
+    error_message = "action_threshold_percent must fire before the monthly limit (0-100, exclusive)."
+  }
 }
 
 variable "action_target_role_names" {
