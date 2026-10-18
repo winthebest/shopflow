@@ -116,6 +116,25 @@ def check_target_catalog(catalog: str) -> None:
         )
 
 
+_RUN_ID = re.compile(r"[a-z][a-z0-9_]{0,31}")
+
+
+def active_base_catalog(settings: Settings | None = None) -> str | None:
+    """The active baseline run's catalog, `lab_base_<run>` (written as baseline_writer), or None when no run is
+    active. `make lab-base RUN=<run>` activates one; it counts once Trino has loaded its catalog, when
+    $LAB_RUN_DIR/base/active and base/loaded name the same run (lab/stack.sh)."""
+    base = (settings or Settings.from_env()).run_dir / "base"
+    active = (base / "active").read_text().strip() if (base / "active").is_file() else ""
+    if not active:
+        return None
+    if not _RUN_ID.fullmatch(active) or active.startswith("ro_"):
+        raise LakeGuardError(f"{base / 'active'} names {active!r}, not a baseline run id")
+    loaded = (base / "loaded").read_text().strip() if (base / "loaded").is_file() else ""
+    if loaded != active:
+        raise LakeGuardError(f"baseline run {active} is set but Trino has not loaded it: make lab-base RUN={active}")
+    return f"lab_base_{active}"
+
+
 def check_location(location: str) -> None:
     if not LAB_LOCATION.fullmatch(location):
         raise LakeGuardError(f"location {location}: lab tables are stored under s3://lab-*/")

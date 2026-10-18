@@ -165,3 +165,22 @@ def test_a_rendered_baseline_catalog_passes(tmp_path: Path):
     read_only = read_properties(tmp_path / "lab_base_ro_r20261018_1.properties")
     assert read_only["iceberg.security"] == "READ_ONLY"
     assert read_only["iceberg.rest-catalog.oauth2.credential"] == "${ENV:POLARIS_LAB_BASE_RO_R20261018_1_CREDENTIAL}"
+
+
+def test_the_active_baseline_catalog_is_the_run_trino_has_loaded(tmp_path):
+    from urllib.parse import urlsplit
+
+    from lab.guard import active_base_catalog
+    from lab.trino_client import Settings
+
+    settings = Settings(urlsplit("https://127.0.0.1:28443"), tmp_path, tmp_path / "ca.pem", tmp_path / "passwords")
+    assert active_base_catalog(settings) is None
+    (tmp_path / "base").mkdir()
+    (tmp_path / "base/active").write_text("r1\n")
+    with pytest.raises(LakeGuardError, match="not loaded it: make lab-base RUN=r1"):
+        active_base_catalog(settings)
+    (tmp_path / "base/loaded").write_text("r1\n")
+    assert active_base_catalog(settings) == "lab_base_r1"
+    (tmp_path / "base/active").write_text("ro_x\n")
+    with pytest.raises(LakeGuardError, match="not a baseline run id"):
+        active_base_catalog(settings)

@@ -19,7 +19,8 @@ lab project carries (`lab/tests/test_agent_pins.py`).
 - A scenario is one entry of the split's file; the only key the runner requires is a unique `id`. The files are
   `lab/scenarios/<exp>/{dev.yaml,holdout.sops.yaml}`, or, when another lane owns them, in the directory under `evals/`
   that `lab/scenarios/<exp>/location` names (e.g. `evals/datasets/operator`).
-- `context` carries `experiment`, `split`, `run_id`, `seed` and `timescale`, and gives:
+- `context` carries `experiment`, `split`, `run_id`, `seed` and `timescale`; `base_catalog` names the active baseline
+  run's catalog (`lab_base_<run>`, from `make lab-base RUN=<run>`) or is None. It gives:
   - `session(identity)`: an arm's guarded, logged, time-scaled session;
   - `capture(label, catalog, namespace)`: the state of a namespace's tables, read as `observer`.
 - `Row(arm, case, metric, value, unit, iteration)` is one measured value.
