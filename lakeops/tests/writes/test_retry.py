@@ -28,6 +28,7 @@ class FakeConnection:
         self.attempts, self.states, self.snapshots = list(attempts), list(states or []), list(snapshots or [])
         self.sent: list[str] = []
         self.cancelled: list[str | None] = []
+        self.order: list[str] = []  # every call, in order: write, cancel, state, snapshots
         self.polls = 0
 
     def cursor(self) -> "FakeCursor":
@@ -40,6 +41,7 @@ class FakeCursor:
 
     def execute(self, statement: str) -> None:
         if statement.startswith("SELECT state FROM system.runtime.queries"):
+            self.conn.order.append("state")
             self.conn.polls += 1
             state = self.conn.states.pop(0) if self.conn.states else None
             if isinstance(state, BaseException):
@@ -47,11 +49,13 @@ class FakeCursor:
             self._rows = [[state]] if state else []
             return
         if "$snapshots" in statement:
+            self.conn.order.append("snapshots")
             found = self.conn.snapshots.pop(0)  # True / False: whether the attempt's snapshot is there
             if isinstance(found, BaseException):
                 raise found
             self._rows = [[int(found)]]
             return
+        self.conn.order.append("write")
         self.conn.sent.append(statement)
         self.query_id, error = self.conn.attempts.pop(0)
         if error is not None:
@@ -62,6 +66,7 @@ class FakeCursor:
         return self._rows
 
     def cancel(self) -> None:
+        self.conn.order.append("cancel")
         self.conn.cancelled.append(self.query_id)
 
 
@@ -196,3 +201,12 @@ def test_unreadable_snapshots_fall_back_to_the_query_state():
     )
     result, _ = run(conn, table=TABLE)
     assert (result.state, result.attempts, result.settled) == ("committed", 2, ("FAILED",))
+
+
+def test_snapshots_are_read_only_after_the_attempt_is_terminal():
+    """A write can commit while its query still reads RUNNING (q5): reading the snapshots before the attempt is over
+    could miss a late commit. So: cancel, wait until terminal, and only then look the query id up."""
+    conn = FakeConnection([("q1", TIMEOUT)], states=["RUNNING", "RUNNING", "FAILED"], snapshots=[True])
+    result, _ = run(conn, table=TABLE)
+    assert conn.order == ["write", "cancel", "state", "state", "state", "snapshots"]
+    assert (result.state, result.settled) == ("committed", ("FAILED:in-snapshots",))

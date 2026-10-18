@@ -178,6 +178,20 @@ Each oracle rule was also removed in turn, and each removal made the correspondi
   on dev and frozen before held-out. It is correct when two things hold: every statement is idempotent, and no two
   attempts of one write run at once. Then a write lands at most once, whatever the errors say.
 
+### Which method is frozen (decided before the next dev pass)
+
+The next dev pass runs baseline, `method` and `method-resolve` on every dev cell: at least 7 runs per arm and cell,
+in ABBA order, after 10 warm-up runs. Then:
+
+1. A variant is eligible only if every one of its runs has LostUpdate = 0, WrongFinalRows = 0 and Duplicates = 0.
+2. Of the eligible variants, the one with the higher median CCT in more dev cells is frozen. A cell counts only where
+   the two variants' ranges do not overlap.
+3. If neither variant wins more cells, the simpler `method` is frozen: one statement form, no snapshot lookups.
+
+The freeze also fixes the variant's RetryPolicy parameters, the scenario parameters, and the definite-fail
+allowlist. The allowlist holds the error classes whose ops were absent in every graded case on dev. The baseline is
+the comparison and is never selected.
+
 ## Contention levels and the dev / held-out split
 
 | Level | Counters keys | Event partitions | Maintenance |

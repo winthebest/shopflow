@@ -147,7 +147,9 @@ def write(
                 state = "FAILED"
             elif query_id:
                 state, seen = settle(conn, cur, query_id, policy, sleep=sleep, clock=clock)
-                over = state == "FAILED" or (state is None and seen == "not-found")  # not-found: it can't still run
+                # Only once the attempt is over: a write can commit while its query still reads RUNNING, so a snapshot
+                # lookup before that could miss a late commit. Not found in the history means it can't still run.
+                over = state == "FAILED" or (state is None and seen == "not-found")
                 found = _lookup(conn, table, query_id) if table and over else None
                 settled.append(
                     (state or f"unsettled:{seen}") + {True: ":in-snapshots", False: ":not-in-snapshots"}.get(found, "")
