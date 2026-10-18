@@ -6,6 +6,7 @@ scenarios in `lab/scenarios/<exp>/` and its results in `lab/results/<exp>/`. How
 
 | Experiment | Topic (brief) | Code | Status |
 |---|---|---|---|
+| [E1](e1-agent-safety.md) | 1. Guarded lakehouse operator agent | `lab/experiments/agent_safety/` (eval loop, scorer and arms in `evals/`) | scoring fixed; dev pending (baseline arm only); guarded arm pending |
 | `e0_toy` | none: exercises the protocol's mechanics, with known answers | `lab/experiments/e0_toy/` | mechanics tested (`lab/tests/test_runner.py`) |
 | [E5](e5-retention-policy-design.md) | 5. Retention policy per table profile | `lab/experiments/e5_retention/` (scenario check; simulator after the first measurements) | design fixed, nothing measured |
 | [E7](e7-concurrent-writers.md) | 7. Concurrent writers | `lab/experiments/e7_concurrency/` | design fixed, no results yet |
