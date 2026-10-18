@@ -11,7 +11,10 @@ scenarios in `lab/scenarios/<exp>/` and its results in `lab/results/<exp>/`. How
 
 An experiment plugs into the runner with one function, in `lab/experiments/<exp>/experiment.py`:
 `run(scenarios: list[dict], context: lab.runner.RunContext) -> list[lab.results.Row]`. `make lab-run EXP=<exp>
-SPLIT=dev|holdout` calls it, with the scenarios of the split, and writes the result file.
+SPLIT=dev|holdout` calls it, with the scenarios of the split, and writes the result file. The file is loaded as
+module `<exp>.experiment` of package `<exp>` (`lab/experiments/<exp>/`), so its own modules import relatively or as
+`<exp>.…`. The repository root is on the path too: `agent.…` and `evals.…` import, on the agent's pins, which the
+lab project carries (`lab/tests/test_agent_pins.py`).
 
 - A scenario is one entry of the split's file; the only key the runner requires is a unique `id`. The files are
   `lab/scenarios/<exp>/{dev.yaml,holdout.sops.yaml}`, or, when another lane owns them, in the directory under `evals/`

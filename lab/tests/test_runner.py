@@ -81,12 +81,14 @@ def add_holdout(repo: Path, recipient: str, tmp_path: Path) -> None:
     git(repo, "commit", "-q", "-m", "held-out")
 
 
-def frozen(repo: Path):
-    """A freeze, committed and pushed as the held-out runner requires."""
+def frozen(repo: Path, dev_run: bool = True):
+    """A freeze, committed and pushed, and a dev run at it: everything the held-out runner requires first."""
     result = freeze.take("e0_toy", repo)
     git(repo, "add", "lab/freezes")
     git(repo, "commit", "-q", "-m", "freeze")
     git(repo, "push", "-q")
+    if dev_run:
+        runner.run("e0_toy", "dev", root=repo, results_dir=repo.parent / "dev-results")
     return result
 
 
@@ -278,3 +280,46 @@ def test_a_holdout_is_refused_when_the_remote_cannot_be_reached(repo: Path, tmp_
     with pytest.raises(runner.RunRefused, match="cannot fetch"):
         runner.run("e0_toy", "holdout", root=repo, results_dir=tmp_path / "results")
     assert runner.ledger("e0_toy", repo) == []
+
+
+def test_a_holdout_needs_a_dev_run_at_its_freeze(repo: Path, tmp_path: Path):
+    runner.run("e0_toy", "dev", root=repo, results_dir=tmp_path / "results")  # before any freeze: proves nothing
+    taken = frozen(repo, dev_run=False)
+    with pytest.raises(runner.RunRefused, match="no dev run finished with the code at its freeze"):
+        runner.run("e0_toy", "holdout", root=repo, results_dir=tmp_path / "results")
+    assert runner.ledger("e0_toy", repo) == []
+    runner.run("e0_toy", "dev", root=repo, results_dir=tmp_path / "results")
+    assert [e["freeze_hash"] for e in freeze.dev_runs("e0_toy", repo)] == [taken.hash]
+    code = repo / "lab/experiments/e0_toy/experiment.py"
+    code.write_text(code.read_text() + "\n# a change after the freeze\n")
+    runner.run("e0_toy", "dev", root=repo, results_dir=tmp_path / "results")  # dirty code: not recorded
+    assert len(freeze.dev_runs("e0_toy", repo)) == 1
+
+
+def test_an_experiment_package_can_use_relative_imports(repo: Path, tmp_path: Path):
+    package = repo / "lab/experiments/e1_pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "helper.py").write_text("ANSWER = 42\n")
+    (package / "experiment.py").write_text(
+        "from lab.results import Row\n\nfrom .helper import ANSWER\n\n\n"
+        "def run(scenarios, context):\n"
+        "    return [Row('arm', s['id'], 'answer', float(ANSWER), 'n') for s in scenarios]\n"
+    )
+    (repo / "lab/scenarios/e1_pkg").mkdir()
+    (repo / "lab/scenarios/e1_pkg/dev.yaml").write_text("scenarios:\n  - {id: a}\n")
+    path = runner.run("e1_pkg", "dev", root=repo, results_dir=tmp_path / "results")
+    assert [r["value"] for r in read_run(path)[0]] == [42.0]
+
+
+def test_an_experiment_cannot_shadow_the_standard_library(repo: Path):
+    (repo / "lab/experiments/json").mkdir()
+    (repo / "lab/experiments/json/experiment.py").write_text("def run(s, c):\n    return []\n")
+    with pytest.raises(runner.RunRefused, match="standard library"):
+        runner.load_experiment("json", repo)
+
+
+def test_the_repository_experiments_load_with_their_imports():
+    """E7 imports its own modules relatively and the agent's packages come from the repository root."""
+    for experiment in ("e0_toy", "e7_concurrency"):
+        assert callable(runner.load_experiment(experiment))
