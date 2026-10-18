@@ -84,10 +84,12 @@ def test_the_floors_hold_in_simulated_days(lab: Settings):
         session.execute(f"ALTER TABLE {table} EXECUTE expire_snapshots(retention_threshold => '7d')")
         with pytest.raises(trino.exceptions.TrinoQueryError, match="shorter than the minimum retention"):
             session.execute(f"ALTER TABLE {table} EXECUTE expire_snapshots(retention_threshold => '6d')")
-        assert [run for _, run in session.statements if "EXECUTE" in run] == [
+        assert [r.sql_run for r in session.statements if "EXECUTE" in r.sql_run] == [
             f"ALTER TABLE {table} EXECUTE expire_snapshots(retention_threshold => '7m')",
             f"ALTER TABLE {table} EXECUTE expire_snapshots(retention_threshold => '6m')",
         ]
+        assert [r.state for r in session.statements if "EXECUTE" in r.sql_run] == ["FINISHED", "FAILED"]
+        assert all(r.identity == "executor" and r.query_id for r in session.statements)
     finally:
         session.execute(f"DROP TABLE {table}")
         session.execute("DROP SCHEMA lab_sbx.time_probe")

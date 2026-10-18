@@ -1,7 +1,7 @@
 # Lakehouse lab targets (docs/contracts/environment.md: `lab-*`, sf-data). The stack is docker compose, outside k3d:
 # lab/compose.yml through lab/stack.sh (docs/adr/0419-lab-stack-separate-from-platform.md).
 
-.PHONY: lab-up lab-down lab-reset lab-base lab-base-drop lab-py lab-mem lab-test lab-check
+.PHONY: lab-up lab-down lab-reset lab-base lab-base-drop lab-py lab-mem lab-test lab-check lab-report
 
 lab-up: ## Start the lab stack: Trino https://127.0.0.1:28443, OTLP 127.0.0.1:24317/24318 (limits 4.9 GiB)
 	lab/stack.sh up
@@ -36,3 +36,15 @@ lab-check: ## Lint lab/ and lakeops/ and run their tests that need no stack (CI)
 	cd lakeops && uv run --frozen ruff check . && uv run --frozen ruff format --check . \
 		&& { uv run --frozen pytest -m "not lab"; status=$$?; [ $$status -eq 0 ] || [ $$status -eq 5 ]; }
 	cd lab && uv run --frozen ruff check . && uv run --frozen ruff format --check . && uv run --frozen pytest -m "not lab"
+
+LAB_RESULTS_DIR ?= $(CURDIR)/lab/results
+lab-report: ## README tables and chart of one split's results (EXP=…, SPLIT=dev|holdout, METRIC=…, BASELINE=arm, NOISE_FLOOR=…)
+	@test -n "$(EXP)" && test -n "$(SPLIT)" && test -n "$(METRIC)" \
+		|| { echo "usage: make lab-report EXP=<experiment> SPLIT=dev|holdout METRIC=<metric>"; exit 2; }
+	cd lab && uv run --frozen python -m lab.report $(LAB_RESULTS_DIR)/$(EXP)/*.parquet --metric $(METRIC) --split $(SPLIT) \
+		$(if $(BASELINE),--baseline $(BASELINE)) --noise-floor $(or $(NOISE_FLOOR),0) \
+		--out $(LAB_RESULTS_DIR)/$(EXP)/report/$(SPLIT)
+
+.PHONY: lab-noise
+lab-noise: ## Measure the lab's noise floor: A/A comparisons of two queries (RUNS=25), written to lab/results/e0_noise
+	cd lab && uv run --frozen python -m lab.noise $(if $(RUNS),--runs $(RUNS))
