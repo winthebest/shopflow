@@ -203,6 +203,16 @@ can be compacted while writers append to the current one.
    - Each run keeps its op logs and `result.json` in its own directory. Rows go to `lab/results/` through the lab's
      `results` module once that exists.
 
+Where it runs:
+- **Dev:** the whole run goes inside the lab network, `lab/stack.sh py exp -- python -m e7_concurrency.dev …`.
+- **Held-out:** only through the lab runner (`make lab-run EXP=e7_concurrency SPLIT=holdout`), which checks the
+  freeze and the ledger on the host. Its adapter (`experiment.py`) then starts one `py` container per (scenario, arm,
+  iteration), with the scenario on stdin, and reads back that run's `result.json`.
+- The container mounts the working-tree bytes of `lab/` and `lakeops/` as they are when it starts, which are the bytes
+  the freeze check hashed just before.
+- The writers' Trino statements go through their own connections, so they are not in the harness's
+  `statements.jsonl`. The op logs are the record of what each writer sent.
+
 Fault injection for the lab self-tests uses the same runner (`Kill`). Each configuration stays under about 10
 minutes.
 
@@ -243,6 +253,8 @@ commit, retried then committed, one definite-fail, or an anomaly.
     reported.
 - **Single-node Trino** with 2 CPUs and a 3 GiB limit (`lab/compose.yml`). Parallelism tops out early, so the results
   are not extrapolated to a cluster.
+- **The writers share one `py` container**, fixed at 2 CPUs and 2 GiB, beside Trino's own 2 CPUs. Both arms run the
+  same way, but a client-side CPU limit can cap the throughput of either arm at high writer counts.
 - **Unknown ops weaken the oracle.** Above 5% unknown, the client timeout is raised and the rate is reported.
 - **Trino may serialise commits itself**, so no conflicts appear. That is reported as a finding, and contention is
   raised with the direct PyIceberg writers.
