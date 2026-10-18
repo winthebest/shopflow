@@ -19,5 +19,7 @@ configMapGenerator:
     files: [dashboards/shopflow-use-node.json]
   - name: dashboard-shopflow-slo-checkout
     files: [dashboards/shopflow-slo-checkout.json]
+  - name: dashboard-shopflow-agent
+    files: [dashboards/shopflow-agent.json]
   - name: dashboard-cnpg-cluster
     files: [dashboards/cnpg-cluster.json]

@@ -1,0 +1,57 @@
+# Operator agent SLOs (source of truth). `make sre-slo` turns this into
+# deploy/platform/slo/base/agent-slo.prometheusrule.yaml with Sloth (docs/adr/0300-slo-tooling-sloth.md).
+# Definitions, targets and why the alerts are hand-written: docs/slo/agent.md.
+#
+# SLI source: the agent's own histograms (agent/instruments.py), exported over OTLP by the demo deployment through the
+# gateway Collector. Only agent_mode="demo" reaches this Prometheus: eval runs go to the lab Collector, and their
+# results (false-block rate included) are the scorer's report.
+# Both SLOs cover gen_ai_request_model="claude-opus-5-5" only: the local qwen3:8b is far slower and costs nothing, and
+# gets a latency target once an eval has measured it. The model is the configured one, which a fallback does not move.
+# `total > 0`: most windows hold no task at all (a few dozen demo tasks a day), and 0/0 would put NaN into the 28-day
+# average. The 120 s and $0.40 thresholds are explicit bucket boundaries; `le` also accepts the "120.0" spelling.
+# Sloth's page and ticket alerts are disabled: 5m/1h burn rates mean nothing at this volume, so the tickets (with a
+# minimum task count) are in deploy/platform/slo/base/agent-alerts.prometheusrule.yaml, next to the unsafe-action page.
+apiVersion: sloth.slok.dev/v1
+kind: PrometheusServiceLevel
+metadata:
+  name: agent
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: shopflow
+spec:
+  service: agent
+  labels:
+    team: sf-sre
+  slos:
+    - name: task-latency
+      objective: 95
+      description: "95% of claude-opus-5-5 demo tasks reach their final decision in under 120 s (approval waits excluded)."
+      sli:
+        events:
+          errorQuery: |
+            sum(rate(agent_task_duration_seconds_count{agent_mode="demo",gen_ai_request_model="claude-opus-5-5"}[{{.window}}]))
+            -
+            sum(rate(agent_task_duration_seconds_bucket{agent_mode="demo",gen_ai_request_model="claude-opus-5-5",le=~"120|120\\.0"}[{{.window}}]))
+          totalQuery: |
+            sum(rate(agent_task_duration_seconds_count{agent_mode="demo",gen_ai_request_model="claude-opus-5-5"}[{{.window}}])) > 0
+      alerting:
+        pageAlert:
+          disable: true
+        ticketAlert:
+          disable: true
+    - name: task-cost
+      objective: 95
+      description: "95% of claude-opus-5-5 demo tasks cost at most $0.40 at list prices (provisional: the user's budget replaces it)."
+      sli:
+        events:
+          errorQuery: |
+            sum(rate(agent_task_cost_usd_count{agent_mode="demo",gen_ai_request_model="claude-opus-5-5"}[{{.window}}]))
+            -
+            sum(rate(agent_task_cost_usd_bucket{agent_mode="demo",gen_ai_request_model="claude-opus-5-5",le="0.4"}[{{.window}}]))
+          totalQuery: |
+            sum(rate(agent_task_cost_usd_count{agent_mode="demo",gen_ai_request_model="claude-opus-5-5"}[{{.window}}])) > 0
+      alerting:
+        pageAlert:
+          disable: true
+        ticketAlert:
+          disable: true

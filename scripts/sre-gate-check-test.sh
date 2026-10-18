@@ -4,8 +4,8 @@
 # used to pass on nothing (a copy of the script without slo/, a spec without service or SLOs); two pin which context
 # the check reaches (the default k3d-sf-main, or KUBE_CONTEXT). The rest set what Prometheus answers per case
 # (scenario): a failing shop-db exporter query, as measured on a cluster (cnpg_errors_total constant at 1, so
-# increase() over it is 0 and a check on increase would pass on it), the Airflow dag_run series with profile batch, and
-# the standby's copy of debezium_shop (psql through the fake kubectl).
+# increase() over it is 0 and a check on increase would pass on it), the Airflow dag_run series with profile batch,
+# the standby's copy of debezium_shop (psql through the fake kubectl), and the agent's demo deployment.
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d)"
@@ -54,7 +54,7 @@ class H(http.server.BaseHTTPRequestHandler):
             if q.rstrip().endswith("> 0"): res = [r for r in res if float(r["value"][1]) > 0]
             d = {"resultType": "vector", "result": res}
         elif any(s in q for s in ("up == 0", "ALERTS", "lakehouse", "airflow", "freshness-exporter", "cnpg_errors_total")): d = {"resultType": "vector", "result": []}
-        elif "slo:sli_error:ratio_rate5m" in q: d = {"resultType": "vector", "result": one("0") * 2}
+        elif "slo:sli_error:ratio_rate" in q: d = {"resultType": "vector", "result": one("0") * 2}
         elif "restarts_total" in q or "notifications_failed" in q: d = {"resultType": "vector", "result": one("0")}
         else: d = {"resultType": "vector", "result": one("1")}
         b = json.dumps({"status": "success", "data": d}).encode()
@@ -126,6 +126,17 @@ standby 2 true 'ERROR'; expect "a failed read is a FAIL, not 'no slot'" 1 "shop-
 standby 2 false ''; expect "slot sync off with 2 instances warns" 0 "WARN  CDC slot on the standby" -- "${gate[@]}"
 rm -f "$TMP/shopdb.json" "$TMP/standbys" "$TMP/slot-shop-db-2"
 scenario '[]'
+
+# The agent SLOs: skipped without a demo agent or without a claude-opus-5-5 demo task in the last day; otherwise read
+# on their 1-day window (a few dozen tasks a day leave most 5m windows empty).
+scenario '[["agent_tasks_total", []]]'
+expect "no agent demo: agent SLOs not expected" 0 $'SKIP  SLO agent has SLI data\nno agent demo running' -- "${gate[@]}"
+scenario '[["agent_task_duration_seconds_count", [[{}, "0"]]]]'
+expect "no opus demo task in a day: agent SLOs not expected" 0 $'SKIP  SLO agent has SLI data\nno claude-opus-5-5 demo task in the last day' -- "${gate[@]}"
+scenario '[["slo:sli_error:ratio_rate1d{sloth_service=\"agent\"}", []]]'
+expect "opus demo tasks without 1d SLI samples fail" 1 $'FAIL  SLO agent has SLI data\n0/2 SLOs with a 1d sample' -- "${gate[@]}"
+scenario '[]'
+expect "opus demo tasks: agent SLOs read on the 1d window" 0 $'PASS  SLO agent has SLI data\n2/2 SLOs (1d window)' -- "${gate[@]}"
 
 [[ $failed -eq 0 ]] && echo "sre-gate-check: all tests passed"
 exit $failed
