@@ -160,15 +160,37 @@ Each oracle rule was also removed in turn, and each removal made the correspondi
   - **Retry with full jitter** on a conflict and on unknown. An unknown attempt is first cancelled and waited on until
     it is terminal (`DELETE` then `GET /v1/query/{id}`). Otherwise the retry can race its own attempt still running on
     the server, and an insert-if-absent does not stop two concurrent inserts.
-  - **One HTTP attempt per request** (`max_attempts=1`), so every statement sent is an attempt the method sees.
+  - **One HTTP attempt per request** (`max_attempts=1`), so every statement sent is an attempt the method sees. An
+    attempt whose POST got no answer is retried (`retry_without_query_id`): such a statement never ran (questions 5
+    and 7).
   - **Serialise only overlapping keys**: ops are routed to writers by key, so two writers never update one key.
   - **OPTIMIZE per partition**, skipping the partitions being written.
   - Iceberg `commit.retry.*`, if Trino honours them (question 3).
+- **Variant `method-resolve`**, after the first dev pass, where the method lost on events: an ambiguous attempt is
+  resolved from the table's snapshots, which carry Trino's query id (question 4). A FAILED attempt whose snapshot is
+  there did commit; a query gone from `system.runtime.queries` is over, and its snapshot says whether it committed.
+  An event's first attempt is then a plain INSERT with no read before it, and only its retries use `INSERT … WHERE
+  NOT EXISTS`. Counter adds keep `update_once`. It runs beside `method` on the next dev pass; one of the two is
+  frozen.
 - Both arms process the same op stream, from the same seed.
 - The method is `lakeops.writes` (`write`, `insert_unless_present`, `update_once`) plus the arm in `method.py`. Its starting
   parameters (5 attempts, backoff 0.1–3 s with full jitter, 60 s to settle an attempt, polled every 0.5 s) are tuned
   on dev and frozen before held-out. It is correct when two things hold: every statement is idempotent, and no two
   attempts of one write run at once. Then a write lands at most once, whatever the errors say.
+
+### Which method is frozen (decided before the next dev pass)
+
+The next dev pass runs baseline, `method` and `method-resolve` on every dev cell: at least 7 runs per arm and cell,
+in ABBA order, after 10 warm-up runs. Then:
+
+1. A variant is eligible only if every one of its runs has LostUpdate = 0, WrongFinalRows = 0 and Duplicates = 0.
+2. Of the eligible variants, the one with the higher median CCT in more dev cells is frozen. A cell counts only where
+   the two variants' ranges do not overlap.
+3. If neither variant wins more cells, the simpler `method` is frozen: one statement form, no snapshot lookups.
+
+The freeze also fixes the variant's RetryPolicy parameters, the scenario parameters, and the definite-fail
+allowlist. The allowlist holds the error classes whose ops were absent in every graded case on dev. The baseline is
+the comparison and is never selected.
 
 ## Contention levels and the dev / held-out split
 
@@ -181,7 +203,8 @@ Each oracle rule was also removed in turn, and each removal made the correspondi
 The event day moves forward every 10 s of the write phase, so a run writes several day partitions, and a past day
 can be compacted while writers append to the current one.
 
-- **Dev:** N ∈ {2, 4} × {low, medium}. Used for the conflict matrix, the classification allowlist and tuning.
+- **Dev:** N ∈ {2, 4} × {low, medium}, plus N = 4 at medium with the OPTIMIZE loop (W3). Used for the conflict
+  matrix, the classification allowlist and tuning.
 - **Held-out:** N = 8 × high, with OPTIMIZE.
   - Its scenario file (seeds, durations, op mix) is written by another session and frozen under the lab's held-out
     rules.

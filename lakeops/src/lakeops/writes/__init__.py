@@ -12,15 +12,17 @@ client's own retry re-sends a statement without knowing whether the first one is
 """
 
 from .errors import error_class, is_fatal
-from .retry import RetryPolicy, WriteResult, write
-from .statements import add_once, insert_if_absent, insert_unless_present, update_once
+from .retry import RetryPolicy, WriteResult, committed_in_snapshots, write
+from .statements import add_once, insert_if_absent, insert_row, insert_unless_present, update_once
 
 __all__ = [
     "RetryPolicy",
     "WriteResult",
     "add_once",
+    "committed_in_snapshots",
     "error_class",
     "insert_if_absent",
+    "insert_row",
     "insert_unless_present",
     "is_fatal",
     "update_once",

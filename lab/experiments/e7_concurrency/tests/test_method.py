@@ -4,13 +4,13 @@ from datetime import date
 
 import pytest
 from e7_concurrency import sql
-from e7_concurrency.method import METHOD, by_key, method_writes
+from e7_concurrency.method import METHOD, METHOD_RESOLVE, by_key, method_writes, resolving_writes
 from e7_concurrency.oplog import Outcome
 from e7_concurrency.scenario import OpSpec, Scenario, op_streams
 from e7_concurrency.tests.fake_trino import FakeConnection
 from requests.exceptions import ReadTimeout
 
-from lakeops.writes import insert_unless_present, update_once
+from lakeops.writes import insert_row, insert_unless_present, update_once
 
 
 def scenario(workload: str, **overrides) -> Scenario:
@@ -77,3 +77,26 @@ def test_two_writers_never_share_a_key():
 def test_the_method_makes_one_http_attempt_per_request():
     assert METHOD.client_max_attempts == 1
     assert METHOD.optimize_scope == "cold-partitions"
+
+
+def test_the_resolving_method_sends_a_plain_insert_first():
+    conn = FakeConnection()
+    result = resolving_writes(conn, scenario("w1"), METHOD_RESOLVE, "w1-2")("w1-2:7", OpSpec(7, 3, 5), date(2026, 1, 2))
+    assert result.outcome is Outcome.ACKED
+    assert conn.statements == [
+        insert_row(sql.EVENTS, {"writer_id": "w1-2", "seq": 7, "key": 3, "event_day": date(2026, 1, 2), "delta": 5})
+    ]
+
+
+def test_the_resolving_method_retries_an_insert_whose_snapshot_is_absent_with_the_idempotent_form():
+    """A timeout, Trino says FAILED, no snapshot carries the query id: the retry is INSERT … WHERE NOT EXISTS."""
+    answers = iter([ReadTimeout("read timed out"), [["FAILED"]], [[0]], [[1]]])
+
+    def respond(_statement: str) -> list | BaseException:
+        return next(answers)
+
+    conn = FakeConnection(respond)
+    result = resolving_writes(conn, scenario("w1"), METHOD_RESOLVE, "w1-0")("w1-0:1", OpSpec(1, 0, 1), date(2026, 1, 1))
+    assert (result.outcome, result.attempts, result.settled) == (Outcome.ACKED, 2, ("FAILED:not-in-snapshots",))
+    assert "$snapshots" in conn.statements[2]
+    assert "WHERE NOT EXISTS" in conn.statements[3]

@@ -13,8 +13,9 @@ def test_the_dev_split_covers_the_designed_grid_and_nothing_held_out():
         ("w2", 2, "medium", False),
         ("w2", 4, "medium", False),
     }
-    assert all(s.writers < 8 and s.contention != "high" and s.maintenance == "none" for s in scenarios)
-    assert len({s.name for s in scenarios}) == len({s.seed for s in scenarios if s.ledger}) + 2 == len(scenarios)
+    assert {(s.workload, s.writers) for s in scenarios if s.maintenance == "optimize"} == {("w1", 4), ("w2", 4)}
+    assert all(s.writers < 8 and s.contention != "high" for s in scenarios)
+    assert len({s.name for s in scenarios}) == len(scenarios)
 
 
 def test_arms_alternate_abba():
@@ -31,4 +32,4 @@ def test_arms_skip_scenarios_they_cannot_run():
     noledger = next(s for s in dev_scenarios() if not s.ledger)
     events = next(s for s in dev_scenarios() if s.workload == "w1")
     assert [name for name, arm in ARMS.items() if runnable(noledger, arm)] == ["baseline"]
-    assert [name for name, arm in ARMS.items() if runnable(events, arm)] == ["baseline", "method"]
+    assert [name for name, arm in ARMS.items() if runnable(events, arm)] == ["baseline", "method", "method-resolve"]

@@ -10,7 +10,7 @@ from e7_concurrency.arms import ARMS
 
 
 def test_every_arm_has_one_name():
-    assert sorted(ARMS) == ["baseline", "method", "w2-py"]
+    assert sorted(ARMS) == ["baseline", "method", "method-resolve", "w2-py"]
 
 
 def test_a_scenario_comes_from_its_fields():
