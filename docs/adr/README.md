@@ -63,6 +63,8 @@ orchestrator adds rows when merging a PR that contains ADRs.
 | [0417](0417-catalog-scoped-safety-boundary.md) | Lab safety boundary: one Trino catalog per zone, read-only in the engine, own warehouse, principal and key | Accepted |
 | [0418](0418-iceberg-tags-short-lived-pins.md) | Iceberg tags are short-lived pins; their max age counts from the snapshot, and no guarantee rests on them | Accepted |
 | [0419](0419-lab-stack-separate-from-platform.md) | The lab is its own compose stack, on the platform's images and protections, and the harness refuses `lake` | Accepted |
+| [0420](0420-lab-time-scaling.md) | Lab experiments run on compressed time: one published factor, applied to every arm's SQL, floors in simulated days | Accepted |
+| [0421](0421-experiment-protocol-dev-holdout.md) | Lab experiments tune on dev scenarios and run a frozen, encrypted held-out split once, every attempt on record | Accepted |
 | [0500](0500-opentofu-over-terraform.md) | OpenTofu instead of Terraform for the AWS layers | Accepted |
 | [0501](0501-ephemeral-env-with-lease.md) | Ephemeral AWS sessions bounded by a lease and two reapers | Accepted |
 | [0502](0502-layer2-state-aws-only.md) | Layer 2 state holds only AWS resources | Accepted |
