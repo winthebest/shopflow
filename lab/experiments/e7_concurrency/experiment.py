@@ -20,8 +20,9 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
-from .dev import abba
-from .scenario import Scenario
+# Absolute imports: lab.runner.load_experiment execs this file as a plain module, outside the package.
+from e7_concurrency.dev import abba
+from e7_concurrency.scenario import Scenario
 
 REPO = Path(__file__).resolve().parents[3]
 CONTAINER_RESULTS = "/results/e7_concurrency"

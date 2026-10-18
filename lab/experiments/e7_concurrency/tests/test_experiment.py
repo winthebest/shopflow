@@ -69,3 +69,28 @@ def test_result_paths_map_from_the_container_to_the_host(tmp_path: Path):
     )
     with pytest.raises(ValueError, match="outside /results"):
         experiment.host_path("/repo/lab/x.json", tmp_path)
+
+
+def test_the_lab_runner_can_load_and_run_the_adapter():
+    """lab.runner.load_experiment execs experiment.py as a plain module, outside its package: relative imports fail
+    there, after a held-out attempt is already on record. Load it the runner's way and run it on fakes."""
+    from lab.results import Row as LabRow
+    from lab.runner import RunContext, load_experiment
+
+    run = load_experiment("e7_concurrency")
+    calls = []
+
+    def run_one(params: dict, arm: str, seed: int, out: str) -> dict:
+        calls.append((arm, seed))
+        return {"valid": True, "cct": 1.0}
+
+    context = RunContext(experiment="e7_concurrency", split="dev", run_id="r1", seed=7)
+    rows = run([{**SCENARIO, "iterations": 1}], context, run_one=run_one)
+    assert calls == [("baseline", 7), ("baseline", 7), ("method", 7)]  # warm-up, then the iteration
+    assert all(isinstance(row, LabRow) for row in rows)
+    assert {(r.arm, r.metric) for r in rows} == {
+        ("baseline", "valid"),
+        ("baseline", "cct"),
+        ("method", "valid"),
+        ("method", "cct"),
+    }
