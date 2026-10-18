@@ -11,16 +11,13 @@ Held-out never runs from here: it goes through the lab's runner (freeze and ledg
 import argparse
 import dataclasses
 import json
-import os
 import time
 from pathlib import Path
 
-from .method import METHOD
+from .arms import ARMS
+from .cli import default_out
 from .runner import run
-from .scenario import BASELINE, Arm, Scenario
-
-REPO = Path(__file__).resolve().parents[3]
-ARMS: dict[str, Arm] = {"baseline": BASELINE, "method": METHOD}
+from .scenario import Arm, Scenario
 
 
 def dev_scenarios() -> list[Scenario]:
@@ -49,11 +46,9 @@ def main() -> None:
     parser.add_argument("--runs", type=int, default=7)
     parser.add_argument("--seconds", type=float, default=45.0)
     parser.add_argument("--only", default="", help="run only scenarios whose name contains this")
-    results = os.environ.get("LAB_RESULTS_DIR")
-    parser.add_argument(
-        "--out", type=Path, default=Path(results) / "e7_concurrency" if results else REPO / "out/lab-e7"
-    )
+    parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
+    args.out = args.out or default_out()
     arms = [ARMS[name] for name in args.arms]
     scenarios = [dataclasses.replace(s, seconds=args.seconds) for s in dev_scenarios() if args.only in s.name]
     args.out.mkdir(parents=True, exist_ok=True)
