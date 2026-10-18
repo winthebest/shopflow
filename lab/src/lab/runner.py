@@ -42,7 +42,7 @@ from pathlib import Path
 
 from lab import freeze, scenarios
 from lab.freeze import attempts, ledger, ledger_file
-from lab.guard import CAPTURE_IDENTITY, guarded_connect
+from lab.guard import CAPTURE_IDENTITY, active_base_catalog, guarded_connect
 from lab.results import Row, collect_metadata, new_run_id, write_run
 from lab.results import results_dir as default_results_dir
 from lab.session import ArmSession, StatementRecord
@@ -77,6 +77,12 @@ class RunContext:
 
     def _log(self, record: StatementRecord) -> None:
         self._append(".statements.jsonl", record.to_json())
+
+    @property
+    def base_catalog(self) -> str | None:
+        """The active baseline run's catalog (`lab_base_<run>`, for identity baseline_writer), or None: `make lab-base
+        RUN=<run>` sets it. Raises while that run is set but not yet loaded by Trino."""
+        return active_base_catalog(self.settings)
 
     def session(self, identity: str) -> ArmSession:
         """An arm's session as `identity`: guarded, never resubmitting, time-scaled, every statement in the bundle."""
