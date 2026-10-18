@@ -33,6 +33,10 @@ model unloaded after). No Claude API call.
 
 ## Decision
 
+Decisive: through Pydantic AI's Ollama route the local model answered from a silently cut prompt (about 13,500
+tokens at context 4096). That is the failure ADR 0103 rules out for every eval run, and the route has no option
+to prevent it. The demo-mode crash on a `fallback` block and the missing served-model check point the same way.
+
 The agent's loop is written in house on top of `agent/llm` (ADR 0103): providers that already enforce the served
 model, handle the fallback, keep the history append-only and refuse an over-long local prompt, and `agent/tracing.py`
 (ADR 0106) for telemetry. The loop itself (send, run the requested tools, return the results, stop on a terminal turn)
