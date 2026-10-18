@@ -8,7 +8,7 @@ import pytest
 from lab_trino import connect, query
 
 from lakeops.features import features
-from lakeops.fingerprint import fingerprint
+from lakeops.fingerprint import checksum_at, fingerprint
 from lakeops.snapshots import clone, current_snapshot_id, refs, rollback, snapshots, table_properties
 from lakeops.sql import TableName
 from lakeops.state import capture, capture_namespace
@@ -123,3 +123,10 @@ def test_the_properties_of_show_create_table(conn, table):
     assert properties["format"] == "'ORC'" and properties["format_version"] == "2"
     assert properties["partitioning"] == "ARRAY['day','bucket(id, 4)']"
     assert properties["location"].startswith("'s3://lab-exp/warehouse/lakeops_probe/")
+
+
+def test_a_checksum_at_an_older_snapshot_matches_the_state_then(conn, table):
+    before, snapshot = fingerprint(conn, table), current_snapshot_id(conn, table)
+    query(conn, f"DELETE FROM {table.sql} WHERE id = 2")
+    assert checksum_at(conn, table, snapshot) == (before.rows, before.checksum)
+    assert checksum_at(conn, table) != (before.rows, before.checksum)
