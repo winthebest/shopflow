@@ -6,6 +6,8 @@ from typing import Literal
 
 from trino.dbapi import Connection
 
+from lakeops.fingerprint import checksum_at
+
 Op = Literal["append", "rewrite", "dml"]
 OPS = ("append", "rewrite", "dml")
 
@@ -53,10 +55,9 @@ def _rows(conn: Connection, statement: str) -> list:
     return cur.fetchall()
 
 
-def _count(conn: Connection, table: str, snapshot_id: int | None) -> int:
-    if snapshot_id is None:
-        return 0  # before the table's first snapshot
-    return _rows(conn, f"SELECT count(*) FROM {table} FOR VERSION AS OF {int(snapshot_id)}")[0][0]  # noqa: S608
+def _state(conn: Connection, table: str, snapshot_id: int | None) -> tuple[int, str]:
+    """Rows and checksum at a snapshot; nothing before the table's first snapshot."""
+    return (0, "") if snapshot_id is None else checksum_at(conn, table, int(snapshot_id))
 
 
 def verify(
@@ -93,7 +94,7 @@ def verify(
         findings.append(Finding("snapshot", f"{len(snapshots)} snapshots carry query {query_id}; checked the last"))
     snapshot_id, parent_id, _operation, summary = snapshots[-1]
     summary = summary or {}
-    before, after = _count(conn, table, parent_id), _count(conn, table, snapshot_id)
+    (before, before_sum), (after, after_sum) = _state(conn, table, parent_id), _state(conn, table, snapshot_id)
     delta = after - before
 
     if op == "append":
@@ -104,8 +105,12 @@ def verify(
         if delta != added:
             findings.append(Finding("append", f"rows changed by {delta}, the snapshot says {added} were added"))
     elif op == "rewrite":
-        if delta:
-            findings.append(Finding("rewrite", f"a rewrite changed the rows by {delta} ({before} → {after})"))
+        if delta or before_sum != after_sum:
+            findings.append(
+                Finding(
+                    "rewrite", f"a rewrite changed the rows: {before} → {after}, checksum {before_sum} → {after_sum}"
+                )
+            )
     else:
         low, high = effect_bounds
         if not low <= delta <= high:
