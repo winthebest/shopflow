@@ -210,3 +210,46 @@ def test_snapshots_are_read_only_after_the_attempt_is_terminal():
     result, _ = run(conn, table=TABLE)
     assert conn.order == ["write", "cancel", "state", "state", "state", "snapshots"]
     assert (result.state, result.settled) == ("committed", ("FAILED:in-snapshots",))
+
+
+# A statement that is not idempotent (a model's UPDATE or MERGE) is re-sent only on proof that it did not commit.
+
+NOT_IDEMPOTENT = RetryPolicy(attempts=4, idempotent=False)
+
+
+def test_not_idempotent_is_retried_once_the_snapshots_show_no_commit():
+    conn = FakeConnection([("q1", TIMEOUT), ("q2", None)], states=["FAILED"], snapshots=[False])
+    result, _ = run(conn, NOT_IDEMPOTENT, table=TABLE)
+    assert (result.state, result.attempts, result.settled) == ("committed", 2, ("FAILED:not-in-snapshots",))
+    assert conn.sent == ["MERGE ...", "MERGE ..."]
+
+
+@pytest.mark.parametrize(
+    ("snapshots", "resolve"),
+    [
+        ([requests.exceptions.ConnectionError()], {"table": TABLE}),  # the lookup failed
+        ([], {}),  # no table to look in
+    ],
+)
+def test_not_idempotent_without_proof_ends_unknown(snapshots: list, resolve: dict):
+    conn = FakeConnection([("q1", TIMEOUT), ("q2", None)], states=["FAILED"], snapshots=snapshots)
+    result, _ = run(conn, NOT_IDEMPOTENT, **resolve)
+    assert (result.state, result.attempts) == ("unknown", 1)
+    assert len(conn.sent) == 1
+
+
+def test_not_idempotent_does_not_take_a_definite_class_as_proof():
+    policy = RetryPolicy(attempts=4, idempotent=False, definite=frozenset({COMMIT_CLASS}))
+    conn = FakeConnection([("q1", COMMIT), ("q2", None)], states=["FAILED"])
+    result, _ = run(conn, policy)
+    assert (result.state, result.attempts) == ("unknown", 1)
+    conn = FakeConnection([("q1", COMMIT), ("q2", None)], states=["FAILED"], snapshots=[False])
+    result, _ = run(conn, policy, table=TABLE)
+    assert (result.state, result.attempts) == ("committed", 2)
+
+
+def test_not_idempotent_without_a_query_id_is_retried_when_allowed():
+    policy = RetryPolicy(attempts=4, idempotent=False, retry_without_query_id=True)
+    conn = FakeConnection([(None, requests.exceptions.ConnectionError()), ("q2", None)])
+    result, _ = run(conn, policy)
+    assert (result.state, result.attempts, result.settled) == ("committed", 2, ("no-query-id",))
