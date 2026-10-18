@@ -8,6 +8,8 @@
   already holds it. Trino scopes an UPDATE's conflict check to the rows its WHERE can match, so updates of keys in
   different partitions do not conflict.
 - `add_once`: the same as a MERGE (conflict filter `true`).
+- `insert_row`: a plain INSERT, not idempotent. Use it only as the first attempt of a `retry.write` given the table,
+  which resolves an ambiguous attempt from the table's snapshots before retrying with an idempotent form.
 
 Put the partition columns in the key, so Trino reads only that partition to check.
 
@@ -100,3 +102,11 @@ def update_once(
         f"UPDATE {_table(table)} SET {v} = {v} + {literal(delta)}, {ledger} = {ledger} || {op} "  # noqa: S608
         f"WHERE {k} = {literal(key)} AND NOT contains({ledger}, {op})"
     )
+
+
+def insert_row(table: str, values: Mapping[str, Value]) -> str:
+    if not values:
+        raise ValueError("insert_row needs at least one column")
+    columns = [_identifier(c) for c in values]
+    row = ", ".join(literal(v) for v in values.values())
+    return f"INSERT INTO {_table(table)} ({', '.join(columns)}) VALUES ({row})"  # noqa: S608  # validated literals

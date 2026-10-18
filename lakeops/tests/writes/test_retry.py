@@ -24,8 +24,8 @@ class FakeConnection:
     """Each attempt of the write takes the next (query id, error) from `attempts`; each state poll takes the next
     state from `states` (None: no row yet; an exception: the poll fails)."""
 
-    def __init__(self, attempts: list, states: list | None = None) -> None:
-        self.attempts, self.states = list(attempts), list(states or [])
+    def __init__(self, attempts: list, states: list | None = None, snapshots: list | None = None) -> None:
+        self.attempts, self.states, self.snapshots = list(attempts), list(states or []), list(snapshots or [])
         self.sent: list[str] = []
         self.cancelled: list[str | None] = []
         self.polls = 0
@@ -45,6 +45,12 @@ class FakeCursor:
             if isinstance(state, BaseException):
                 raise state
             self._rows = [[state]] if state else []
+            return
+        if "$snapshots" in statement:
+            found = self.conn.snapshots.pop(0)  # True / False: whether the attempt's snapshot is there
+            if isinstance(found, BaseException):
+                raise found
+            self._rows = [[int(found)]]
             return
         self.conn.sent.append(statement)
         self.query_id, error = self.conn.attempts.pop(0)
@@ -74,9 +80,9 @@ class Clock:
 POLICY = RetryPolicy(attempts=4, base_seconds=0.1, cap_seconds=3.0, settle_seconds=2.0, poll_seconds=0.5)
 
 
-def run(conn: FakeConnection, policy: RetryPolicy = POLICY, clock: Clock | None = None):
+def run(conn: FakeConnection, policy: RetryPolicy = POLICY, clock: Clock | None = None, **resolve):
     clock = clock or Clock()
-    return write(conn, "MERGE ...", policy, sleep=clock.sleep, jitter=lambda: 1.0, clock=clock), clock
+    return write(conn, "MERGE ...", policy, sleep=clock.sleep, jitter=lambda: 1.0, clock=clock, **resolve), clock
 
 
 def test_a_write_that_succeeds_is_sent_once():
@@ -151,3 +157,42 @@ def test_definite_failures_are_not_settled_and_end_failed():
     assert (result.state, result.attempts, result.settled) == ("failed", 4, ())
     assert (conn.polls, conn.cancelled) == (0, [])
     assert clock.slept == [1.0, 2.0, 2.5]  # capped
+
+
+TABLE = "lab_exp.lab_e7.events"
+
+
+def test_a_failed_attempt_whose_snapshot_is_there_committed():
+    """A cancel can fail a query whose commit already landed: the table's snapshots say so."""
+    conn = FakeConnection([("q1", TIMEOUT), ("q2", None)], states=["FAILED"], snapshots=[True])
+    result, _ = run(conn, table=TABLE)
+    assert (result.state, result.attempts, result.settled) == ("committed", 1, ("FAILED:in-snapshots",))
+    assert len(conn.sent) == 1
+
+
+def test_a_query_gone_from_the_history_is_resolved_from_the_snapshots():
+    conn = FakeConnection([("q1", TIMEOUT), ("q2", None)], states=[], snapshots=[False])
+    result, _ = run(conn, table=TABLE, retry_statement="INSERT ... WHERE NOT EXISTS ...")
+    assert (result.state, result.attempts) == ("committed", 2)
+    assert result.settled == ("unsettled:not-found:not-in-snapshots",)
+    assert conn.sent == ["MERGE ...", "INSERT ... WHERE NOT EXISTS ..."]  # retries use the idempotent form
+
+
+def test_a_query_still_running_is_not_resolved_from_the_snapshots():
+    conn = FakeConnection([("q1", TIMEOUT)], states=["RUNNING"] * 10, snapshots=[])
+    result, _ = run(conn, table=TABLE)
+    assert (result.state, result.settled) == ("unknown", ("unsettled:RUNNING",))
+
+
+def test_attempts_resolved_absent_end_failed_not_unknown():
+    conn = FakeConnection([(f"q{i}", COMMIT) for i in range(1, 5)], states=["FAILED"] * 4, snapshots=[False] * 4)
+    result, _ = run(conn, table=TABLE)
+    assert (result.state, result.attempts) == ("failed", 4)
+
+
+def test_unreadable_snapshots_fall_back_to_the_query_state():
+    conn = FakeConnection(
+        [("q1", TIMEOUT), ("q2", None)], states=["FAILED"], snapshots=[requests.exceptions.ConnectionError()]
+    )
+    result, _ = run(conn, table=TABLE)
+    assert (result.state, result.attempts, result.settled) == ("committed", 2, ("FAILED",))

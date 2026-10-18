@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 import pytest
 
-from lakeops.writes import add_once, insert_if_absent, insert_unless_present, update_once
+from lakeops.writes import add_once, insert_if_absent, insert_row, insert_unless_present, update_once
 
 
 def test_insert_if_absent_matches_on_the_key_and_inserts_only_when_missing():
@@ -86,4 +86,10 @@ def test_update_once_touches_one_key_unless_its_ledger_has_the_op():
     assert statement == (
         "UPDATE lab_exp.lab_e7.counters SET value = value + 3, applied = applied || 'w2-1:9' "
         "WHERE key = 5 AND NOT contains(applied, 'w2-1:9')"
+    )
+
+
+def test_insert_row_is_a_plain_insert():
+    assert insert_row("lab_exp.lab_e7.events", {"writer_id": "w1-0", "seq": 1, "event_day": date(2026, 1, 2)}) == (
+        "INSERT INTO lab_exp.lab_e7.events (writer_id, seq, event_day) VALUES ('w1-0', 1, DATE '2026-01-02')"
     )

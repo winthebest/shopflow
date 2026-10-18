@@ -29,10 +29,11 @@ def dev_scenarios() -> list[Scenario]:
                 seed = 1000 + 100 * (workload == "w2") + 10 * writers + (contention == "medium")
                 name = f"dev-{workload}-n{writers}-{contention}"
                 scenarios.append(Scenario(name, workload, writers, contention, seed))
+    medium = [s for s in scenarios if s.contention == "medium"]
+    scenarios += [dataclasses.replace(s, name=f"{s.name}-noledger", ledger=False) for s in medium if s.workload == "w2"]
+    # W3 on dev: the OPTIMIZE loop beside the writers, at N = 4 only (N = 8 with OPTIMIZE is held-out).
     scenarios += [
-        dataclasses.replace(s, name=f"{s.name}-noledger", ledger=False)
-        for s in scenarios
-        if s.workload == "w2" and s.contention == "medium"
+        dataclasses.replace(s, name=f"{s.name}-optimize", maintenance="optimize") for s in medium if s.writers == 4
     ]
     return scenarios
 
@@ -55,8 +56,8 @@ def git_state() -> dict:
 
 
 def runnable(scenario: Scenario, arm: Arm) -> bool:
-    """The method and W2-py are idempotent only through the ledger; W2-py writes counters only."""
-    if arm.name in ("method", "w2-py") and not scenario.ledger:
+    """The methods and W2-py are idempotent only through the ledger; W2-py writes counters only."""
+    if arm.name in ("method", "method-resolve", "w2-py") and not scenario.ledger:
         return False
     return not (arm.name == "w2-py" and scenario.workload != "w2")
 

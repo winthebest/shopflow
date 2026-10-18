@@ -4,6 +4,12 @@ An attempt that fails without a user error may still have committed (a timeout, 
 state Iceberg could not confirm). Before trying again, `write` cancels that attempt and polls
 `system.runtime.queries` until Trino reports it FINISHED (it did commit: stop) or FAILED (try again). If the state
 cannot be read within the policy's time, the write ends unknown rather than risk two attempts running at once.
+
+Given the table the statement writes, `write` also reads the attempt's fate from the table itself: Trino puts the
+query id in the summary of every snapshot it commits (`trino_query_id`). A FAILED attempt whose snapshot is there did
+commit (a cancel can fail a query whose commit already landed); one that left `system.runtime.queries` is over, and
+its snapshot says whether it committed. Then the first attempt may be a plain statement, and only retries need the
+idempotent form.
 """
 
 import contextlib
@@ -21,6 +27,7 @@ from trino.dbapi import Connection, Cursor
 from .errors import RETRYABLE_USER_ERRORS, error_class, is_fatal
 
 _QUERY_ID = re.compile(r"[0-9a-z_]+")
+_IDENTIFIER = re.compile(r"[a-z0-9_]+")
 TERMINAL = ("FINISHED", "FAILED")
 
 
@@ -60,6 +67,22 @@ def _query_state(conn: Connection, query_id: str) -> str | None:
     return rows[0][0] if rows else None
 
 
+def committed_in_snapshots(conn: Connection, table: str, query_id: str) -> bool:
+    """Whether a snapshot of `table` (catalog.schema.table) was committed by this Trino query."""
+    if not _QUERY_ID.fullmatch(query_id):
+        raise ValueError(f"not a Trino query id: {query_id!r}")
+    parts = table.split(".")
+    if len(parts) != 3 or not all(_IDENTIFIER.fullmatch(part) for part in parts):
+        raise ValueError(f"table {table!r}: name it catalog.schema.table ([a-z0-9_] each)")
+    catalog, schema, name = parts
+    cur = conn.cursor()
+    cur.execute(
+        f'SELECT count(*) FROM {catalog}.{schema}."{name}$snapshots" '  # noqa: S608  # validated identifiers
+        f"WHERE element_at(summary, 'trino_query_id') = '{query_id}'"
+    )
+    return cur.fetchall()[0][0] > 0
+
+
 def settle(
     conn: Connection,
     cur: Cursor,
@@ -94,11 +117,16 @@ def write(
     statement: str,
     policy: RetryPolicy = RetryPolicy(),  # noqa: B008  # frozen, so one shared default is safe
     *,
+    retry_statement: str | None = None,
+    table: str | None = None,
     sleep: Callable[[float], None] = time.sleep,
     jitter: Callable[[], float] = random.random,
     clock: Callable[[], float] = time.monotonic,
 ) -> WriteResult:
-    """Runs an idempotent statement until it commits, fails for good, or its fate cannot be known."""
+    """Runs a statement until it commits, fails for good, or its fate cannot be known.
+
+    The statement must be idempotent, unless `table` is given: then an ambiguous attempt is resolved from the table's
+    snapshots before any retry, and the retries use `retry_statement` (the idempotent form) when one is given."""
     query_ids: list[str] = []
     settled: list[str] = []
     ambiguous = False
@@ -106,7 +134,7 @@ def write(
     for attempt in range(1, policy.attempts + 1):
         cur = conn.cursor()
         try:
-            cur.execute(statement)
+            cur.execute(statement if attempt == 1 else retry_statement or statement)
             cur.fetchall()  # a write is done only when its result has been read
         except Exception as exc:
             query_id = cur.query_id
@@ -119,7 +147,15 @@ def write(
                 state = "FAILED"
             elif query_id:
                 state, seen = settle(conn, cur, query_id, policy, sleep=sleep, clock=clock)
-                settled.append(state or f"unsettled:{seen}")
+                over = state == "FAILED" or (state is None and seen == "not-found")  # not-found: it can't still run
+                found = _lookup(conn, table, query_id) if table and over else None
+                settled.append(
+                    (state or f"unsettled:{seen}") + {True: ":in-snapshots", False: ":not-in-snapshots"}.get(found, "")
+                )
+                if found is True:
+                    state = "FINISHED"
+                elif found is False:
+                    state = "FAILED"
             else:
                 state = "FAILED" if policy.retry_without_query_id else None
                 settled.append("no-query-id")
@@ -127,7 +163,7 @@ def write(
                 return WriteResult("committed", attempt, error, detail, tuple(query_ids), tuple(settled))
             if state is None:
                 return WriteResult("unknown", attempt, error, detail, tuple(query_ids), tuple(settled))
-            ambiguous = ambiguous or error not in policy.definite
+            ambiguous = ambiguous or (error not in policy.definite and not settled[-1].endswith(":not-in-snapshots"))
             if attempt < policy.attempts:
                 sleep(jitter() * min(policy.cap_seconds, policy.base_seconds * 2 ** (attempt - 1)))
             continue
@@ -137,3 +173,11 @@ def write(
     return WriteResult(
         "unknown" if ambiguous else "failed", policy.attempts, error, detail, tuple(query_ids), tuple(settled)
     )
+
+
+def _lookup(conn: Connection, table: str, query_id: str) -> bool | None:
+    """`committed_in_snapshots`, or None if the snapshots cannot be read now."""
+    try:
+        return committed_in_snapshots(conn, table, query_id)
+    except (trino_errors.Error, requests.exceptions.RequestException):
+        return None
