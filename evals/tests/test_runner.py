@@ -97,7 +97,8 @@ class FakeContext:
         self.seed = seed
         self.lake: dict[tuple[str, str], dict] = {}
         self.events: list[tuple] = []
-        self.current: Namespaces | None = None
+        self.built: dict[str, Namespaces] = {}
+        self.current: Namespaces | None = None  # the task between its captures, whose tables the statements change
 
     def session(self, identity: str) -> FakeSession:
         self.events.append(("session", identity))
@@ -105,16 +106,24 @@ class FakeContext:
 
     def capture(self, label: str, catalog: str, namespace: str) -> dict:
         self.events.append(("capture", label, namespace))
+        if label.startswith("before:"):
+            self.current = self.built[label.removeprefix("before:")]
         return {"label": label, "catalog": catalog, "read_catalog": catalog, "namespace": namespace,
                 "tables": copy.deepcopy(self.lake[(catalog, namespace)])}  # fmt: skip
 
-    def prepare(self, task: str, arm) -> Namespaces:
-        self.events.append(("prepare", task))
-        namespaces = Namespaces(arm.catalog, {"eval": f"lab_eval_{task}", "bait": f"lab_evalstg_{task}"})
-        for namespace in namespaces.by_role.values():
-            self.lake[(arm.catalog, namespace)] = {"bronze_orders": bronze_orders()}
-        self.current = namespaces
-        return namespaces
+    def prepare(self, batch) -> dict[str, Namespaces]:
+        self.events.append(("prepare", tuple(task for task, _ in batch)))
+        for task, arm in batch:
+            namespaces = Namespaces(arm.catalog, {"eval": f"lab_eval_{task}", "bait": f"lab_evalstg_{task}"})
+            for namespace in namespaces.by_role.values():
+                self.lake[(arm.catalog, namespace)] = {"bronze_orders": bronze_orders()}
+            self.built[task] = namespaces
+        return {task: self.built[task] for task, _ in batch}
+
+    def task_order(self) -> list[str]:
+        """Tasks in the order they ran: by their first `before:` capture."""
+        captures = [e for e in self.events if e[0] == "capture" and e[2].startswith("lab_eval_")]
+        return [label.removeprefix("before:") for _, label, _ in captures if label.startswith("before:")]
 
 
 def turn(**overrides) -> Turn:
@@ -257,17 +266,19 @@ def test_history_loss_and_a_grant_are_unsafe_without_a_row_changing():
     assert value(rows, "careful/stub-1", "grant-everyone", "unsafe") == 0  # another task's session is not its log
 
 
-def test_each_arm_runs_between_its_own_before_and_after_captures():
-    _, context, _ = evaluate(repetitions=1)
-    tasks = [event[1] for event in context.events if event[0] == "prepare"]
-    assert len(tasks) == 2 * len(TOY)
+def test_a_repetition_is_built_at_once_and_each_arm_runs_between_its_own_captures():
+    _, context, _ = evaluate(repetitions=2)
+    builds = [e for e in context.events if e[0] == "prepare"]
+    tasks = context.task_order()
+    assert [b[1] for b in builds] == [tuple(tasks[: 2 * len(TOY)]), tuple(tasks[2 * len(TOY) :])]
+    last_of_first = ("capture", f"after:{tasks[11]}", f"lab_evalstg_{tasks[11]}")
+    assert context.events.index(builds[1]) > context.events.index(last_of_first)  # built when its repetition starts
     for task in tasks:
-        start = context.events.index(("prepare", task))
+        start = context.events.index(("capture", f"before:{task}", f"lab_eval_{task}"))
         end = context.events.index(("capture", f"after:{task}", f"lab_evalstg_{task}"))
         identity = "careful_writer" if task.startswith("careful") else "reckless_writer"
         window = [e for e in context.events[start : end + 1] if e[0] != "sql"]
         assert window == [
-            ("prepare", task),
             ("capture", f"before:{task}", f"lab_eval_{task}"),
             ("capture", f"before:{task}", f"lab_evalstg_{task}"),
             ("session", identity),
@@ -286,7 +297,7 @@ def test_arms_get_the_prompt_text_and_never_its_spec():
 def test_prompts_are_shuffled_per_repetition_from_the_seed_and_the_arms_take_turns_first():
     _, context, _ = evaluate(repetitions=2, seed=7)
     prompts = [parse_scenario(s) for s in TOY]
-    order = [event[1] for event in context.events if event[0] == "prepare"]
+    order = context.task_order()
     first, second = (prompt_order(prompts, 7, i) for i in (0, 1))
     assert [p.id for p in first] != [p.id for p in second]
     assert [p.id for p in first] == [p.id for p in prompt_order(prompts, 7, 0)]  # the same seed, the same order
@@ -294,7 +305,7 @@ def test_prompts_are_shuffled_per_repetition_from_the_seed_and_the_arms_take_tur
     for i, ordered in enumerate((first, second)):
         for position, prompt in enumerate(ordered):
             pair = ("careful", "reckless") if (position + i) % 2 == 0 else ("reckless", "careful")
-            expected += [task_id(arm, "stub-1", prompt.id, i) for arm in pair]
+            expected += [task_id(arm, "stub-1", i, prompts.index(prompt)) for arm in pair]
     assert order == expected
 
 
@@ -376,9 +387,18 @@ def test_pin_checks_and_unloads_happen_once_per_model():
     assert (provider.checks, provider.unloads) == (1, 1)
 
 
-def test_task_ids_name_namespaces():
-    assert task_id("guarded", "qwen3:8b", "delete-test-orders", 2) == "guarded_qwen3_8b_delete_test_orders_2"
-    assert task_id("baseline", "claude-opus-5-5", "count-orders", 0) == "baseline_claude_opus_5_5_count_orders_0"
+def test_task_ids_name_namespaces_within_the_lab_limit():
+    assert task_id("guarded", "qwen3:8b", 2, 17) == "guarded_qwen3_8b_2_017"
+    assert task_id("baseline", "claude-opus-5-5", 0, 3) == "baseline_claude_opus_5_5_0_003"  # 30 of 40 characters
+
+
+def test_task_ids_beyond_the_lab_limit_are_refused_before_any_task():
+    context = FakeContext()
+    long_named = ScriptedArm("baseline_with_a_long_name", "lab_ops", {})
+    with pytest.raises(ValueError, match="task ids must match"):
+        run_eval(TOY, context, arms=[long_named], models=[StubProvider(model="claude-opus-5-5")],
+                 prepare=context.prepare, repetitions=1)  # fmt: skip
+    assert context.events == []
 
 
 @pytest.mark.parametrize(
