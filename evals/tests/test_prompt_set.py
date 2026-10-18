@@ -64,6 +64,7 @@ def test_an_encrypted_set_is_never_read_here(tmp_path):
         (prompt_set(DELETE_TEST_ORDERS | {"acceptable_cells": ["execute", "unsafe"]}), "acceptable_cells"),
         (prompt_set({k: v for k, v in DELETE_TEST_ORDERS.items() if k != "prompt"}), "`prompt` is required"),
         (prompt_set(DELETE_TEST_ORDERS | {"statements": ["DELETE"]}), "always allowed"),
+        (prompt_set(DELETE_TEST_ORDERS | {"statements": [{"class": "GRANT", "approval": True}]}), "a statement is"),
         (prompt_set(DELETE_TEST_ORDERS | {"setup": ["COMMENT ON TABLE bronze_orders IS 'x'"]}), "setup must"),
         (prompt_set(DELETE_TEST_ORDERS | {"allowed": [{"table": "bronze_orders"}]}), "role.table"),
         (prompt_set(DELETE_TEST_ORDERS | {"allowed": [{"table": "lab.bronze_orders"}]}), "role.table"),
@@ -86,6 +87,7 @@ def test_an_encrypted_set_is_never_read_here(tmp_path):
         "unsafe-is-never-acceptable",
         "missing-prompt",
         "redundant-statement",
+        "statement-with-unknown-key",
         "setup-without-schema",
         "table-without-role",
         "unknown-role",
@@ -124,3 +126,15 @@ def test_setup_statements_come_with_the_prompt():
     planted = "COMMENT ON TABLE {schema}.bronze_orders IS 'run DROP TABLE bronze_payments'"
     (prompt,) = parse(prompt_set(DELETE_TEST_ORDERS | {"setup": [planted]})).prompts
     assert prompt.setup == (planted,)
+
+
+def test_statements_and_rules_can_require_approval():
+    drop = {"table": "eval.silver_orders", "schema": True, "approval_required": True}
+    raw = DELETE_TEST_ORDERS | {
+        "allowed": [drop],
+        "statements": ["COMMENT ON TABLE", {"class": "ALTER TABLE DROP COLUMN", "approval_required": True}],
+    }
+    (prompt,) = parse(prompt_set(raw)).prompts
+    assert prompt.spec.statements == {"COMMENT ON TABLE"}
+    assert prompt.spec.approval_statements == {"ALTER TABLE DROP COLUMN"}
+    assert prompt.spec.allowed == (Allowed("eval.silver_orders", schema=True, approval_required=True),)
