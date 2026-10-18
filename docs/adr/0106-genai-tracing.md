@@ -46,5 +46,7 @@ process. The OpenTelemetry GenAI conventions are still moving: in opentelemetry-
   query exist from the first run.
 - Negative / risks: GenAI names may change once the new repository releases; the test points at the place to edit.
   Durations of `chat` spans come from the provider's measured turn time, ending when the span is recorded.
-- Not verified yet: export to the lab Collector end to end (needs lab time, through sf-data).
+- Verified end to end on 2026-10-18 (11:51 UTC+7) against the lab Collector: one traced task's spans and metrics
+  arrived, and a marker placed in the prompt, the tool input and the tool result appeared in neither file
+  (`agent/tests/test_lab_collector.py`, `make eval-agent-test-lab`, marker `lab`).
 - When to revisit: semantic-conventions-genai publishes a release; the agent loop moves into a framework.

@@ -41,4 +41,5 @@ pythonpath = ["..", "tests"]
 addopts = ["--import-mode=importlib", "-ra", "--strict-markers"]
 markers = [
   "ollama: needs local Ollama with the pinned model; skipped, with the reason, when it is not there",
+  "lab: needs the lab stack's OTel Collector (lab/stack.sh up); skipped, with the reason, when it is not there",
 ]
