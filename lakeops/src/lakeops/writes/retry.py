@@ -44,6 +44,11 @@ class RetryPolicy:
     # An attempt that failed before Trino gave it a query id cannot be settled. True only once it is shown that such
     # a statement never runs on the server.
     retry_without_query_id: bool = False
+    # False for a statement that is not idempotent (a model's UPDATE or MERGE). It is then retried only on proof that
+    # the attempt did not commit: the attempt is over and the table's snapshots don't carry its query id (needs
+    # `table`), or it never got a query id (with retry_without_query_id). Without that proof the write ends unknown;
+    # neither a FAILED state nor a `definite` error class is proof enough on its own.
+    idempotent: bool = True
 
 
 @dataclass(frozen=True)
@@ -125,8 +130,10 @@ def write(
 ) -> WriteResult:
     """Runs a statement until it commits, fails for good, or its fate cannot be known.
 
-    The statement must be idempotent, unless `table` is given: then an ambiguous attempt is resolved from the table's
-    snapshots before any retry, and the retries use `retry_statement` (the idempotent form) when one is given."""
+    With `table`, an ambiguous attempt is resolved from the table's snapshots before any retry, and the retries use
+    `retry_statement` (the idempotent form) when one is given. A statement that is not idempotent (a model's UPDATE
+    or MERGE) passes `RetryPolicy(idempotent=False)` and `table`: it is re-sent only on proof that the attempt did
+    not commit, and otherwise ends unknown."""
     query_ids: list[str] = []
     settled: list[str] = []
     ambiguous = False
@@ -143,7 +150,7 @@ def write(
             error, detail = error_class(exc), str(exc)[:500]
             if is_fatal(exc, policy.retryable_user_errors):
                 return WriteResult("failed", attempt, error, detail, tuple(query_ids), tuple(settled))
-            if error in policy.definite:
+            if error in policy.definite and policy.idempotent:
                 state = "FAILED"
             elif query_id:
                 state, seen = settle(conn, cur, query_id, policy, sleep=sleep, clock=clock)
@@ -158,6 +165,8 @@ def write(
                     state = "FINISHED"
                 elif found is False:
                     state = "FAILED"
+                elif not policy.idempotent:
+                    state = None  # no proof that it didn't commit: never re-send a statement that isn't idempotent
             else:
                 state = "FAILED" if policy.retry_without_query_id else None
                 settled.append("no-query-id")
