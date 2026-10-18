@@ -32,10 +32,25 @@ The ``Verification`` result:
   operation's own, the table has no external writer, and the op is not a ``rewrite`` (a rewrite doesn't change the
   logic and is never rolled back automatically).
 
+``verify_state(before, after, *, op, expected) -> Verification`` covers what commits no snapshot carrying its query
+id: ``op="history"`` (expire_snapshots with ``ExpectExpire``, rollback_to_snapshot with ``ExpectRollback``) and
+``op="definition"`` (columns and properties, ``ExpectDefinition``). It compares two ``lakeops.state`` captures taken
+just before and just after the change (see ``verify/state.py``), and never marks the change rollback-safe.
+
 Rows and checksums come from ``lakeops.fingerprint.checksum_at``, the one checksum implementation, read at each of the
 two snapshots (``FOR VERSION AS OF``) with the table's current columns.
 """
 
 from .checks import Finding, TableKind, Verification, verify
+from .state import ExpectDefinition, ExpectExpire, ExpectRollback, verify_state
 
-__all__ = ["Finding", "TableKind", "Verification", "verify"]
+__all__ = [
+    "ExpectDefinition",
+    "ExpectExpire",
+    "ExpectRollback",
+    "Finding",
+    "TableKind",
+    "Verification",
+    "verify",
+    "verify_state",
+]
