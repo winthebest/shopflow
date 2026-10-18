@@ -51,7 +51,7 @@ within its 15-minute window and already above 0.
 
 The demo runs a few dozen tasks a day at most. At that volume Sloth's page windows (5m and 1h) would turn one slow or
 expensive task into a page, and its ticket windows would raise a ticket on a handful of tasks. So `slo/agent.yaml`
-has no `alerting` block. The tickets in `agent-alerts.prometheusrule.yaml` read Sloth's 1-day and 3-day SLI rules
+disables both of Sloth's alerts. The tickets in `agent-alerts.prometheusrule.yaml` read Sloth's 1-day and 3-day SLI rules
 instead:
 
 | Ticket | Over the last day | Over the last 3 days |
