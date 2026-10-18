@@ -4,7 +4,7 @@
 |---|---|
 | Alert | `AgentTaskCostBudgetBurn` (ticket) |
 | SLO | [`slo/agent.yaml`](../../slo/agent.yaml) `task-cost`: 95% of `claude-opus-5-5` demo tasks at most $0.40 ([docs/slo/agent.md](../slo/agent.md)) |
-| Rule | [`deploy/platform/slo/base/agent.prometheusrule.yaml`](../../deploy/platform/slo/base/agent.prometheusrule.yaml) (tests: `slo/tests/agent.test.yaml`) |
+| Rule | [`deploy/platform/slo/base/agent-alerts.prometheusrule.yaml`](../../deploy/platform/slo/base/agent-alerts.prometheusrule.yaml) (tests: `slo/tests/agent.test.yaml`) |
 | Related | [agent-task-latency.md](agent-task-latency.md), [docs/cost.md](../cost.md) |
 
 ## What it means

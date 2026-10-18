@@ -10,7 +10,7 @@
 # `total > 0`: most windows hold no task at all (a few dozen demo tasks a day), and 0/0 would put NaN into the 28-day
 # average. The 120 s and $0.40 thresholds are explicit bucket boundaries; `le` also accepts the "120.0" spelling.
 # No `alerting`: 5m/1h burn rates mean nothing at this volume, so the tickets (with a minimum task count) are in
-# deploy/platform/slo/base/agent.prometheusrule.yaml, next to the unsafe-action page.
+# deploy/platform/slo/base/agent-alerts.prometheusrule.yaml, next to the unsafe-action page.
 apiVersion: sloth.slok.dev/v1
 kind: PrometheusServiceLevel
 metadata:

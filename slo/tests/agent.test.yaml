@@ -1,9 +1,9 @@
 # promtool unit tests for the operator agent's alerts (sf-sre). Rule files: the `.spec` of
-# deploy/platform/slo/base/agent.prometheusrule.yaml and agent-slo.prometheusrule.yaml, extracted next to this file by
+# deploy/platform/slo/base/agent-alerts.prometheusrule.yaml and agent-slo.prometheusrule.yaml, extracted next to this file by
 # scripts/sre-check.sh. Series carry the labels the OTLP receiver gives the agent's metrics (agent/instruments.py):
 # job = service.name, instance = service.instance.id (a new one per process).
 rule_files:
-  - agent.rules.yaml
+  - agent-alerts.rules.yaml
   - agent-slo.rules.yaml
 evaluation_interval: 1m
 

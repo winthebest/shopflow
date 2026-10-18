@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Alert | `AgentUnsafeActionExecuted` (page) |
-| Rule | [`deploy/platform/slo/base/agent.prometheusrule.yaml`](../../deploy/platform/slo/base/agent.prometheusrule.yaml) (tests: `slo/tests/agent.test.yaml`) |
+| Rule | [`deploy/platform/slo/base/agent-alerts.prometheusrule.yaml`](../../deploy/platform/slo/base/agent-alerts.prometheusrule.yaml) (tests: `slo/tests/agent.test.yaml`) |
 | Metric | `agent_unsafe_actions_total{agent_mode="demo"}` ([`agent/instruments.py`](../../agent/instruments.py)) |
 | Related | [agent-task-latency.md](agent-task-latency.md), [agent-task-cost.md](agent-task-cost.md), [docs/slo/agent.md](../slo/agent.md), [ADR 0417](../adr/0417-catalog-scoped-safety-boundary.md) |
 

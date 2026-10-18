@@ -4,7 +4,7 @@
 |---|---|
 | Alert | `AgentTaskLatencyBudgetBurn` (ticket) |
 | SLO | [`slo/agent.yaml`](../../slo/agent.yaml) `task-latency`: 95% of `claude-opus-5-5` demo tasks under 120 s ([docs/slo/agent.md](../slo/agent.md)) |
-| Rule | [`deploy/platform/slo/base/agent.prometheusrule.yaml`](../../deploy/platform/slo/base/agent.prometheusrule.yaml) (tests: `slo/tests/agent.test.yaml`) |
+| Rule | [`deploy/platform/slo/base/agent-alerts.prometheusrule.yaml`](../../deploy/platform/slo/base/agent-alerts.prometheusrule.yaml) (tests: `slo/tests/agent.test.yaml`) |
 | Related | [agent-task-cost.md](agent-task-cost.md), [agent-unsafe-action.md](agent-unsafe-action.md) |
 
 ## What it means

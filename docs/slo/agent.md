@@ -4,7 +4,7 @@ Owner: sf-sre. Metric names and labels: [`agent/instruments.py`](../../agent/ins
 [`slo/agent.yaml`](../../slo/agent.yaml) → generated rules
 [`deploy/platform/slo/base/agent-slo.prometheusrule.yaml`](../../deploy/platform/slo/base/agent-slo.prometheusrule.yaml)
 (Sloth, [ADR 0300](../adr/0300-slo-tooling-sloth.md)). Alerts:
-[`agent.prometheusrule.yaml`](../../deploy/platform/slo/base/agent.prometheusrule.yaml). Tests:
+[`agent-alerts.prometheusrule.yaml`](../../deploy/platform/slo/base/agent-alerts.prometheusrule.yaml). Tests:
 [`slo/tests/agent.test.yaml`](../../slo/tests/agent.test.yaml). Dashboard: Shopflow / Agent. Runbooks:
 [agent-unsafe-action](../runbooks/agent-unsafe-action.md), [agent-task-latency](../runbooks/agent-task-latency.md),
 [agent-task-cost](../runbooks/agent-task-cost.md).
@@ -51,7 +51,8 @@ within its 15-minute window and already above 0.
 
 The demo runs a few dozen tasks a day at most. At that volume Sloth's page windows (5m and 1h) would turn one slow or
 expensive task into a page, and its ticket windows would raise a ticket on a handful of tasks. So `slo/agent.yaml`
-has no `alerting` block, and the tickets in `agent.prometheusrule.yaml` read Sloth's 1-day and 3-day SLI rules:
+has no `alerting` block. The tickets in `agent-alerts.prometheusrule.yaml` read Sloth's 1-day and 3-day SLI rules
+instead:
 
 | Ticket | Over the last day | Over the last 3 days |
 |---|---|---|
