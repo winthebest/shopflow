@@ -4,6 +4,7 @@ refused, whichever rule it breaks."""
 import copy
 import math
 import re
+import shutil
 from datetime import timedelta
 
 import pytest
@@ -129,12 +130,17 @@ def test_a_split_needs_one_primary_and_held_out_at_most_three_scenarios():
 
 
 def test_check_and_encrypt_refuse_a_bad_plaintext_before_anything_is_written(tmp_path):
+    # A copy of the experiment as the root: encrypt writes under its root, and this checkout's held-out file is real.
+    root = tmp_path / "repo"
+    shutil.copytree(REPO / "lab/experiments/e5_retention", root / "lab/experiments/e5_retention",
+                    ignore=shutil.ignore_patterns("__pycache__", "tests"))  # fmt: skip
     plain = tmp_path / "holdout-plain.yaml"
     plain.write_text(yaml.safe_dump({"scenarios": [HOLDOUT]}))
-    assert [s["id"] for s in scenarios.check(plain, "e5_retention")] == ["primary"]
+    assert [s["id"] for s in scenarios.check(plain, "e5_retention", root=root)] == ["primary"]
     plain.write_text(yaml.safe_dump({"scenarios": [holdout(seed=5)]}))
-    with pytest.raises(ParamsError, match="holdout seed"):
-        scenarios.check(plain, "e5_retention")
-    with pytest.raises(ParamsError, match="holdout seed"):  # before sops runs, so before any file is written
-        scenarios.encrypt(plain, "e5_retention", "age1unused", root=REPO)
-    assert not scenarios.holdout_file("e5_retention").exists()
+    # ValueError, not ParamsError: loading the copy replaces this checkout's e5_retention modules and their classes.
+    with pytest.raises(ValueError, match="holdout seed"):
+        scenarios.check(plain, "e5_retention", root=root)
+    with pytest.raises(ValueError, match="holdout seed"):  # before sops runs, so before any file is written
+        scenarios.encrypt(plain, "e5_retention", "age1unused", root=root)
+    assert not scenarios.holdout_file("e5_retention", root).exists()
