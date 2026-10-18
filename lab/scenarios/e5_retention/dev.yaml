@@ -1,0 +1,28 @@
+# E5 dev incident parameters, as published in docs/research/e5-retention-policy-design.md (schema:
+# lab/experiments/e5_retention/params.py). "primary" is the dev distribution; the other two are the sensitivity check
+# (a tail of 10 % and of 20 % up to 30 days), never used for tuning.
+scenarios:
+  - id: primary
+    seed: 1
+    incidents: 300
+    classes: {logic: 0.75, schema: 0.12, infra: 0.13}
+    delays:
+      - {from: 1m, to: 1h, share: 0.70}
+      - {from: 1h, to: 48h, share: 0.25}
+      - {from: 3d, to: 14d, share: 0.05}
+  - id: tail_10
+    seed: 2
+    incidents: 300
+    classes: {logic: 0.75, schema: 0.12, infra: 0.13}
+    delays:
+      - {from: 1m, to: 1h, share: 0.65}
+      - {from: 1h, to: 48h, share: 0.25}
+      - {from: 3d, to: 30d, share: 0.10}
+  - id: tail_20
+    seed: 3
+    incidents: 300
+    classes: {logic: 0.75, schema: 0.12, infra: 0.13}
+    delays:
+      - {from: 1m, to: 1h, share: 0.55}
+      - {from: 1h, to: 48h, share: 0.25}
+      - {from: 3d, to: 30d, share: 0.20}

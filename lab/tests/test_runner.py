@@ -323,3 +323,58 @@ def test_the_repository_experiments_load_with_their_imports():
     """E7 imports its own modules relatively and the agent's packages come from the repository root."""
     for experiment in ("e0_toy", "e7_concurrency"):
         assert callable(runner.load_experiment(experiment))
+
+
+CHECK = """
+
+def check_scenarios(scenarios, split):
+    if split == "holdout" and any(s["n"] == 7 for s in scenarios):
+        raise ValueError("n = 7 is not allowed here")
+"""
+
+
+def add_check(repo: Path) -> None:
+    code = repo / "lab/experiments/e0_toy/experiment.py"
+    code.write_text(code.read_text() + CHECK)
+    git(repo, "commit", "-q", "-am", "check")
+    git(repo, "push", "-q")
+
+
+def test_an_experiment_without_run_is_refused(repo: Path, tmp_path: Path):
+    (repo / "lab/experiments/e0_toy/experiment.py").write_text("def check_scenarios(scenarios, split):\n    pass\n")
+    with pytest.raises(runner.RunRefused, match=r"defines no run\(scenarios, context\)"):
+        runner.run("e0_toy", "dev", root=repo, results_dir=tmp_path / "results")
+
+
+def test_the_experiment_checks_its_dev_scenarios_before_it_runs(repo: Path, tmp_path: Path):
+    code = repo / "lab/experiments/e0_toy/experiment.py"
+    code.write_text(code.read_text() + "\n\ndef check_scenarios(scenarios, split):\n    raise ValueError(split)\n")
+    with pytest.raises(ValueError, match="dev"):
+        runner.run("e0_toy", "dev", root=repo, results_dir=tmp_path / "results")
+    assert not (tmp_path / "results").exists()
+
+
+def test_encrypt_runs_the_experiment_check_before_writing(repo: Path, tmp_path: Path):
+    add_check(repo)
+    plain = tmp_path / "holdout-plain.yaml"
+    plain.write_text(yaml.safe_dump(HOLDOUT))
+    with pytest.raises(ValueError, match="n = 7"):  # before sops runs
+        scenarios.encrypt(plain, "e0_toy", "age1unused", root=repo)
+    with pytest.raises(ValueError, match="n = 7"):
+        scenarios.check(plain, "e0_toy", root=repo)
+    assert not scenarios.holdout_file("e0_toy", repo).exists()
+
+
+@needs_sops
+def test_held_out_scenarios_failing_the_check_fail_the_attempt_without_their_details(
+    repo: Path, tmp_path: Path, age: str
+):
+    add_holdout(repo, age, tmp_path)  # encrypted before the check existed: it passes encrypt, fails after decryption
+    add_check(repo)
+    frozen(repo)
+    with pytest.raises(runner.HeldOutScenarioError) as raised:
+        runner.run("e0_toy", "holdout", root=repo, results_dir=tmp_path / "results")
+    assert "n = 7" in str(raised.value.__cause__)  # for the person running it, in the traceback
+    entries = runner.ledger("e0_toy", repo)
+    assert [e["event"] for e in entries] == ["started", "failed"]
+    assert "n = 7" not in entries[1]["error"] and "7" not in entries[1]["error"]  # the committed ledger

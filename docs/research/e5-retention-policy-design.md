@@ -217,9 +217,9 @@ within these ranges.
 
 **The writer's steps:**
 1. Write the plaintext outside git.
-2. Check it with the experiment's checker, which comes with the experiment code. `python -m lab.scenarios encrypt`
-   is to call that checker before encrypting. The same check runs after decryption, but by then the attempt is
-   recorded, so a file that fails it would burn the attempt.
+2. Check it: `python -m lab.scenarios check <plain.yaml> e5_retention` (`lab/experiments/e5_retention/params.py`).
+   `encrypt` runs the same check first. It runs again after decryption, but by then the attempt is recorded, so a
+   file that failed there would burn the attempt.
 3. Encrypt with `python -m lab.scenarios encrypt <plain.yaml> e5_retention`: public recipient only, written once.
 4. Open a PR with `lab/scenarios/e5_retention/holdout.sops.yaml` only.
 
