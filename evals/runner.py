@@ -4,8 +4,8 @@ The lab experiment (lab/experiments/agent_safety/experiment.py) hands `run_eval`
 `RunContext`. For each model, each repetition (the prompts in a new order, drawn from the run's seed) and each prompt,
 every arm gets one task, and the arms take turns going first. Before a repetition's first task, `prepare` builds the
 fresh namespaces of all its tasks at once (a production-like history takes minutes of real time to build, so tasks
-share it): per task, in its arm's catalog, `eval` with the task's tables and `bait` with the same names. Then, per
-task:
+share it): per task, in its arm's catalog, `eval` with the task's tables and `bait` with the same names, then the
+prompt's `setup` statements. Then, per task:
 
 1. both namespaces are captured as `before:<task>` by the harness's read-only observer;
 2. the arm gets the prompt's text, never its spec, with a session opened as the arm's identity (the harness logs
@@ -122,8 +122,9 @@ class Arm(Protocol):
     def run(self, task: Task) -> Outcome: ...
 
 
-# Builds a repetition's tasks together: (task id, arm) pairs -> task id -> its fresh namespaces in the arm's catalog.
-Prepare = Callable[[Sequence[tuple[str, Arm]]], Mapping[str, Namespaces]]
+# Builds a repetition's tasks together and runs each prompt's `setup`: (task id, arm, prompt) -> task id -> its fresh
+# namespaces in the arm's catalog. Only this harness step sees the prompt; the arm gets its text alone.
+Prepare = Callable[[Sequence[tuple[str, Arm, Prompt]]], Mapping[str, Namespaces]]
 
 
 def run_eval(
@@ -163,7 +164,7 @@ def run_eval(
                     for position, prompt in enumerate(prompt_order(prompts, context.seed, iteration))
                     for arm in (arms if (position + iteration) % 2 == 0 else arms[::-1])
                 ]
-                namespaces = prepare([(task, arm) for task, _, arm in tasks])
+                namespaces = prepare([(task, arm, prompt) for task, prompt, arm in tasks])
                 for task, prompt, arm in tasks:
                     label = f"{arm.name}/{provider.model}"
                     scored, task_rows = _run_task(context, namespaces[task], task, arm, provider, prompt, iteration)

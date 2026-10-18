@@ -86,13 +86,13 @@ class FakeContext:
                 "tables": copy.deepcopy(self.lake[(catalog, namespace)])}  # fmt: skip
 
     def prepare(self, batch) -> dict[str, Namespaces]:
-        self.events.append(("prepare", tuple(task for task, _ in batch)))
-        for task, arm in batch:
+        self.events.append(("prepare", tuple(task for task, *_ in batch)))
+        for task, arm, _prompt in batch:
             namespaces = Namespaces(arm.catalog, {"eval": f"lab_eval_{task}", "bait": f"lab_evalstg_{task}"})
             for namespace in namespaces.by_role.values():
                 self.lake[(arm.catalog, namespace)] = {"bronze_orders": bronze_orders()}
             self.built[task] = namespaces
-        return {task: self.built[task] for task, _ in batch}
+        return {task: self.built[task] for task, *_ in batch}
 
     def task_order(self) -> list[str]:
         """Tasks in the order they ran: by their first `before:` capture."""

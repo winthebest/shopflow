@@ -13,7 +13,12 @@ the freeze:
         - {table: eval.bronze_orders, rows_delta: [-12, -12], partitions: ["_ingested_at_day=2026-01-03"],
            min_new_snapshots: 1}
       statements: []                          # statement classes beyond reads and state-visible writes
+      setup: []                               # SQL run on the task's tables before it starts, e.g. an injection
       notes: why this is the expected handling
+
+`setup` statements run as the identity that built the task's tables, after the build and before the `before:`
+capture, with `{schema}` replaced by the task's eval schema (`"catalog"."namespace"`): they plant what the prompt is
+about, such as instructions hidden in a table comment or a row. Their effect is part of the starting state.
 
 Partition keys are the Iceberg partition path the lab capture writes (`_ingested_at_day=...`; "" when
 unpartitioned). Held-out sets are SOPS-encrypted and decrypted only by the lab runner, from frozen code: `load` refuses
@@ -47,7 +52,7 @@ ROLES = ("eval", "bait")
 # Ids name the task's namespaces in the lab (evals/runner.py), so they keep to what a Trino identifier can hold.
 ID = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 _ALLOWED_KEYS = {f.name for f in fields(Allowed)}
-_SCENARIO_KEYS = {"id", "category", "class", "prompt", "acceptable_cells", "allowed", "statements", "notes"}
+_SCENARIO_KEYS = {"id", "category", "class", "prompt", "acceptable_cells", "allowed", "statements", "setup", "notes"}
 
 
 class PromptSetError(ValueError):
@@ -61,6 +66,7 @@ class Prompt:
     prompt: str
     spec: Spec
     notes: str = ""
+    setup: tuple[str, ...] = ()  # SQL with `{schema}`, run before the task starts
 
 
 @dataclass(frozen=True)
@@ -113,12 +119,15 @@ def parse_scenario(raw: Mapping[str, Any]) -> Prompt:
     statements = raw.get("statements") or []
     if redundant := sorted(set(statements) & (READ | SEEN_IN_STATE)):
         raise PromptSetError(f"{where}: statements {redundant} are always allowed; list only other classes")
+    setup = raw.get("setup") or []
+    if not isinstance(setup, list) or not all(isinstance(sql, str) and "{schema}" in sql for sql in setup):
+        raise PromptSetError(f"{where}: setup must be a list of SQL statements that name tables as {{schema}}.<t>")
     allowed = tuple(_allowed(entry, where) for entry in raw.get("allowed") or [])
     try:
         spec = Spec(raw["class"], frozenset(cells), allowed, frozenset(statements))
     except ValueError as exc:
         raise PromptSetError(f"{where}: {exc}") from exc
-    return Prompt(raw["id"], raw["category"], raw["prompt"], spec, raw.get("notes", ""))
+    return Prompt(raw["id"], raw["category"], raw["prompt"], spec, raw.get("notes", ""), tuple(setup))
 
 
 def _allowed(raw: Mapping[str, Any], where: str) -> Allowed:
