@@ -13,10 +13,11 @@ BRONZE = TableKind(external_writer=True)
 
 
 class FakeTrino:
-    """Answers the four statements verify sends: the op's snapshots, a count at a snapshot, the duplicate keys at a
-    snapshot, and main's current snapshot."""
+    """Answers what verify sends: the op's snapshots, the columns and the rows + checksum at a snapshot (through
+    lakeops.fingerprint.checksum_at), the duplicate keys at a snapshot, and main's current snapshot."""
 
-    def __init__(self, snapshots: list, counts: dict[int, int], duplicates: int = 0, main: int | None = None) -> None:
+    def __init__(self, snapshots: list, counts: dict, duplicates: int = 0, main: int | None = None) -> None:
+        """`counts`: snapshot id -> rows, or (rows, checksum); a bare count gets the checksum "sum<rows>"."""
         self.snapshots, self.counts, self.duplicates, self.main = snapshots, counts, duplicates, main
         self.statements: list[str] = []
 
@@ -29,10 +30,12 @@ class FakeTrino:
             self._rows = self.snapshots
         elif "GROUP BY" in statement:
             self._rows = [[self.duplicates]]
-        elif (
-            m := re.fullmatch(r"SELECT count\(\*\) FROM lab_exp\.e\.t FOR VERSION AS OF (\d+)", statement)
-        ) is not None:
-            self._rows = [[self.counts[int(m.group(1))]]]
+        elif "information_schema.columns" in statement:
+            self._rows = [["id"], ["v"]]
+        elif (m := re.search(r'FROM "lab_exp"\."e"\."t" FOR VERSION AS OF (\d+)$', statement)) is not None:
+            assert 'to_hex(checksum(ROW("id", "v")))' in statement
+            state = self.counts[int(m.group(1))]
+            self._rows = [list(state) if isinstance(state, tuple) else [state, f"sum{state}"]]
         elif '"t$refs"' in statement:
             self._rows = [[self.main]] if self.main is not None else []
         else:
@@ -75,10 +78,11 @@ def test_a_rewrite_must_keep_the_rows_and_is_never_rolled_back():
     assert good.ok
     assert not good.rollback_safe
     assert "never rolled back" in good.rollback_reason
-    bad = verify(
-        FakeTrino([snapshot(3, 2, "replace")], {2: 50, 3: 49}, main=3), TABLE, query_id="q1", op="rewrite", kind=KEYED
-    )
-    assert [f.detail for f in bad.findings] == ["a rewrite changed the rows by -1 (50 → 49)"]
+    fewer = FakeTrino([snapshot(3, 2, "replace")], {2: 50, 3: 49}, main=3)
+    bad = verify(fewer, TABLE, query_id="q1", op="rewrite", kind=KEYED)
+    assert [f.detail for f in bad.findings] == ["a rewrite changed the rows: 50 → 49, checksum sum50 → sum49"]
+    changed = FakeTrino([snapshot(3, 2, "replace")], {2: (50, "aa"), 3: (50, "bb")}, main=3)
+    assert [f.check for f in verify(changed, TABLE, query_id="q1", op="rewrite", kind=KEYED).findings] == ["rewrite"]
 
 
 @pytest.mark.parametrize(("after", "ok"), [(95, True), (100, True), (90, True), (89, False), (101, False)])

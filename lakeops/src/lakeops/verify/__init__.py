@@ -14,7 +14,8 @@ Interface
   snapshot", which may already hold other writers' commits.
 - ``op``, the operation's class:
   - ``append``: INSERT. Nothing is deleted, and the rows added equal the snapshot's added records.
-  - ``rewrite``: OPTIMIZE, optimize_manifests, compaction. The logical row count is unchanged.
+  - ``rewrite``: OPTIMIZE, optimize_manifests, compaction. The same rows: count and order-independent checksum
+    (``lakeops.fingerprint.checksum_at``) equal at the operation's snapshot and at its parent.
   - ``dml``: DELETE, UPDATE, MERGE. The change in row count is within ``effect_bounds``.
 - ``kind``: a ``TableKind``.
   - ``key_columns``: a keyed table must have no duplicate key at the operation's snapshot. An append-only table
@@ -31,8 +32,8 @@ The ``Verification`` result:
   operation's own, the table has no external writer, and the op is not a ``rewrite`` (a rewrite doesn't change the
   logic and is never rolled back automatically).
 
-Still to come: for a ``rewrite``, the logical checksum (before = after) from the shared ``lakeops.fingerprint``, once
-it exists. There is one checksum implementation, not two.
+Rows and checksums come from ``lakeops.fingerprint.checksum_at``, the one checksum implementation, read at each of the
+two snapshots (``FOR VERSION AS OF``) with the table's current columns.
 """
 
 from .checks import Finding, TableKind, Verification, verify
