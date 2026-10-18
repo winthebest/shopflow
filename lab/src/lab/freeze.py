@@ -102,7 +102,14 @@ def uncommitted(root: Path, *paths: Path) -> str:
 
 
 def pushed(root: Path = REPO) -> bool:
-    """Whether HEAD is on a remote-tracking branch: a clone of the remote has this commit, and its records."""
+    """Whether HEAD is on a remote-tracking branch, after fetching: a clone of the remote has this commit and its
+    records. Refs not fetched could still show a branch that was rewritten or deleted since."""
+    try:
+        _git(root, "fetch", "--quiet", "--all", "--prune")
+    except subprocess.CalledProcessError as error:
+        raise FreezeError(
+            f"cannot fetch to check that the freeze and the ledger are pushed: {error.stderr.strip()}"
+        ) from error
     return bool(_git(root, "branch", "--remotes", "--contains", "HEAD").strip())
 
 

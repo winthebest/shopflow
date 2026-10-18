@@ -123,7 +123,8 @@ Decisions behind it:
   - when a frozen file changed, naming it;
   - when uncommitted files sit under the frozen paths;
   - while the freeze file or the ledger has uncommitted or unpushed changes. Commit and push both after every step:
-    the held-out run comes from the user's own clone.
+    the held-out run comes from the user's own clone. The runner fetches first, so a stale remote-tracking ref cannot
+    pass for a pushed commit, and refuses when it cannot reach the remote.
   None of the experiment's code runs before these checks.
 - **Held-out runs once.** Every attempt is written to `lab/freezes/<exp>.ledger.jsonl` before anything is decrypted.
   - An attempt that finished ends the experiment's held-out.
