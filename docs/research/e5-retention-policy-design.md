@@ -103,11 +103,12 @@ them.
 - **Where damage lands:** uniform over the 17 business tables (6 bronze without heartbeat, 5 silver, 6 gold).
   Damage spreads downstream: bronze damage reaches silver and gold at the next hourly rebuild, and silver damage
   reaches gold.
-- **Detection delay on dev:** 70 % below 1 h, 25 % between 1 h and 48 h, 5 % between 3 and 14 days, log-uniform
-  within each band. This distribution is an assumption. Two more distributions run on dev as a sensitivity check,
-  never for tuning: a tail of 10 % up to 30 days, and a tail of 20 % up to 30 days.
-- **Held-out:** another seed and a heavier tail. The parameters (class shares, bands, seed) are written by another
-  session or the user, never by this lane, and are encrypted (protocol.md §5). The incidents are generated from them.
+- **Detection delay on dev:** 70 % between 1 min and 1 h, 25 % between 1 h and 48 h, 5 % between 3 and 14 days,
+  log-uniform within each band. This distribution is an assumption. Two more distributions run on dev as a
+  sensitivity check, never for tuning: a tail of 10 % up to 30 days, and a tail of 20 % up to 30 days.
+- **Held-out:** another seed and a heavier tail. sf-docs, an independent lane, writes the parameters within the
+  schema below and encrypts them (protocol.md §5); this lane never sees them before the run. The incidents are
+  generated from them.
 
 ## Recoverable, strictly
 
@@ -134,8 +135,9 @@ An incident is **recovered** when, at detection, both hold:
   m_P ∈ {1, 5}, and the tag on or off.
   - It maximizes Recovery Coverage on dev subject to Σ bytes ≤ B, and breaks ties by fewer bytes.
   - That is 11³ × 2³ × 2 ≈ 2 × 10⁴ policies over 300 incidents, inside the 5-minute limit.
-  - The phase plan asks for importance weights. Weights are a choice the result would depend on, so the objective is
-    unweighted. A weighted variant (P3 ×3, P1 ×2, P2 ×1) is reported next to it.
+  - The objective is the primary metric, unweighted. The brief's headline Recovery Coverage counts every incident
+    once. The phase plan's importance weights are an optimizer choice, and the result would depend on them. A weighted
+    variant (P3 ×3, P1 ×2, P2 ×1, for objective and metric) is reported next to it.
 - **Budgets, published now:** B(T) = the bytes the uniform T-day policy holds on the dev replay, for
   T ∈ {1, 3, 7, 14, 30} days. At each B(T), the baseline is the uniform T policy and the method is the optimizer
   within B(T). The primary comparisons are at B(7 d), today's platform, and B(30 d), the usual alternative.
@@ -176,6 +178,54 @@ An incident is **recovered** when, at detection, both hold:
 - Then `make lab-freeze EXP=e5_retention`, a dev run at the freeze, and one held-out attempt (protocol.md §5).
 - The held-out run evaluates the frozen optimizer's policies at the published budgets.
 
+### Incident parameters: the schema both splits use
+
+`lab/scenarios/e5_retention/dev.yaml` and the held-out file have the same shape. Each scenario is one parameter set;
+the experiment draws its incidents from it.
+
+```yaml
+scenarios:
+  - id: primary          # [a-z0-9_]{1,40}; held-out: exactly one "primary", at most 2 more (held-out sensitivity)
+    seed: 4242           # integer; dev uses seeds below 1000, held-out seeds are in [1000, 2^31 - 1]
+    incidents: 300       # integer in [100, 1000]
+    classes:             # shares, multiples of 0.01, summing to 1
+      logic: 0.75        # [0.50, 0.85]
+      schema: 0.12       # [0.05, 0.25]
+      infra: 0.13        # [0.10, 0.15], the phase plan's range
+    delays:              # 2 to 5 bands, ascending, not overlapping (gaps allowed); shares multiples of 0.01, sum 1
+      - {from: 1m, to: 1h, share: 0.70}     # durations: <n>m, <n>h or <n>d; the first from >= 1m, the last to <= 60d
+      - {from: 1h, to: 48h, share: 0.25}
+      - {from: 3d, to: 14d, share: 0.05}
+```
+
+**A heavier tail, for the held-out `primary`,** compared with dev's primary (above):
+- the share of delays above 48 h is at least 0.05 and at most 0.40;
+- the longest delay is at least 14 days;
+- at least one of the two is strictly greater than on dev.
+
+A band that straddles 48 h counts by the part of its log-length above 48 h.
+
+**What the writer may vary:** the seed, the incident count, the class shares and the delay bands (edges and shares),
+within these ranges.
+
+**What stays fixed,** because it is part of the model under test:
+- the tables and where damage lands;
+- how damage spreads, and the repairs;
+- the kinds within a class (drawn uniformly);
+- log-uniform delays within a band;
+- the 180-day horizon and the window incidents land in. The 60-day maximum delay keeps that window at least 30 days.
+
+**The writer's steps:**
+1. Write the plaintext outside git.
+2. Check it with the experiment's checker, which comes with the experiment code. `python -m lab.scenarios encrypt`
+   is to call that checker before encrypting. The same check runs after decryption, but by then the attempt is
+   recorded, so a file that fails it would burn the attempt.
+3. Encrypt with `python -m lab.scenarios encrypt <plain.yaml> e5_retention`: public recipient only, written once.
+4. Open a PR with `lab/scenarios/e5_retention/holdout.sops.yaml` only.
+
+The file must land before `make lab-freeze`: the freeze hashes `lab/scenarios/e5_retention/`, so a later file makes
+the held-out run refuse. The values stay with the writer until `make lab-publish-holdout`.
+
 ## Into the platform (after held-out)
 
 - **`policies/retention.yaml`**: profile → `retention`, `min_snapshots`, `external_writer`, `rollback_window`, tag
@@ -192,6 +242,10 @@ An incident is **recovered** when, at detection, both hold:
 ## Threats to validity
 
 - The delay distribution is assumed: hence the sensitivity runs, and no claim beyond this platform.
+- **The floor limits what the platform can gain.** With a 7-day floor on every `lake` table, no compliant policy
+  holds less than uniform 7 d. A gain at B(7 d) is therefore shown on `lab_exp` (floors 0s) only, and the deployed
+  policy can only be compared at larger budgets (B(14 d), B(30 d)). The one-page README carries this in its failure
+  case.
 - Demo-size data: `optimize` behaviour and file sizes follow this scale. The storage model takes measured bytes, not
   formulas.
 - Simulated repairs: checked by the real runs above. Repairing P1 while the sink commits can conflict; E7 measures
