@@ -28,8 +28,11 @@ does not stop them; the tooling has to.
 4. **The runner enforces it** (`lab.runner`, `make lab-run SPLIT=holdout`, on the host, where git is). It refuses
    without a freeze, on any changed frozen file (and names it), on uncommitted files under the frozen paths, and while
    the freeze file or the ledger has uncommitted changes, or while their commit is not pushed (HEAD on no
-   remote-tracking branch). None of the experiment's code runs before these checks; it
-   is then loaded from the bytes the freeze hashed.
+   remote-tracking branch), and until a dev run has finished with the code at this freeze
+   (`lab/freezes/<exp>.dev.jsonl`), which proves the frozen code loads and runs before an attempt can be burned. None
+   of the experiment's code runs before these checks; it is then loaded from the bytes the freeze hashed, as module
+   `<exp>.experiment` of package `<exp>` (relative and absolute imports work), with the repository root last on the
+   path for `agent/` and `evals/`.
 5. **Once, with a ledger.** Under a lock, each held-out attempt is checked against and appended to
    `lab/freezes/<exp>.ledger.jsonl` as started before decryption, then as finished (with its result file) or failed
    (with the error). The ledger is committed and pushed after every attempt, since the next one requires it: the

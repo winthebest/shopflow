@@ -118,8 +118,12 @@ Decisions behind it:
   - the lockfiles;
   - the experiment's code and scenarios.
   It hashes committed content only and writes `lab/freezes/<exp>.json`.
+- **Dev run at the freeze.** After freezing (and committing the freeze), run the dev split once more: a dev run that
+  finishes with the code exactly at its freeze is recorded in `lab/freezes/<exp>.dev.jsonl`. It proves the frozen
+  code loads and runs, so an import or configuration error can never burn the held-out attempt.
 - **Held-out run.** `make lab-run EXP=<exp> SPLIT=holdout`, from the host, refuses:
   - without a freeze;
+  - without a finished dev run at this freeze;
   - when a frozen file changed, naming it;
   - when uncommitted files sit under the frozen paths;
   - while the freeze file or the ledger has uncommitted or unpushed changes. Commit and push both after every step:

@@ -10,9 +10,17 @@ dependencies = [
     "lakeops",
     "pyarrow>=21",  # result files (lab.results)
     "pyiceberg[pyarrow]==0.12.0",
-    "pyyaml>=6.0",  # scenario files
     "requests>=2.32",
     "trino==0.340.0",
+    # The agent's runtime pins, exactly as in agent/pyproject.toml (lab/tests/test_agent_pins.py), for experiments
+    # that drive the agent (agent_safety): agent/ and evals/ are imported from the repository root.
+    "anthropic==1.15.0",
+    "httpx2==2.13.1",
+    "jsonschema==4.26.0",
+    "opentelemetry-exporter-otlp-proto-http==1.45.0",
+    "opentelemetry-sdk==1.45.0",
+    "pyyaml==6.0.3",  # also the scenario files
+    "sqlglot==30.21.0",
 ]
 
 [tool.uv.sources]

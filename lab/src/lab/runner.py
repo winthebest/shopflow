@@ -6,7 +6,9 @@ list[lab.results.Row]`. `make lab-run EXP=<exp> SPLIT=dev|holdout`:
 - dev: the dev scenarios, any number of times; results carry the git sha and whether the tree was dirty.
 - holdout, in this order, refusing at the first failed check, and running none of the experiment's code before 4:
   1. the freeze exists and the code still hashes to it (lab.freeze.verify);
-  2. the freeze file and the ledger, lab/freezes/<exp>.ledger.jsonl, are committed and pushed (HEAD is on a
+  2. a dev run finished with the code at this freeze (lab/freezes/<exp>.dev.jsonl), so the frozen code is known to
+     load and run: an import or configuration error cannot burn a held-out attempt;
+  2b. the freeze file and the ledger, lab/freezes/<exp>.ledger.jsonl, are committed and pushed (HEAD is on a
      remote-tracking branch): every earlier attempt is on record in the shared repository before a new one starts,
      whichever clone runs it;
   3. under a lock, the ledger allows an attempt: none before, or every earlier attempt failed or never finished and
@@ -28,6 +30,7 @@ catalog (READ_CATALOG), so no arm sees the capture.
 import argparse
 import fcntl
 import hashlib
+import importlib
 import json
 import sys
 import types
@@ -136,12 +139,29 @@ def load_experiment(
     path = root / relative
     if not path.is_file():
         raise RunRefused(f"no experiment at {path}")
+    if experiment in sys.stdlib_module_names:
+        raise RunRefused(f"experiment name {experiment!r} is a standard library module")
     source = path.read_bytes()
     if frozen is not None and frozen.files.get(relative) != hashlib.sha256(source).hexdigest():
         raise RunRefused(f"{relative} differs from the freeze")
-    name = f"lab_experiment_{experiment}"
+    # experiment.py is module <exp>.experiment of package <exp>, so both relative and absolute imports of the
+    # experiment's own modules work; this repository's lab/experiments comes first for it, and the repository root
+    # last, for the agent/ and evals/ packages.
+    experiments = str(root / "lab/experiments")
+    if experiments in sys.path:
+        sys.path.remove(experiments)
+    sys.path.insert(0, experiments)
+    if str(root) not in sys.path:
+        sys.path.append(str(root))
+    loaded = sys.modules.get(experiment)
+    if loaded is not None and experiments not in {str(Path(p).parent) for p in getattr(loaded, "__path__", [])}:
+        for cached in [m for m in sys.modules if m == experiment or m.startswith(f"{experiment}.")]:
+            del sys.modules[cached]  # the same package, loaded from another checkout
+    importlib.import_module(experiment)
+    name = f"{experiment}.experiment"
     module = types.ModuleType(name)
     module.__file__ = str(path)
+    module.__package__ = experiment
     sys.modules[name] = module
     exec(compile(source, str(path), "exec"), module.__dict__)  # noqa: S102 (the repository's own, verified code)
     return module.run
@@ -165,7 +185,9 @@ def run(
         experiment_run = load_experiment(experiment, root)
         meta = collect_metadata(experiment, split, seed, cache_mode, run_id=run_id, root=root)
         context = RunContext(experiment, split, run_id, seed, bundle=_bundle(meta, results_dir))
-        return write_run(experiment_run(scenarios.load_dev(experiment, root), context), meta, results_dir)
+        path = write_run(experiment_run(scenarios.load_dev(experiment, root), context), meta, results_dir)
+        _record_dev_run(experiment, root, run_id, path)
+        return path
     # Held-out: every check before any of the experiment's code runs.
     try:
         frozen = freeze.verify(experiment, root)
@@ -174,6 +196,11 @@ def run(
     records = (freeze.freeze_file(experiment, root), ledger_file(experiment, root))
     if pending := freeze.uncommitted(root, *records):
         raise RunRefused(f"commit the freeze and the ledger before a held-out attempt:\n{pending.rstrip()}")
+    if not any(entry["freeze_hash"] == frozen.hash for entry in freeze.dev_runs(experiment, root)):
+        raise RunRefused(
+            f"{experiment}: no dev run finished with the code at its freeze {frozen.hash}: "
+            f"make lab-run EXP={experiment} SPLIT=dev first, so the frozen code is known to load and run"
+        )
     try:
         is_pushed = freeze.pushed(root)
     except freeze.FreezeError as error:
@@ -197,6 +224,20 @@ def run(
         raise
     _record(experiment, root, run_id=run_id, event="finished", attempt=attempt, result=path.name)
     return path
+
+
+def _record_dev_run(experiment: str, root: Path, run_id: str, result: Path) -> None:
+    """A finished dev run is recorded for the held-out check when the code matches the experiment's freeze."""
+    try:
+        frozen = freeze.verify(experiment, root)
+    except freeze.FreezeError:
+        return  # no freeze, or code changed since: this dev run proves nothing for a held-out attempt
+    path = freeze.dev_runs_file(experiment, root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    entry = {"run_id": run_id, "freeze_hash": frozen.hash, "result": result.name,
+             "at": datetime.now(UTC).isoformat(timespec="seconds")}  # fmt: skip
+    with path.open("a") as f:
+        f.write(json.dumps(entry, sort_keys=True) + "\n")
 
 
 def _bundle(meta, results_dir: Path | None) -> Path:

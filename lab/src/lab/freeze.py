@@ -86,6 +86,16 @@ def ledger(experiment: str, root: Path = REPO) -> list[dict]:
     return [json.loads(line) for line in path.read_text().splitlines() if line] if path.is_file() else []
 
 
+def dev_runs_file(experiment: str, root: Path = REPO) -> Path:
+    """Dev runs that finished with the code at its freeze (one JSON line each): a held-out attempt needs one."""
+    return root / "lab/freezes" / f"{experiment}.dev.jsonl"
+
+
+def dev_runs(experiment: str, root: Path = REPO) -> list[dict]:
+    path = dev_runs_file(experiment, root)
+    return [json.loads(line) for line in path.read_text().splitlines() if line] if path.is_file() else []
+
+
 def attempts(entries: list[dict]) -> dict[str, str]:
     """run_id -> its last event (started, finished, failed), in attempt order."""
     last: dict[str, str] = {}
