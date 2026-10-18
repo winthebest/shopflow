@@ -2,18 +2,20 @@
 
 The lab experiment (lab/experiments/agent_safety/experiment.py) hands `run_eval` the lab runner's scenarios and its
 `RunContext`. For each model, each repetition (the prompts in a new order, drawn from the run's seed) and each prompt,
-every arm gets one task, and the arms take turns going first:
+every arm gets one task, and the arms take turns going first. Before a repetition's first task, `prepare` builds the
+fresh namespaces of all its tasks at once (a production-like history takes minutes of real time to build, so tasks
+share it): per task, in its arm's catalog, `eval` with the task's tables and `bait` with the same names. Then, per
+task:
 
-1. `prepare` makes the task's fresh namespaces in the arm's catalog: `eval` with the task's tables, `bait` with the
-   same names;
-2. both are captured as `before:<task>` by the harness's read-only observer;
-3. the arm gets the prompt's text, never its spec, with a session opened as the arm's identity (the harness logs
+1. both namespaces are captured as `before:<task>` by the harness's read-only observer;
+2. the arm gets the prompt's text, never its spec, with a session opened as the arm's identity (the harness logs
    every statement), its model behind a recorder, and the eval's approver;
-4. both are captured as `after:<task>`, and the scorer judges the run from the two captures, the statements of that
+3. both are captured as `after:<task>`, and the scorer judges the run from the two captures, the statements of that
    session and the spec (evals/scorer.py).
 
-The approver stands in for the human: it approves a card if and only if the card proposes only what the spec allows.
-A card it refuses is a wrong action (the scorer's rule); what an arm runs after an approval is judged by its effect.
+The approver stands in for the human, as an ideal reviewer: it approves a card if and only if the card proposes only
+what the spec allows. A card it refuses is a wrong action (the scorer's rule); what an arm runs after an approval is
+judged by its effect. Approval cells therefore measure what the agent proposes, not how a real reviewer would decide.
 
 Every model turn passes the recorder. The eval runs with fallback off: a provider that could fall back is refused
 before any task, and a turn that another model served, or that a fallback served, raises `InvalidRun` even if the
@@ -42,6 +44,7 @@ from evals.prompt_set import Prompt, parse_scenario
 from evals.scorer import Allowed, Behaviour, Run, TableState, card_fits, score, statements_from_log, states_from_capture
 
 SUMMARY = "(all)"  # the case of the per-arm rows; never a prompt id (evals.prompt_set.ID)
+TASK_ID = re.compile(r"[a-z0-9_]{1,40}")  # what the lab accepts as a task id (lab.prodlike), checked before any task
 
 
 @dataclass(frozen=True)
@@ -119,8 +122,8 @@ class Arm(Protocol):
     def run(self, task: Task) -> Outcome: ...
 
 
-# (task id, arm) -> the task's fresh namespaces, in the catalog that arm works in.
-Prepare = Callable[[str, Arm], Namespaces]
+# Builds a repetition's tasks together: (task id, arm) pairs -> task id -> its fresh namespaces in the arm's catalog.
+Prepare = Callable[[Sequence[tuple[str, Arm]]], Mapping[str, Namespaces]]
 
 
 def run_eval(
@@ -137,18 +140,35 @@ def run_eval(
         raise ValueError("an eval needs prompts, arms, models and at least one repetition")
     if len({arm.name for arm in arms}) != len(arms) or len({p.id for p in prompts}) != len(prompts):
         raise ValueError("arm names and prompt ids must be unique")
+    index = {prompt.id: n for n, prompt in enumerate(prompts)}
+    ids = [
+        task_id(arm.name, provider.model, iteration, n)
+        for provider in models
+        for iteration in range(repetitions)
+        for n in index.values()
+        for arm in arms
+    ]
+    if bad := [task for task in ids if not TASK_ID.fullmatch(task)]:
+        raise ValueError(f"task ids must match {TASK_ID.pattern} (shorter arm or model names): {bad[0]}")
+    if len(set(ids)) != len(ids):
+        raise ValueError("two arms or models give the same task ids")
     rows: list[Row] = []
     outcomes: dict[str, list[Scored]] = {}
     for provider in models:
         _check_eval_ready(provider)
         try:
             for iteration in range(repetitions):
-                for position, prompt in enumerate(prompt_order(prompts, context.seed, iteration)):
-                    for arm in arms if (position + iteration) % 2 == 0 else arms[::-1]:
-                        label = f"{arm.name}/{provider.model}"
-                        scored, task_rows = _run_task(context, prepare, arm, provider, prompt, iteration, label)
-                        outcomes.setdefault(label, []).append(scored)
-                        rows += task_rows
+                tasks = [
+                    (task_id(arm.name, provider.model, iteration, index[prompt.id]), prompt, arm)
+                    for position, prompt in enumerate(prompt_order(prompts, context.seed, iteration))
+                    for arm in (arms if (position + iteration) % 2 == 0 else arms[::-1])
+                ]
+                namespaces = prepare([(task, arm) for task, _, arm in tasks])
+                for task, prompt, arm in tasks:
+                    label = f"{arm.name}/{provider.model}"
+                    scored, task_rows = _run_task(context, namespaces[task], task, arm, provider, prompt, iteration)
+                    outcomes.setdefault(label, []).append(scored)
+                    rows += task_rows
         finally:
             if unload := getattr(provider, "unload", None):  # a local model frees its memory as soon as it is done
                 unload()
@@ -164,9 +184,10 @@ def prompt_order(prompts: Sequence[Prompt], seed: int, iteration: int) -> list[P
     return order
 
 
-def task_id(arm: str, model: str, prompt_id: str, iteration: int) -> str:
-    """`<arm>_<model>_<prompt>_<iteration>` in [a-z0-9_]: it names the task's namespaces and its captures."""
-    return re.sub(r"[^a-z0-9]+", "_", f"{arm}_{model}_{prompt_id}_{iteration}".lower())
+def task_id(arm: str, model: str, iteration: int, prompt_index: int) -> str:
+    """`<arm>_<model>_<repetition>_<prompt's position in the set>` in [a-z0-9_]: it names the task's namespaces and
+    captures (`lab_eval_<task>`, `before:<task>`), so it stays short; rows carry the prompt's id."""
+    return re.sub(r"[^a-z0-9]+", "_", f"{arm}_{model}_{iteration}_{prompt_index:03d}".lower())
 
 
 def _check_eval_ready(provider: Provider) -> None:
@@ -179,10 +200,8 @@ def _check_eval_ready(provider: Provider) -> None:
 
 
 def _run_task(
-    context: Context, prepare: Prepare, arm: Arm, provider: Provider, prompt: Prompt, iteration: int, label: str
+    context: Context, namespaces: Namespaces, task: str, arm: Arm, provider: Provider, prompt: Prompt, iteration: int
 ) -> tuple[Scored, list[Row]]:
-    task = task_id(arm.name, provider.model, prompt.id, iteration)
-    namespaces = prepare(task, arm)
     before = namespaces.capture(context, f"before:{task}")
     session = context.session(arm.identity)
     recorder = _Recorder(provider)
@@ -200,6 +219,7 @@ def _run_task(
     after = namespaces.capture(context, f"after:{task}")
     statements = statements_from_log(record.to_json() for record in session.statements)
     verdict = score(prompt.spec, Run(outcome.behaviour, before, after, statements, outcome.card))
+    label = f"{arm.name}/{provider.model}"
     return verdict.scored, task_rows(label, prompt.id, iteration, verdict.scored, recorder.turns, approvals, seconds)
 
 
