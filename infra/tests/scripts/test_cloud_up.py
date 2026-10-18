@@ -98,7 +98,11 @@ def test_active_lease_blocks_a_second_session(fake, hooks):
 
 
 def test_fired_budget_action_blocks_the_session(fake, hooks):
-    fake.on("aws", r"budgets describe-budget-actions-for-budget --account-id 123456789012 --budget-name shopflow-monthly ", "EXECUTION_SUCCESS\n")
+    fake.on(
+        "aws",
+        r"budgets describe-budget-actions-for-budget --account-id 123456789012 --budget-name shopflow-monthly ",
+        "EXECUTION_SUCCESS\n",
+    )
     preflight(fake)
 
     result = fake.run("cloud-up.sh", env=hooks[0])
